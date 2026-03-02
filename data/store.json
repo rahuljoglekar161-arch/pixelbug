@@ -1,0 +1,35 @@
+{
+  "users": [
+    {
+      "id": "admin_1f02c6d312a4",
+      "name": "Rahul Joglekar",
+      "email": "rahuljoglekar161@gmail.com",
+      "phone": "+918793273752",
+      "role": "admin",
+      "approved": true,
+      "color": "#3a86ff",
+      "passwordHash": "77d1a17a58a46cf7f439b4584df895a6:df6c72dc4a36f53bdd2f68c6d732ea38aaa1b126797b261e2f46a00d10a91bc8700d899d452d3bca8d5d5d2a55e5ff2535c0efd7209786ebfefbc0e65931df64"
+    }
+  ],
+  "shows": [
+    {
+      "id": "show_pj81i9hb",
+      "showDate": "2026-03-07",
+      "showName": "Nucleya",
+      "client": "Nucleya",
+      "venue": "Aquatica",
+      "location": "Kolkata",
+      "showTime": "20:00",
+      "amountShow": 50000,
+      "assignments": [
+        {
+          "crewId": "admin_1f02c6d312a4",
+          "operatorAmount": 50000,
+          "travelDate": "2026-03-07",
+          "travelSector": "Pune > Kolkata",
+          "travelNotes": "Indigo 6E 2130"
+        }
+      ]
+    }
+  ]
+}

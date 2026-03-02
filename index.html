@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PixelBug Calendar</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div>
+        <div class="brand-lockup">
+          <img src="PIXELBUG.JPG" alt="PixelBug logo" class="brand-logo">
+          <div>
+            <h1>PixelBug Calendar</h1>
+          </div>
+        </div>
+        <nav class="sidebar-tabs" id="sidebarTabs"></nav>
+      </div>
+
+      <div class="sidebar-card" id="authPanel"></div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Shared Company Planner</p>
+          <h2 id="viewTitle">Crew Calendar</h2>
+        </div>
+        <div class="topbar-actions" id="sessionActions"></div>
+      </header>
+
+      <section class="hero-banner">
+        <div>
+          <p class="eyebrow">PixelBug Crew Ops</p>
+          <h3>Show Planning for Touring Teams</h3>
+          <p>Track venues, travel, operator payouts, and assigned crews from one common calendar.</p>
+        </div>
+        <img src="PIXELBUG.JPG" alt="PixelBug mark" class="hero-logo">
+      </section>
+
+      <section class="panel hidden" id="dashboard"></section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden" aria-live="polite"></div>
+
+  <template id="loginTemplate">
+    <div class="stack">
+      <div>
+        <h2>Sign In</h2>
+        <p>Use your approved and verified PixelBug account.</p>
+      </div>
+      <form id="loginForm" class="stack tight">
+        <label>
+          <span>Email</span>
+          <input type="email" name="email" required>
+        </label>
+        <label>
+          <span>Password</span>
+          <input type="password" name="password" required>
+        </label>
+        <button type="submit">Login</button>
+      </form>
+      <button class="ghost small" id="showForgotPassword" type="button">Forgot Password?</button>
+      <button class="secondary" id="showRegister">Request New Account</button>
+      <div id="authMessage" class="message"></div>
+    </div>
+  </template>
+
+  <template id="adminSetupTemplate">
+    <div class="stack">
+      <div>
+        <h2>Create First Admin</h2>
+        <p>Set up the initial PixelBug admin account for this workspace.</p>
+      </div>
+      <form id="adminSetupForm" class="stack tight">
+        <label>
+          <span>Full Name</span>
+          <input type="text" name="name" required>
+        </label>
+        <label>
+          <span>Email</span>
+          <input type="email" name="email" required>
+        </label>
+        <label>
+          <span>Phone</span>
+          <input type="tel" name="phone" required>
+        </label>
+        <label>
+          <span>Password</span>
+          <input type="password" name="password" minlength="8" required>
+        </label>
+        <p class="muted-note">Use 8+ characters with uppercase, lowercase, and a number.</p>
+        <label>
+          <span>Crew Color</span>
+          <div id="adminColorChoices" class="color-grid"></div>
+        </label>
+        <button type="submit">Create Admin</button>
+      </form>
+      <div id="adminSetupMessage" class="message"></div>
+    </div>
+  </template>
+
+  <template id="registerTemplate">
+    <div class="stack">
+      <div>
+        <h2>Account Request</h2>
+        <p>Admin, crew, and view-only accounts need approval before login.</p>
+      </div>
+      <form id="registerForm" class="stack tight">
+        <label>
+          <span>Full Name</span>
+          <input type="text" name="name" required>
+        </label>
+        <label>
+          <span>Email</span>
+          <input type="email" name="email" required>
+        </label>
+        <label>
+          <span>Phone</span>
+          <input type="tel" name="phone" required>
+        </label>
+        <label>
+          <span>Password</span>
+          <input type="password" name="password" minlength="8" required>
+        </label>
+        <p class="muted-note">Use 8+ characters with uppercase, lowercase, and a number.</p>
+        <label>
+          <span>Account Type</span>
+          <select name="role" id="roleSelect">
+            <option value="admin">Admin</option>
+            <option value="crew">Crew</option>
+            <option value="viewer">View Only</option>
+          </select>
+        </label>
+        <label id="colorField">
+          <span>Preferred Color</span>
+          <div id="colorChoices" class="color-grid"></div>
+        </label>
+        <button type="submit">Submit Request</button>
+      </form>
+      <button class="secondary" id="showLogin">Back to Login</button>
+      <div id="registerMessage" class="message"></div>
+    </div>
+  </template>
+
+  <template id="forgotPasswordTemplate">
+    <div class="stack">
+      <div>
+        <h2>Reset Password</h2>
+        <p>Enter your email and we will send a reset link.</p>
+      </div>
+      <form id="forgotPasswordForm" class="stack tight">
+        <label>
+          <span>Email</span>
+          <input type="email" name="email" required>
+        </label>
+        <button type="submit">Send Reset Link</button>
+      </form>
+      <button class="secondary" id="backToLoginFromReset">Back to Login</button>
+      <div id="forgotPasswordMessage" class="message"></div>
+    </div>
+  </template>
+
+  <template id="resetPasswordTemplate">
+    <div class="stack">
+      <div>
+        <h2>Choose New Password</h2>
+        <p>Set a new password for your PixelBug account.</p>
+      </div>
+      <form id="resetPasswordForm" class="stack tight">
+        <label>
+          <span>New Password</span>
+          <input type="password" name="newPassword" minlength="8" required>
+        </label>
+        <label>
+          <span>Confirm New Password</span>
+          <input type="password" name="confirmPassword" minlength="8" required>
+        </label>
+        <p class="muted-note">Use 8+ characters with uppercase, lowercase, and a number.</p>
+        <button type="submit">Update Password</button>
+      </form>
+      <button class="secondary" id="backToLoginAfterPasswordReset">Back to Login</button>
+      <div id="resetPasswordMessage" class="message"></div>
+    </div>
+  </template>
+
+  <script src="app.js"></script>
+</body>
+</html>
