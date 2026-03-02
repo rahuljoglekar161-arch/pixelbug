@@ -17,8 +17,8 @@ services:
       - key: PIXELBUG_COOKIE_SECURE
         value: "true"
       - key: PIXELBUG_BASE_URL
-        sync: false
+        sync: https://pixelbug-calendar.onrender.com
       - key: RESEND_API_KEY
-        sync: false
+        sync: re_aNcN5D9s_LyDB24zKCwaZBhUAd69xuq4S
       - key: PIXELBUG_EMAIL_FROM
         sync: false

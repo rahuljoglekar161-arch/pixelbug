@@ -1337,7 +1337,7 @@ function renderEventChip(show, user) {
   return `
     <div class="event-chip ${isAdmin(user) ? "draggable" : ""}" style="background:${color}" ${isAdmin(user) ? `draggable="true" data-show-id="${show.id}" title="Drag to reschedule"` : ""}>
       <p>${show.showName}</p>
-      <small>${show.showTime || "Time TBD"} · ${show.location} · ${visibleAssignees.map((crewUser) => crewUser.name).join(", ") || "Unassigned"}</small>
+      <small>${[show.location, visibleAssignees.map((crewUser) => crewUser.name).join(", ") || "Unassigned"].filter(Boolean).join(" · ")}</small>
     </div>
   `;
 }
@@ -1423,7 +1423,7 @@ function renderLaneEvent(show, user, totalMinutes) {
   return `
     <article class="lane-event event-chip ${isAdmin(user) ? "draggable" : ""}" style="background:${color}; top:${top}%; height:${height}%;" ${isAdmin(user) ? `draggable="true" data-show-id="${show.id}" title="Drag to reschedule"` : ""}>
       <p>${show.showName}</p>
-      <small>${show.showTime || "Time TBD"} · ${show.venue || show.location || "Venue TBD"}</small>
+      <small>${show.showTime ? `${show.showTime} · ` : ""}${show.location || "Location TBD"}</small>
       <small>${visibleAssignees.map((crewUser) => crewUser.name).join(", ") || "Unassigned"}</small>
     </article>
   `;
