@@ -1,17 +1,18 @@
 const STORAGE_KEY = "pixelbug-calendar-ui-v1";
 const COLOR_OPTIONS = [
-  "#ff6b35",
-  "#2a9d8f",
-  "#264653",
-  "#e9c46a",
-  "#8d99ae",
-  "#ef476f",
-  "#118ab2",
-  "#6a4c93",
-  "#3a86ff",
-  "#06d6a0",
-  "#f4a261",
-  "#8338ec"
+  "#ee8f8f",
+  "#f2b779",
+  "#e6cf72",
+  "#9fd67b",
+  "#73cfc0",
+  "#79afea",
+  "#9b92ef",
+  "#c78eeb",
+  "#ee97bf",
+  "#8fc3a0",
+  "#d9b27c",
+  "#7fd6f5",
+  "#f59fc1"
 ];
 
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -42,6 +43,12 @@ function formatDate(dateStr) {
     month: "short",
     year: "numeric"
   });
+}
+
+function formatDateRange(fromDate, toDate) {
+  if (!fromDate && !toDate) return "-";
+  if (!toDate || fromDate === toDate) return formatDate(fromDate);
+  return `${formatDate(fromDate)} - ${formatDate(toDate)}`;
 }
 
 function monthLabel(year, month) {
@@ -147,7 +154,41 @@ function getVisibleRangeLabel() {
 }
 
 function getShowsForDate(shows, value) {
-  return shows.filter((show) => show.showDate === value);
+  return shows.filter((show) => isDateWithinCalendarBlock(show, value));
+}
+
+function getShowStartDate(show) {
+  return show.showDateFrom || show.showDate || "";
+}
+
+function getShowEndDate(show) {
+  return show.showDateTo || show.showDateFrom || show.showDate || "";
+}
+
+function getCalendarBlockStartDate(show) {
+  const onwardDates = (show.assignments || [])
+    .map((assignment) => assignment.onwardTravelDate)
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+  return onwardDates[0] || getShowStartDate(show);
+}
+
+function getCalendarBlockEndDate(show) {
+  return getShowEndDate(show);
+}
+
+function isDateWithinCalendarBlock(show, value) {
+  const start = getCalendarBlockStartDate(show);
+  const end = getCalendarBlockEndDate(show);
+  if (!start) return false;
+  return value >= start && value <= end;
+}
+
+function isDateWithinShowRange(show, value) {
+  const start = getShowStartDate(show);
+  const end = getShowEndDate(show);
+  if (!start) return false;
+  return value >= start && value <= end;
 }
 
 function monthGroupLabel(dateStr) {
@@ -170,18 +211,23 @@ function sortShows(shows, mode) {
   const items = [...shows];
 
   if (mode === "crew") {
-    return items.sort((a, b) => getPrimaryCrewName(a).localeCompare(getPrimaryCrewName(b)) || a.showDate.localeCompare(b.showDate));
+    return items.sort((a, b) => getPrimaryCrewName(a).localeCompare(getPrimaryCrewName(b)) || getShowStartDate(a).localeCompare(getShowStartDate(b)));
+  }
+
+  if (mode === "status") {
+    const rank = (show) => (show.showStatus === "tentative" ? 1 : 0);
+    return items.sort((a, b) => rank(a) - rank(b) || getShowStartDate(a).localeCompare(getShowStartDate(b)));
   }
 
   if (mode === "city") {
-    return items.sort((a, b) => (a.location || "").localeCompare(b.location || "") || a.showDate.localeCompare(b.showDate));
+    return items.sort((a, b) => (a.location || "").localeCompare(b.location || "") || getShowStartDate(a).localeCompare(getShowStartDate(b)));
   }
 
   if (mode === "client") {
-    return items.sort((a, b) => (a.client || "").localeCompare(b.client || "") || a.showDate.localeCompare(b.showDate));
+    return items.sort((a, b) => (a.client || "").localeCompare(b.client || "") || getShowStartDate(a).localeCompare(getShowStartDate(b)));
   }
 
-  return items.sort((a, b) => a.showDate.localeCompare(b.showDate) || (a.showTime || "").localeCompare(b.showTime || ""));
+  return items.sort((a, b) => getShowStartDate(a).localeCompare(getShowStartDate(b)) || (a.showTime || "").localeCompare(b.showTime || ""));
 }
 
 function escapeXml(value) {
@@ -215,6 +261,7 @@ function makeWorksheetCell(cellRef, value, type = "inlineStr", styleId = null) {
 function buildShowsSheetXml(shows) {
   const headers = [
     "Show Date",
+    "No. of days",
     "Show Name",
     "Client",
     "Location",
@@ -236,24 +283,30 @@ function buildShowsSheetXml(shows) {
     assignments.forEach((assignment, assignmentIndex) => {
       const cells = [];
       const crewUser = assignment.crewId ? getUserById(assignment.crewId) : null;
+      const startDate = getShowStartDate(show);
+      const endDate = getShowEndDate(show);
+      const numberOfDays = startDate && endDate
+        ? Math.max(1, Math.round((parseDateKey(endDate) - parseDateKey(startDate)) / (1000 * 60 * 60 * 24)) + 1)
+        : 1;
 
       if (assignmentIndex === 0) {
-        cells.push(makeWorksheetCell(`A${rowNumber}`, show.showDate));
-        cells.push(makeWorksheetCell(`B${rowNumber}`, show.showName));
-        cells.push(makeWorksheetCell(`C${rowNumber}`, show.client));
-        cells.push(makeWorksheetCell(`D${rowNumber}`, show.location));
-        cells.push(makeWorksheetCell(`E${rowNumber}`, show.amountShow, "n"));
+        cells.push(makeWorksheetCell(`A${rowNumber}`, endDate || startDate || ""));
+        cells.push(makeWorksheetCell(`B${rowNumber}`, numberOfDays, "n"));
+        cells.push(makeWorksheetCell(`C${rowNumber}`, show.showName));
+        cells.push(makeWorksheetCell(`D${rowNumber}`, show.client));
+        cells.push(makeWorksheetCell(`E${rowNumber}`, show.location));
+        cells.push(makeWorksheetCell(`F${rowNumber}`, show.amountShow, "n"));
       }
 
-      cells.push(makeWorksheetCell(`F${rowNumber}`, crewUser?.name || ""));
-      cells.push(makeWorksheetCell(`G${rowNumber}`, assignment.operatorAmount, "n"));
+      cells.push(makeWorksheetCell(`G${rowNumber}`, crewUser?.name || ""));
+      cells.push(makeWorksheetCell(`H${rowNumber}`, assignment.operatorAmount, "n"));
       rows.push(`<row r="${rowNumber}">${cells.join("")}</row>`);
       rowNumber += 1;
     });
 
     const endRow = rowNumber - 1;
     if (endRow > startRow) {
-      ["A", "B", "C", "D", "E"].forEach((column) => merges.push(`${column}${startRow}:${column}${endRow}`));
+      ["A", "B", "C", "D", "E", "F"].forEach((column) => merges.push(`${column}${startRow}:${column}${endRow}`));
     }
   });
 
@@ -265,12 +318,13 @@ function buildShowsSheetXml(shows) {
   <sheetFormatPr defaultRowHeight="15"/>
   <cols>
     <col min="1" max="1" width="14" customWidth="1"/>
-    <col min="2" max="2" width="24" customWidth="1"/>
+    <col min="2" max="2" width="12" customWidth="1"/>
     <col min="3" max="3" width="24" customWidth="1"/>
-    <col min="4" max="4" width="18" customWidth="1"/>
+    <col min="4" max="4" width="24" customWidth="1"/>
     <col min="5" max="5" width="18" customWidth="1"/>
-    <col min="6" max="6" width="22" customWidth="1"/>
-    <col min="7" max="7" width="18" customWidth="1"/>
+    <col min="6" max="6" width="18" customWidth="1"/>
+    <col min="7" max="7" width="22" customWidth="1"/>
+    <col min="8" max="8" width="18" customWidth="1"/>
   </cols>
   <sheetData>
     ${rows.join("")}
@@ -455,6 +509,9 @@ function seedState() {
       selectedShowYear: "all",
       showSortMode: "date",
       selectedCrewFilter: "all",
+      expandedCalendarWeeks: {},
+      selectedCalendarShowId: null,
+      calendarReturnMode: "month",
       authPanelMode: "profile",
       authPanelOpen: false
     }
@@ -490,13 +547,22 @@ function normalizeState() {
 
     const assignments = (show.assignments || []).map((assignment) => ({
       ...assignment,
-      travelDate: assignment.travelDate ?? legacyTravelDate,
-      travelSector: assignment.travelSector ?? legacyTravelSector,
-      travelNotes: assignment.travelNotes ?? legacyTravelNotes
+      onwardTravelDate: assignment.onwardTravelDate ?? assignment.travelDate ?? legacyTravelDate,
+      returnTravelDate: assignment.returnTravelDate ?? "",
+      onwardTravelSector: assignment.onwardTravelSector ?? assignment.travelSector ?? legacyTravelSector,
+      returnTravelSector: assignment.returnTravelSector ?? "",
+      notes: assignment.notes ?? assignment.travelNotes ?? legacyTravelNotes,
+      travelDate: undefined,
+      travelSector: undefined,
+      travelNotes: undefined
     }));
 
     return {
       ...show,
+      showDateFrom: show.showDateFrom ?? show.showDate ?? "",
+      showDateTo: show.showDateTo ?? show.showDateFrom ?? show.showDate ?? "",
+      showDate: show.showDateFrom ?? show.showDate ?? "",
+      showStatus: show.showStatus === "tentative" ? "tentative" : "confirmed",
       assignments,
       travelDate: undefined,
       travelSector: undefined,
@@ -592,6 +658,9 @@ function ensureUiState() {
       selectedShowYear: "all",
       showSortMode: "date",
       selectedCrewFilter: "all",
+      expandedCalendarWeeks: {},
+      selectedCalendarShowId: null,
+      calendarReturnMode: "month",
       authPanelMode: "profile",
       authPanelOpen: false
     };
@@ -611,6 +680,18 @@ function ensureUiState() {
 
   if (!state.ui.selectedCrewFilter) {
     state.ui.selectedCrewFilter = "all";
+  }
+
+  if (!state.ui.expandedCalendarWeeks || typeof state.ui.expandedCalendarWeeks !== "object") {
+    state.ui.expandedCalendarWeeks = {};
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(state.ui, "selectedCalendarShowId")) {
+    state.ui.selectedCalendarShowId = null;
+  }
+
+  if (!state.ui.calendarReturnMode) {
+    state.ui.calendarReturnMode = "month";
   }
 
   if (!state.ui.authPanelMode) {
@@ -653,25 +734,6 @@ function showToast(message) {
   }, 2400);
 }
 
-async function handleEmailVerification() {
-  const url = new URL(window.location.href);
-  const token = url.searchParams.get("verify");
-  if (!token) return;
-
-  try {
-    await apiRequest("/api/verify-email", {
-      method: "POST",
-      body: JSON.stringify({ token })
-    });
-    showToast("Email verified. You can now sign in after approval.");
-  } catch (error) {
-    showToast(error.message);
-  }
-
-  url.searchParams.delete("verify");
-  window.history.replaceState({}, document.title, url.pathname + (url.search ? url.search : ""));
-}
-
 function getSidebarTabs(user) {
   return user && isAdmin(user)
     ? [
@@ -704,12 +766,12 @@ function getTakenColors(excludeUserId = null) {
 function visibleShowsForUser(user) {
   if (!user) return [];
   if (user.role === "admin" || user.role === "viewer") {
-    return [...state.shows].sort((a, b) => a.showDate.localeCompare(b.showDate));
+    return [...state.shows].sort((a, b) => getShowStartDate(a).localeCompare(getShowStartDate(b)));
   }
 
   return state.shows
     .filter((show) => show.assignments.some((assignment) => assignment.crewId === user.id))
-    .sort((a, b) => a.showDate.localeCompare(b.showDate));
+    .sort((a, b) => getShowStartDate(a).localeCompare(getShowStartDate(b)));
 }
 
 function canSeeOperatorAmount(user, assignment) {
@@ -721,6 +783,10 @@ function filterShowsBySelectedCrew(shows) {
     return shows;
   }
 
+  if (state.ui.selectedCrewFilter === "unassigned") {
+    return shows.filter((show) => !show.assignments.length);
+  }
+
   return shows.filter((show) => show.assignments.some((assignment) => assignment.crewId === state.ui.selectedCrewFilter));
 }
 
@@ -728,12 +794,14 @@ function renderCrewFilterControl(selectId, options = {}) {
   const label = options.label ?? "Crew";
   const wrapperClass = options.compact ? "sort-control compact-control" : "sort-control";
   const allLabel = options.allLabel ?? "All Crew";
+  const includeUnassigned = options.includeUnassigned ?? false;
   const crewUsers = getCrewUsers();
   return `
     <label class="${wrapperClass}">
       ${label ? `<span>${label}</span>` : ""}
       <select id="${selectId}">
         <option value="all" ${state.ui.selectedCrewFilter === "all" ? "selected" : ""}>${allLabel}</option>
+        ${includeUnassigned ? `<option value="unassigned" ${state.ui.selectedCrewFilter === "unassigned" ? "selected" : ""}>Unassigned</option>` : ""}
         ${crewUsers.map((crewUser) => `<option value="${crewUser.id}" ${state.ui.selectedCrewFilter === crewUser.id ? "selected" : ""}>${crewUser.name}</option>`).join("")}
       </select>
     </label>
@@ -814,29 +882,36 @@ function wireAdminSetupForm() {
 }
 
 function renderSidebarTabs() {
-  const node = document.getElementById("sidebarTabs");
   const user = getCurrentUser();
-  if (!node) return;
+  const nodes = [
+    document.getElementById("sidebarTabsDesktop"),
+    document.getElementById("sidebarTabsMobile")
+  ].filter(Boolean);
+  if (!nodes.length) return;
   if (!user) {
-    node.innerHTML = "";
+    nodes.forEach((node) => {
+      node.innerHTML = "";
+    });
     return;
   }
   ensureActiveSidebarTab(user);
   const tabs = getSidebarTabs(user);
-
-  node.innerHTML = tabs.map((tab) => `
+  const markup = tabs.map((tab) => `
     <button type="button" class="sidebar-tab ${state.ui.activeSidebarTab === tab.id ? "active" : ""}" data-target-panel="${tab.id}">
       <strong>${tab.label}</strong>
       <span>${tab.meta}</span>
     </button>
   `).join("");
 
-  node.querySelectorAll("[data-target-panel]").forEach((button) => {
-    button.addEventListener("click", () => {
-      state.ui.activeSidebarTab = button.dataset.targetPanel;
-      saveState(state);
-      renderSidebarTabs();
-      renderDashboard();
+  nodes.forEach((node) => {
+    node.innerHTML = markup;
+    node.querySelectorAll("[data-target-panel]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.ui.activeSidebarTab = button.dataset.targetPanel;
+        saveState(state);
+        renderSidebarTabs();
+        renderDashboard();
+      });
     });
   });
 }
@@ -1024,7 +1099,7 @@ function wireRegisterForm() {
       saveState(state);
       renderAuthPanel();
       const authMessage = document.getElementById("authMessage");
-      authMessage.innerHTML = `Account request submitted. Verify your email first, then wait for admin approval. <a href="${payload.verificationUrl || payload.verificationPath}">Open verification link</a>`;
+      authMessage.textContent = "Account request submitted. Wait for admin approval, then sign in with your email and password.";
     } catch (error) {
       message.textContent = error.message;
     }
@@ -1038,13 +1113,15 @@ function renderColorChoices(selected = null, containerId = "colorChoices", exclu
   container.innerHTML = "";
 
   COLOR_OPTIONS.forEach((color) => {
+    if (taken.includes(color) && selected !== color) {
+      return;
+    }
     const button = document.createElement("button");
     button.type = "button";
     button.className = `color-option ${selected === color ? "selected" : ""}`;
     button.style.background = color;
     button.dataset.color = color;
-    button.disabled = taken.includes(color) && selected !== color;
-    button.title = taken.includes(color) && selected !== color ? "Already taken" : color;
+    button.title = color;
     button.addEventListener("click", () => {
       container.querySelectorAll(".color-option").forEach((node) => node.classList.remove("selected"));
       button.classList.add("selected");
@@ -1091,7 +1168,6 @@ function renderSessionActions(user) {
               <div class="meta-line">${user.email}</div>
               <div class="meta-line">Role: ${user.role === "viewer" ? "View Only" : user.role === "admin" ? "Admin" : "Crew"}</div>
               <div class="meta-line">Phone: ${user.phone}</div>
-              <div class="meta-line">Email: ${user.emailVerified ? "Verified" : "Pending verification"}</div>
             </div>
           `}
           <button type="button" class="secondary small" id="logoutButton">Logout</button>
@@ -1225,7 +1301,7 @@ function renderCalendarToolbarControls() {
         <button class="ghost small calendar-nav-button" data-range-nav="next">Next</button>
       </div>
       <div class="calendar-filter-group">
-        ${renderCrewFilterControl("calendarCrewFilter", { label: "", allLabel: "Sort by Crew", compact: true })}
+        ${renderCrewFilterControl("calendarCrewFilter", { label: "Crew", allLabel: "All Crew", compact: true, includeUnassigned: true })}
       </div>
     </div>
   `;
@@ -1281,6 +1357,8 @@ function renderCalendar(user, shows) {
   const firstDay = new Date(state.view.year, state.view.month, 1);
   const startDay = firstDay.getDay();
   const daysInMonth = new Date(state.view.year, state.view.month + 1, 0).getDate();
+  const monthStartKey = dateKey(firstDay);
+  const monthEndKey = dateKey(new Date(state.view.year, state.view.month + 1, 0));
   const today = new Date();
 
   const cells = [];
@@ -1290,10 +1368,18 @@ function renderCalendar(user, shows) {
 
   for (let day = 1; day <= daysInMonth; day += 1) {
     const dateKey = `${state.view.year}-${String(state.view.month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    const dayShows = shows.filter((show) => show.showDate === dateKey);
+    const dayShows = getShowsForDate(shows, dateKey);
     cells.push({ muted: false, label: day, dateKey, shows: dayShows });
   }
 
+  while (cells.length % 7 !== 0) {
+    cells.push({ muted: true, label: "", dateKey: null, shows: [] });
+  }
+
+  const weeks = [];
+  for (let index = 0; index < cells.length; index += 7) {
+    weeks.push(cells.slice(index, index + 7));
+  }
   panel.innerHTML = `
     <div class="calendar-toolbar">
       <div>
@@ -1304,13 +1390,77 @@ function renderCalendar(user, shows) {
     </div>
     <div class="calendar-grid">
       ${weekdayLabels.map((day) => `<div class="weekday">${day}</div>`).join("")}
-      ${cells.map((cell) => {
-        const isToday = cell.dateKey && new Date(`${cell.dateKey}T00:00:00`).toDateString() === today.toDateString();
+      ${weeks.map((week) => {
+        const weekDateKeys = week.map((cell) => cell.dateKey).filter(Boolean);
+        const weekStartKey = weekDateKeys[0] || monthStartKey;
+        const weekEndKey = weekDateKeys[weekDateKeys.length - 1] || monthEndKey;
+        const weekKey = weekStartKey;
+        const weekExpanded = Boolean(state.ui.expandedCalendarWeeks[weekKey]);
+        const weekShows = shows
+          .filter((show) => getCalendarBlockEndDate(show) >= weekStartKey && getCalendarBlockStartDate(show) <= weekEndKey)
+          .sort((a, b) => getCalendarBlockStartDate(a).localeCompare(getCalendarBlockStartDate(b)) || getCalendarBlockEndDate(a).localeCompare(getCalendarBlockEndDate(b)) || (a.showName || "").localeCompare(b.showName || ""));
+        const lanes = [];
+        const hiddenCounts = new Array(7).fill(0);
+        const overflowCounts = new Array(7).fill(0);
+        const bars = weekShows.map((show) => {
+          const clippedStart = getCalendarBlockStartDate(show) > weekStartKey ? getCalendarBlockStartDate(show) : weekStartKey;
+          const clippedEnd = getCalendarBlockEndDate(show) < weekEndKey ? getCalendarBlockEndDate(show) : weekEndKey;
+          const startIndex = week.findIndex((cell) => cell.dateKey === clippedStart);
+          const endIndex = week.findIndex((cell) => cell.dateKey === clippedEnd);
+          if (startIndex === -1 || endIndex === -1) return null;
+          let laneIndex = lanes.findIndex((laneEnd) => laneEnd < startIndex);
+          if (laneIndex === -1) {
+            laneIndex = lanes.length;
+            lanes.push(endIndex);
+          } else {
+            lanes[laneIndex] = endIndex;
+          }
+          return {
+            show,
+            startIndex,
+            endIndex,
+            laneIndex,
+            clippedStart: clippedStart !== getCalendarBlockStartDate(show),
+            clippedEnd: clippedEnd !== getCalendarBlockEndDate(show)
+          };
+        }).filter(Boolean);
+        const collapsedVisibleLanes = 3;
+        bars.forEach((bar) => {
+          if (bar.laneIndex >= collapsedVisibleLanes) {
+            for (let index = bar.startIndex; index <= bar.endIndex; index += 1) {
+              overflowCounts[index] += 1;
+            }
+          }
+        });
+        const visibleLanes = weekExpanded ? Math.max(lanes.length, 1) : Math.min(Math.max(lanes.length, 1), collapsedVisibleLanes);
+        const visibleBars = bars.filter((bar) => {
+          if (bar.laneIndex < visibleLanes) return true;
+          for (let index = bar.startIndex; index <= bar.endIndex; index += 1) {
+            hiddenCounts[index] += 1;
+          }
+          return false;
+        });
+        const laneSpace = (visibleLanes * 16) + 8;
+        const barMarkup = visibleBars.map((bar) => renderMonthRangeBar(bar.show, user, bar.startIndex, bar.endIndex, bar.laneIndex, bar.clippedStart, bar.clippedEnd)).join("");
+
         return `
-          <article class="calendar-day ${cell.muted ? "muted" : ""} ${isToday ? "today" : ""}" ${cell.dateKey ? `data-date-key="${cell.dateKey}"` : ""}>
-            <span class="day-number">${cell.label || ""}</span>
-            ${cell.shows.map((show) => renderEventChip(show, user)).join("")}
-          </article>
+          <div class="month-week">
+            <div class="week-days" style="--lane-space:${laneSpace}px;">
+              ${barMarkup}
+              ${week.map((cell) => {
+                const isToday = cell.dateKey && new Date(`${cell.dateKey}T00:00:00`).toDateString() === today.toDateString();
+                const cellIndex = week.indexOf(cell);
+                const hiddenCount = cell.dateKey ? hiddenCounts[cellIndex] : 0;
+                const overflowCount = cell.dateKey ? overflowCounts[cellIndex] : 0;
+                return `
+                  <article class="calendar-day ${cell.muted ? "muted" : ""} ${isToday ? "today" : ""}" ${cell.dateKey ? `data-date-key="${cell.dateKey}"` : ""}>
+                    <span class="day-number">${cell.label || ""}</span>
+                    ${cell.dateKey && overflowCount > 0 ? `<button type="button" class="calendar-more-toggle" data-week-key="${weekKey}" data-state="${weekExpanded ? "less" : "more"}">${weekExpanded ? "Less.." : `${hiddenCount || overflowCount} more..`}</button>` : ""}
+                  </article>
+                `;
+              }).join("")}
+            </div>
+          </div>
         `;
       }).join("")}
     </div>
@@ -1319,23 +1469,68 @@ function renderCalendar(user, shows) {
   if (isAdmin(user)) {
     wireCalendarDragAndDrop(panel);
   }
+  panel.querySelectorAll("[data-calendar-show-id]").forEach((node) => {
+    node.addEventListener("click", () => {
+      const show = shows.find((item) => item.id === node.dataset.calendarShowId);
+      if (!show) return;
+      ensureUiState();
+      state.ui.selectedCalendarShowId = show.id;
+      state.ui.calendarReturnMode = "month";
+      state.view.mode = "day";
+      syncViewDateParts(parseDateKey(node.dataset.focusDate || getShowStartDate(show)));
+      saveState(state);
+      renderDashboard();
+    });
+  });
+  panel.querySelectorAll("[data-week-key]").forEach((button) => {
+    button.addEventListener("click", () => {
+      ensureUiState();
+      const key = button.dataset.weekKey;
+      state.ui.expandedCalendarWeeks[key] = !state.ui.expandedCalendarWeeks[key];
+      saveState(state);
+      renderDashboard();
+    });
+  });
   wireCalendarToolbarControls(panel);
 }
 
-function renderEventChip(show, user) {
+function getShowDisplayMeta(show, user) {
   const crewUsers = show.assignments
     .map((assignment) => getUserById(assignment.crewId))
     .filter(Boolean);
   const palette = crewUsers.map((crewUser) => crewUser.color).filter(Boolean);
   const color = palette.length > 1
     ? `linear-gradient(135deg, ${palette.join(", ")})`
-    : (palette[0] || "#264653");
+    : (palette[0] || "linear-gradient(135deg, #575e70, #8b93a5)");
   const visibleAssignees = user.role === "crew"
     ? crewUsers.filter((crewUser) => crewUser.id === user.id)
     : crewUsers;
+  return { crewUsers, visibleAssignees, color };
+}
+
+function renderMonthRangeBar(show, user, startIndex, endIndex, laneIndex, clippedStart, clippedEnd) {
+  const { visibleAssignees, color } = getShowDisplayMeta(show, user);
+  const span = (endIndex - startIndex) + 1;
+  const left = `calc(${startIndex} * (100% / 7) + 6px)`;
+  const width = `calc(${span} * (100% / 7) - 12px)`;
+  const startClass = clippedStart ? "continued-start" : "";
+  const endClass = clippedEnd ? "continued-end" : "";
+  const locationLabel = show.location ? ` - ${show.location}` : "";
+  const crewLabel = visibleAssignees.map((crewUser) => crewUser.name).join(", ") || "Unassigned";
 
   return `
-    <div class="event-chip ${isAdmin(user) ? "draggable" : ""}" style="background:${color}" ${isAdmin(user) ? `draggable="true" data-show-id="${show.id}" title="Drag to reschedule"` : ""}>
+    <div class="month-range-bar event-chip ${startClass} ${endClass} ${show.showStatus === "tentative" ? "tentative" : ""} ${isAdmin(user) ? "draggable" : ""}" style="background:${color}; left:${left}; width:${width}; --lane-index:${laneIndex};" data-calendar-show-id="${show.id}" data-focus-date="${getShowStartDate(show)}" ${isAdmin(user) ? `draggable="true" data-show-id="${show.id}" title="Drag to reschedule"` : ""}>
+      <p><strong>${show.showName}</strong><span>${locationLabel} (${crewLabel})</span></p>
+      <small>${[show.location, visibleAssignees.map((crewUser) => crewUser.name).join(", ") || "Unassigned"].filter(Boolean).join(" · ")}</small>
+    </div>
+  `;
+}
+
+function renderEventChip(show, user) {
+  const { visibleAssignees, color } = getShowDisplayMeta(show, user);
+
+  return `
+    <div class="event-chip ${show.showStatus === "tentative" ? "tentative" : ""} ${isAdmin(user) ? "draggable" : ""}" style="background:${color}" ${isAdmin(user) ? `draggable="true" data-show-id="${show.id}" title="Drag to reschedule"` : ""}>
       <p>${show.showName}</p>
       <small>${[show.location, visibleAssignees.map((crewUser) => crewUser.name).join(", ") || "Unassigned"].filter(Boolean).join(" · ")}</small>
     </div>
@@ -1347,51 +1542,156 @@ function renderWeekCalendar(user, shows) {
   const focusDate = getFocusDate();
   const weekStart = startOfWeek(focusDate);
   const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+  const weekStartKey = dateKey(weekStart);
+  const weekEndKey = dateKey(addDays(weekStart, 6));
+  const rangedShows = shows
+    .filter((show) => getCalendarBlockEndDate(show) >= weekStartKey && getCalendarBlockStartDate(show) <= weekEndKey)
+    .filter((show) => getCalendarBlockStartDate(show) !== getCalendarBlockEndDate(show))
+    .sort((a, b) => getCalendarBlockStartDate(a).localeCompare(getCalendarBlockStartDate(b)) || getCalendarBlockEndDate(a).localeCompare(getCalendarBlockEndDate(b)) || (a.showName || "").localeCompare(b.showName || ""));
+  const rangeLanes = [];
+  const rangeMarkup = rangedShows.map((show) => {
+    const clippedStart = getCalendarBlockStartDate(show) > weekStartKey ? getCalendarBlockStartDate(show) : weekStartKey;
+    const clippedEnd = getCalendarBlockEndDate(show) < weekEndKey ? getCalendarBlockEndDate(show) : weekEndKey;
+    const startIndex = days.findIndex((day) => dateKey(day) === clippedStart);
+    const endIndex = days.findIndex((day) => dateKey(day) === clippedEnd);
+    if (startIndex === -1 || endIndex === -1) return "";
+    let laneIndex = rangeLanes.findIndex((laneEnd) => laneEnd < startIndex);
+    if (laneIndex === -1) {
+      laneIndex = rangeLanes.length;
+      rangeLanes.push(endIndex);
+    } else {
+      rangeLanes[laneIndex] = endIndex;
+    }
+    return renderWeekRangeBar(show, user, startIndex, endIndex, laneIndex, clippedStart !== getCalendarBlockStartDate(show), clippedEnd !== getCalendarBlockEndDate(show));
+  }).join("");
+  const rangeHeight = Math.max(rangeLanes.length, 1) * 26;
 
   panel.innerHTML = `
     <div class="calendar-toolbar">
       <div>
         <h3>${getVisibleRangeLabel()}</h3>
-        <p class="muted-note">Week view uses hourly time lanes based on show time.</p>
+        <p class="muted-note">Week view shows one shared weekly board with broader strips for assigned entries.</p>
       </div>
       ${renderCalendarToolbarControls()}
     </div>
-    <div class="time-grid week-grid">
-      <div class="time-axis-header"></div>
-      ${days.map((day) => `<div class="lane-day-header ${dateKey(day) === dateKey(new Date()) ? "today" : ""}">${day.toLocaleDateString("en-IN", { weekday: "short" })}<strong>${formatShortDate(day)}</strong></div>`).join("")}
-      <div class="time-axis">
-        ${Array.from({ length: DAY_END_HOUR - DAY_START_HOUR }, (_, hourIndex) => `<div class="time-slot-label">${timeLabel(DAY_START_HOUR + hourIndex)}</div>`).join("")}
+    <section class="week-board">
+      <div class="week-board-headers">
+        ${days.map((day) => `<div class="lane-day-header ${dateKey(day) === dateKey(new Date()) ? "today" : ""}">${day.toLocaleDateString("en-IN", { weekday: "short" })}<strong>${formatShortDate(day)}</strong></div>`).join("")}
       </div>
-      ${days.map((day) => renderTimeLaneDay(day, getShowsForDate(shows, dateKey(day)), user, true)).join("")}
-    </div>
+      <div class="week-days week-days-board" style="--lane-space:${rangeHeight + 14}px;">
+        ${rangeMarkup}
+        ${days.map((day) => {
+          const dayKey = dateKey(day);
+          const singleDayShows = getShowsForDate(shows, dayKey)
+            .filter((show) => getCalendarBlockStartDate(show) === getCalendarBlockEndDate(show))
+            .sort((a, b) => (a.showName || "").localeCompare(b.showName || ""));
+          return `
+            <article class="calendar-day week-calendar-day ${dayKey === dateKey(new Date()) ? "today" : ""}" data-date-key="${dayKey}">
+              <span class="day-number">${day.getDate()}</span>
+              <div class="week-day-show-list">
+                ${singleDayShows.map((show) => renderWeekDayChip(show, user)).join("")}
+              </div>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    </section>
   `;
 
   if (isAdmin(user)) {
     wireCalendarDragAndDrop(panel);
   }
+  panel.querySelectorAll("[data-calendar-show-id]").forEach((node) => {
+    node.addEventListener("click", () => {
+      const show = shows.find((item) => item.id === node.dataset.calendarShowId);
+      if (!show) return;
+      ensureUiState();
+      state.ui.selectedCalendarShowId = show.id;
+      state.ui.calendarReturnMode = "week";
+      state.view.mode = "day";
+      syncViewDateParts(parseDateKey(node.dataset.focusDate || getShowStartDate(show)));
+      saveState(state);
+      renderDashboard();
+    });
+  });
   wireCalendarToolbarControls(panel);
+}
+
+function renderWeekRangeBar(show, user, startIndex, endIndex, laneIndex, clippedStart, clippedEnd) {
+  const { visibleAssignees, color } = getShowDisplayMeta(show, user);
+  const span = (endIndex - startIndex) + 1;
+  const left = `calc(${startIndex} * (100% / 7) + 6px)`;
+  const width = `calc(${span} * (100% / 7) - 12px)`;
+  const startClass = clippedStart ? "continued-start" : "";
+  const endClass = clippedEnd ? "continued-end" : "";
+  const locationLabel = show.location ? ` - ${show.location}` : "";
+  const crewLabel = visibleAssignees.map((crewUser) => crewUser.name).join(", ") || "Unassigned";
+
+  return `
+    <div class="week-range-bar month-range-bar event-chip ${startClass} ${endClass} ${show.showStatus === "tentative" ? "tentative" : ""} ${isAdmin(user) ? "draggable" : ""}" style="background:${color}; left:${left}; width:${width}; --lane-index:${laneIndex};" data-calendar-show-id="${show.id}" data-focus-date="${getShowStartDate(show)}" ${isAdmin(user) ? `draggable="true" data-show-id="${show.id}" title="Drag to reschedule"` : ""}>
+      <p><strong>${show.showName}</strong><span>${locationLabel} (${crewLabel})</span></p>
+    </div>
+  `;
+}
+
+function renderWeekDayChip(show, user) {
+  const { visibleAssignees, color } = getShowDisplayMeta(show, user);
+  const locationLabel = show.location ? ` - ${show.location}` : "";
+  const crewLabel = visibleAssignees.map((crewUser) => crewUser.name).join(", ") || "Unassigned";
+  return `
+    <button type="button" class="week-day-chip event-chip ${show.showStatus === "tentative" ? "tentative" : ""} ${isAdmin(user) ? "draggable" : ""}" style="background:${color}" data-calendar-show-id="${show.id}" data-focus-date="${getShowStartDate(show)}" ${isAdmin(user) ? `draggable="true" data-show-id="${show.id}" title="Drag to reschedule"` : ""}>
+      <p><strong>${show.showName}</strong><span>${locationLabel} (${crewLabel})</span></p>
+      <small>${visibleAssignees.map((crewUser) => crewUser.name).join(", ") || "Unassigned"}</small>
+    </button>
+  `;
 }
 
 function renderDayCalendar(user, shows) {
   const panel = document.getElementById("calendarPanel");
   const focusDate = getFocusDate();
   const focusKey = dateKey(focusDate);
+  const dayShows = getShowsForDate(shows, focusKey)
+    .sort((a, b) => getCalendarBlockStartDate(a).localeCompare(getCalendarBlockStartDate(b)) || (a.showName || "").localeCompare(b.showName || ""));
+  const selectedCalendarShow = dayShows.find((show) => show.id === state.ui.selectedCalendarShowId) || null;
+  const listShows = selectedCalendarShow
+    ? dayShows.filter((show) => show.id !== selectedCalendarShow.id)
+    : dayShows;
 
   panel.innerHTML = `
     <div class="calendar-toolbar">
       <div>
         <h3>${getVisibleRangeLabel()}</h3>
-        <p class="muted-note">Day view zooms into one date with hourly lanes.</p>
+        <p class="muted-note">Day view shows all entries for the selected date in a list.</p>
       </div>
       ${renderCalendarToolbarControls()}
     </div>
-    <div class="time-grid day-grid">
-      <div class="time-axis">
-        ${Array.from({ length: DAY_END_HOUR - DAY_START_HOUR }, (_, hourIndex) => `<div class="time-slot-label">${timeLabel(DAY_START_HOUR + hourIndex)}</div>`).join("")}
+    <section class="panel day-list-panel">
+      <div class="lane-day-header single ${focusKey === dateKey(new Date()) ? "today" : ""}">
+        ${focusDate.toLocaleDateString("en-IN", { weekday: "long" })}
+        <strong>${formatWeekdayDate(focusDate)}</strong>
       </div>
-      ${renderTimeLaneDay(focusDate, getShowsForDate(shows, focusKey), user, false)}
-    </div>
+      ${selectedCalendarShow ? `
+        <div class="calendar-show-panel">
+          <div class="calendar-show-panel-header">
+            <h4>Show Details</h4>
+            <button type="button" class="ghost small" id="closeCalendarShowPanel">Close</button>
+          </div>
+          ${renderShowCard(selectedCalendarShow, user)}
+        </div>
+      ` : ""}
+      <div class="show-list day-show-list">
+        ${listShows.length ? listShows.map((show) => renderShowCard(show, user)).join("") : (selectedCalendarShow ? "<p>No other shows scheduled for this date.</p>" : "<p>No shows scheduled for this date.</p>")}
+      </div>
+    </section>
   `;
+  panel.querySelector("#closeCalendarShowPanel")?.addEventListener("click", () => {
+    ensureUiState();
+    state.ui.selectedCalendarShowId = null;
+    state.view.mode = state.ui.calendarReturnMode || "month";
+    state.ui.calendarReturnMode = "month";
+    saveState(state);
+    renderDashboard();
+  });
   wireCalendarToolbarControls(panel);
 }
 
@@ -1430,19 +1730,22 @@ function renderLaneEvent(show, user, totalMinutes) {
 }
 
 function isShowInCurrentRange(show) {
-  const showDate = parseDateKey(show.showDate);
+  const showStart = parseDateKey(getCalendarBlockStartDate(show));
+  const showEnd = parseDateKey(getCalendarBlockEndDate(show));
   const focusDate = getFocusDate();
   if (state.view.mode === "day") {
-    return show.showDate === dateKey(focusDate);
+    return isDateWithinCalendarBlock(show, dateKey(focusDate));
   }
 
   if (state.view.mode === "week") {
     const start = startOfWeek(focusDate);
     const end = addDays(start, 6);
-    return showDate >= start && showDate <= end;
+    return showEnd >= start && showStart <= end;
   }
 
-  return showDate.getMonth() === state.view.month && showDate.getFullYear() === state.view.year;
+  const monthStart = new Date(state.view.year, state.view.month, 1);
+  const monthEnd = new Date(state.view.year, state.view.month + 1, 0);
+  return showEnd >= monthStart && showStart <= monthEnd;
 }
 
 function wireCalendarDragAndDrop(panel) {
@@ -1481,8 +1784,12 @@ function wireCalendarDragAndDrop(panel) {
       const showId = event.dataTransfer.getData("text/plain");
       const show = state.shows.find((item) => item.id === showId);
       const nextDate = cell.dataset.dateKey;
-      if (!show || !nextDate || show.showDate === nextDate) return;
+      if (!show || !nextDate || getShowStartDate(show) === nextDate) return;
 
+      const endDate = getShowEndDate(show);
+      const durationDays = Math.max(0, Math.round((parseDateKey(endDate) - parseDateKey(getShowStartDate(show))) / (1000 * 60 * 60 * 24)));
+      show.showDateFrom = nextDate;
+      show.showDateTo = dateKey(addDays(parseDateKey(nextDate), durationDays));
       show.showDate = nextDate;
       try {
         await syncAdminState();
@@ -1522,7 +1829,7 @@ function renderLegend(user) {
 function renderShowsList(user, shows, sourceShows = shows) {
   const panel = document.getElementById("showsPanel");
   const groupedShows = shows.reduce((groups, show) => {
-    const key = show.showDate.slice(0, 7);
+    const key = getShowStartDate(show).slice(0, 7);
     if (!groups[key]) {
       groups[key] = [];
     }
@@ -1530,7 +1837,7 @@ function renderShowsList(user, shows, sourceShows = shows) {
     return groups;
   }, {});
   const sourceGroupedShows = sourceShows.reduce((groups, show) => {
-    const key = show.showDate.slice(0, 7);
+    const key = getShowStartDate(show).slice(0, 7);
     if (!groups[key]) {
       groups[key] = [];
     }
@@ -1562,7 +1869,7 @@ function renderShowsList(user, shows, sourceShows = shows) {
   }
 
   const filteredShows = shows.filter((show) => {
-    const showMonthKey = show.showDate.slice(0, 7);
+    const showMonthKey = getShowStartDate(show).slice(0, 7);
     const yearMatch = state.ui.selectedShowYear === "all" || showMonthKey.startsWith(state.ui.selectedShowYear);
     const monthMatch = state.ui.activeShowMonth === "all" || showMonthKey === state.ui.activeShowMonth;
     return yearMatch && monthMatch;
@@ -1582,7 +1889,7 @@ function renderShowsList(user, shows, sourceShows = shows) {
       ${sourceShows.length ? `
         <div class="shows-toolbar">
           <div class="shows-toolbar-top">
-            ${renderCrewFilterControl("showsCrewFilter")}
+            ${renderCrewFilterControl("showsCrewFilter", { includeUnassigned: true })}
             <label class="sort-control">
               <span>Year</span>
               <select id="showYearFilter">
@@ -1600,11 +1907,12 @@ function renderShowsList(user, shows, sourceShows = shows) {
               <select id="showSortMode">
                 <option value="date" ${state.ui.showSortMode === "date" ? "selected" : ""}>Date</option>
                 <option value="crew" ${state.ui.showSortMode === "crew" ? "selected" : ""}>Crew</option>
+                <option value="status" ${state.ui.showSortMode === "status" ? "selected" : ""}>Show Status</option>
                 <option value="city" ${state.ui.showSortMode === "city" ? "selected" : ""}>City</option>
                 <option value="client" ${state.ui.showSortMode === "client" ? "selected" : ""}>Client</option>
               </select>
             </label>
-            ${isAdmin(user) ? '<button type="button" class="secondary" id="exportMonthButton">Export Month Excel</button>' : ""}
+            ${isAdmin(user) ? '<button type="button" class="secondary" id="exportMonthButton">Export Excel</button>' : ""}
           </div>
         </div>
         <section class="month-group">
@@ -1682,22 +1990,33 @@ function renderShowCard(show, user) {
     const crewUser = getUserById(assignment.crewId);
     if (!crewUser) return "";
     const amount = canSeeOperatorAmount(user, assignment) ? formatCurrency(assignment.operatorAmount) : "Hidden";
-    const travelDate = assignment.travelDate ? formatDate(assignment.travelDate) : "-";
-    const travelSector = assignment.travelSector || "-";
-    const travelNotes = assignment.travelNotes || "-";
+    const onwardTravelDate = assignment.onwardTravelDate ? formatDate(assignment.onwardTravelDate) : "-";
+    const returnTravelDate = assignment.returnTravelDate ? formatDate(assignment.returnTravelDate) : "-";
+    const onwardTravelSector = assignment.onwardTravelSector || "-";
+    const returnTravelSector = assignment.returnTravelSector || "-";
+    const notes = assignment.notes || "-";
     return `
       <div class="assignment-card">
         <header>
           <div>
             <strong>${crewUser.name}</strong>
-            <div class="meta">${crewUser.email}</div>
           </div>
           <span class="pill" style="background:${crewUser.color}; color:white;">Crew</span>
         </header>
-        <div class="meta">Operator Amount: ${amount}</div>
-        <div class="meta">Travel Date: ${travelDate}</div>
-        <div class="meta">Travel Sector: ${travelSector}</div>
-        <div class="meta">Travel Notes: ${travelNotes}</div>
+        <details class="assignment-details">
+          <summary>
+            <span class="more-label">More..</span>
+            <span class="less-label">Less..</span>
+          </summary>
+          <div class="assignment-details-body">
+            <div class="meta">Operator Amount: ${amount}</div>
+            <div class="meta">Onward Travel Date: ${onwardTravelDate}</div>
+            <div class="meta">Return Travel Date: ${returnTravelDate}</div>
+            <div class="meta">Onward Travel Sector: ${onwardTravelSector}</div>
+            <div class="meta">Return Travel Sector: ${returnTravelSector}</div>
+            <div class="meta">Notes: ${notes}</div>
+          </div>
+        </details>
       </div>
     `;
   }).join("");
@@ -1707,16 +2026,15 @@ function renderShowCard(show, user) {
       <header>
         <div>
           <h4>${show.showName}</h4>
-          <div class="meta">${formatDate(show.showDate)} · ${show.showTime || "-"}</div>
+          <div class="meta">${formatDateRange(getShowStartDate(show), getShowEndDate(show))}</div>
         </div>
         ${isAdmin(user) ? `<button class="secondary small" data-edit-show="${show.id}">Edit</button>` : ""}
       </header>
       <div class="show-banner">
         <span class="show-banner-item">${show.location || "Location TBD"}</span>
         <span class="show-banner-item">${show.client || "Client TBD"}</span>
-      </div>
-      <div class="form-grid">
-        ${isAdmin(user) ? `<div class="detail-card"><strong>Show Amount</strong><div class="meta">${formatCurrency(show.amountShow)}</div></div>` : ""}
+        ${isAdmin(user) ? `<span class="show-banner-item">${formatCurrency(show.amountShow)}</span>` : ""}
+        <span class="show-banner-item">${show.showStatus === "tentative" ? "Tentative" : "Confirmed"}</span>
       </div>
       <div class="stack" style="margin-top:12px;">
         <strong>Assigned Crew</strong>
@@ -1749,11 +2067,25 @@ function renderShowForm() {
       <form id="showForm" class="stack tight">
         <input type="hidden" name="showId">
         <div class="form-grid">
-          <label class="field"><span>Show Date</span><input type="date" name="showDate" required></label>
+          <label class="field"><span>Show Date From</span><input type="date" name="showDateFrom" required></label>
+          <label class="field"><span>Show Date To</span><input type="date" name="showDateTo" required></label>
           <label class="field"><span>Show Name</span><input type="text" name="showName" required></label>
           <label class="field"><span>Client</span><input type="text" name="client"></label>
           <label class="field"><span>Location</span><input type="text" name="location"></label>
-          <label class="field"><span>Amount of the Show</span><input type="number" name="amountShow" min="0" step="1000"></label>
+          <label class="field"><span>Amount of the Show</span><input type="number" name="amountShow" min="0" step="1"></label>
+        </div>
+        <div class="field">
+          <span>Show Status</span>
+          <div class="status-toggle" role="radiogroup" aria-label="Show Status">
+            <label class="status-option">
+              <input type="radio" name="showStatus" value="confirmed" checked>
+              <span>Confirmed</span>
+            </label>
+            <label class="status-option">
+              <input type="radio" name="showStatus" value="tentative">
+              <span>Tentative</span>
+            </label>
+          </div>
         </div>
         <div class="stack tight">
           <strong>Assign Crew Members</strong>
@@ -1784,19 +2116,27 @@ function renderShowForm() {
       </label>
       <label class="field">
         <span>Amount of the Operator</span>
-        <input type="number" name="assignmentAmount" min="0" step="1000" value="${assignment?.operatorAmount ?? ""}">
+        <input type="number" name="assignmentAmount" min="0" step="1" value="${assignment?.operatorAmount ?? ""}">
       </label>
       <label class="field">
-        <span>Travel Date</span>
-        <input type="date" name="assignmentTravelDate" value="${assignment?.travelDate ?? ""}">
+        <span>Onward Travel Date</span>
+        <input type="date" name="assignmentOnwardTravelDate" value="${assignment?.onwardTravelDate ?? ""}">
       </label>
       <label class="field">
-        <span>Travel Sector</span>
-        <input type="text" name="assignmentTravelSector" value="${assignment?.travelSector ?? ""}">
+        <span>Return Travel Date</span>
+        <input type="date" name="assignmentReturnTravelDate" value="${assignment?.returnTravelDate ?? ""}">
       </label>
       <label class="field">
-        <span>Travel Notes</span>
-        <input type="text" name="assignmentTravelNotes" value="${assignment?.travelNotes ?? ""}">
+        <span>Onward Travel Sector</span>
+        <input type="text" name="assignmentOnwardTravelSector" value="${assignment?.onwardTravelSector ?? ""}">
+      </label>
+      <label class="field">
+        <span>Return Travel Sector</span>
+        <input type="text" name="assignmentReturnTravelSector" value="${assignment?.returnTravelSector ?? ""}">
+      </label>
+      <label class="field">
+        <span>Notes</span>
+        <input type="text" name="assignmentNotes" value="${assignment?.notes ?? ""}">
       </label>
       <button type="button" class="ghost small remove-assignment">Remove</button>
     `;
@@ -1842,17 +2182,21 @@ function renderShowForm() {
       .map((row) => ({
         crewId: row.querySelector('select[name="assignmentCrew"]').value,
         operatorAmount: row.querySelector('input[name="assignmentAmount"]').value,
-        travelDate: row.querySelector('input[name="assignmentTravelDate"]').value,
-        travelSector: row.querySelector('input[name="assignmentTravelSector"]').value,
-        travelNotes: row.querySelector('input[name="assignmentTravelNotes"]').value
+        onwardTravelDate: row.querySelector('input[name="assignmentOnwardTravelDate"]').value,
+        returnTravelDate: row.querySelector('input[name="assignmentReturnTravelDate"]').value,
+        onwardTravelSector: row.querySelector('input[name="assignmentOnwardTravelSector"]').value,
+        returnTravelSector: row.querySelector('input[name="assignmentReturnTravelSector"]').value,
+        notes: row.querySelector('input[name="assignmentNotes"]').value
       }))
       .filter((assignment) => assignment.crewId)
       .map((assignment) => ({
         crewId: assignment.crewId,
         operatorAmount: Number(assignment.operatorAmount || 0),
-        travelDate: assignment.travelDate,
-        travelSector: assignment.travelSector.trim(),
-        travelNotes: assignment.travelNotes.trim()
+        onwardTravelDate: assignment.onwardTravelDate,
+        returnTravelDate: assignment.returnTravelDate,
+        onwardTravelSector: assignment.onwardTravelSector.trim(),
+        returnTravelSector: assignment.returnTravelSector.trim(),
+        notes: assignment.notes.trim()
       }));
 
     const uniqueCrewIds = new Set(assignments.map((assignment) => assignment.crewId));
@@ -1863,7 +2207,10 @@ function renderShowForm() {
 
     const payload = {
       id: showId || uid("show"),
-      showDate: formData.get("showDate").toString(),
+      showDateFrom: formData.get("showDateFrom").toString(),
+      showDateTo: formData.get("showDateTo").toString(),
+      showDate: formData.get("showDateFrom").toString(),
+      showStatus: formData.get("showStatus").toString() === "tentative" ? "tentative" : "confirmed",
       showName: formData.get("showName").toString().trim(),
       client: formData.get("client").toString().trim(),
       location: formData.get("location").toString().trim(),
@@ -1872,6 +2219,11 @@ function renderShowForm() {
       amountShow: Number(formData.get("amountShow") || 0),
       assignments
     };
+
+    if (payload.showDateTo < payload.showDateFrom) {
+      alert("Show Date To cannot be earlier than Show Date From.");
+      return;
+    }
 
     const existingIndex = state.shows.findIndex((show) => show.id === payload.id);
     if (existingIndex >= 0) {
@@ -1913,11 +2265,16 @@ function fillShowForm(showId) {
   };
 
   setFieldValue("showId", show.id);
-  setFieldValue("showDate", show.showDate);
+  setFieldValue("showDateFrom", getShowStartDate(show));
+  setFieldValue("showDateTo", getShowEndDate(show));
   setFieldValue("showName", show.showName);
   setFieldValue("client", show.client);
   setFieldValue("location", show.location);
   setFieldValue("amountShow", show.amountShow);
+  const statusFields = form.querySelectorAll('input[name="showStatus"]');
+  statusFields.forEach((field) => {
+    field.checked = field.value === (show.showStatus === "tentative" ? "tentative" : "confirmed");
+  });
 
   const editor = document.getElementById("assignmentEditor");
   editor.innerHTML = "";
@@ -1934,9 +2291,11 @@ function fillShowForm(showId) {
     const row = editor.lastElementChild;
     row.querySelector('select[name="assignmentCrew"]').value = assignment.crewId;
     row.querySelector('input[name="assignmentAmount"]').value = assignment.operatorAmount;
-    row.querySelector('input[name="assignmentTravelDate"]').value = assignment.travelDate || "";
-    row.querySelector('input[name="assignmentTravelSector"]').value = assignment.travelSector || "";
-    row.querySelector('input[name="assignmentTravelNotes"]').value = assignment.travelNotes || "";
+    row.querySelector('input[name="assignmentOnwardTravelDate"]').value = assignment.onwardTravelDate || "";
+    row.querySelector('input[name="assignmentReturnTravelDate"]').value = assignment.returnTravelDate || "";
+    row.querySelector('input[name="assignmentOnwardTravelSector"]').value = assignment.onwardTravelSector || "";
+    row.querySelector('input[name="assignmentReturnTravelSector"]').value = assignment.returnTravelSector || "";
+    row.querySelector('input[name="assignmentNotes"]').value = assignment.notes || "";
   });
 
   form.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1961,7 +2320,6 @@ function renderApprovalsSection() {
               </div>
               <span class="pill">${user.role === "viewer" ? "View Only" : user.role === "admin" ? "Admin" : "Crew"}</span>
             </header>
-            <div class="meta">Email status: ${user.emailVerified ? "Verified" : "Pending verification"}</div>
             ${(user.role === "crew" || user.role === "admin") && user.color ? `<div class="meta">Requested color <span class="legend-swatch" style="background:${user.color}"></span>${user.color}</div>` : ""}
             <div class="toolbar" style="margin-top:12px;">
               <button class="small" data-approve="${user.id}">Approve</button>
@@ -2016,6 +2374,7 @@ function renderCrewAdminPanel() {
   const panel = document.getElementById("crewAdminPanel");
   const approvedCrew = sortUsersByName(getApprovedCrewOnlyUsers());
   const approvedAdmins = sortUsersByName(getApprovedAdminUsers());
+  const approvedViewers = sortUsersByName(state.users.filter((user) => user.role === "viewer" && user.approved));
   const assignableTeam = sortUsersByName(getCrewUsers());
 
   panel.innerHTML = `
@@ -2041,6 +2400,25 @@ function renderCrewAdminPanel() {
         </div>
         <div id="adminCrewMessage" class="message"></div>
       </form>
+      <form id="adminViewerCreateForm" class="stack tight">
+        <div class="form-header">
+          <div>
+            <h3>Add View Only Account</h3>
+            <p class="muted-note">View-only users can log in and inspect the calendar, but they never appear in crew assignments.</p>
+          </div>
+        </div>
+        <div class="form-grid">
+          <label class="field"><span>Full Name</span><input type="text" name="name" required></label>
+          <label class="field"><span>Email</span><input type="email" name="email" required></label>
+          <label class="field"><span>Phone</span><input type="tel" name="phone" required></label>
+          <label class="field"><span>Password</span><input type="password" name="password" minlength="8" required></label>
+        </div>
+        <p class="muted-note">Use 8+ characters with uppercase, lowercase, and a number.</p>
+        <div class="toolbar">
+          <button type="submit">Add View Only User</button>
+        </div>
+        <div id="adminViewerMessage" class="message"></div>
+      </form>
       <div class="stack">
         <div class="form-header">
           <div>
@@ -2056,7 +2434,7 @@ function renderCrewAdminPanel() {
                 <span class="legend-swatch" style="background:${member.color || "#264653"}"></span>
                 <strong>${member.name}</strong>
               </div>
-              <div class="meta">${member.role === "admin" ? "Admin" : "Crew"} · ${member.email} · ${member.phone}</div>
+              <div class="meta">${member.role === "admin" ? "Admin" : "Crew"}</div>
             </div>
           `).join("") || "<p>No assignable team members yet.</p>"}
         </div>
@@ -2113,6 +2491,31 @@ function renderCrewAdminPanel() {
           `).join("") : "<p>No approved crew accounts yet.</p>"}
         </div>
       </div>
+      <div class="stack">
+        <div class="form-header">
+          <div>
+            <h3>Approved View Only Accounts</h3>
+            <p class="muted-note">View-only users can inspect schedules but are excluded from crew assignment lists.</p>
+          </div>
+          <span class="pill">${approvedViewers.length} viewers</span>
+        </div>
+        <div class="approval-list">
+          ${approvedViewers.length ? approvedViewers.map((member) => `
+            <article class="show-card">
+              <header>
+                <div>
+                  <strong>${member.name}</strong>
+                  <div class="meta">${member.email} · ${member.phone}</div>
+                </div>
+                <span class="pill">View Only</span>
+              </header>
+              <div class="toolbar" style="margin-top:12px;">
+                <button type="button" class="danger small" data-remove-viewer="${member.id}">Remove View Only</button>
+              </div>
+            </article>
+          `).join("") : "<p>No approved view-only accounts yet.</p>"}
+        </div>
+      </div>
       ${renderApprovalsSection()}
     </div>
   `;
@@ -2129,6 +2532,8 @@ function sortUsersByName(users) {
 function wireCrewAdminPanel() {
   const form = document.getElementById("adminCrewCreateForm");
   const message = document.getElementById("adminCrewMessage");
+  const viewerForm = document.getElementById("adminViewerCreateForm");
+  const viewerMessage = document.getElementById("adminViewerMessage");
   const currentUser = getCurrentUser();
 
   if (form) {
@@ -2162,10 +2567,40 @@ function wireCrewAdminPanel() {
         applyServerState(payload);
         saveState(state);
         renderDashboard();
-        const copied = await copyText(payload.verificationUrl || `${window.location.origin}${payload.verificationPath}`);
-        showToast(copied ? "Crew member added. Verification link copied." : "Crew member added. Open the verification link from the outbox.");
+        showToast("Crew member added.");
       } catch (error) {
         message.textContent = error.message;
+      }
+    });
+  }
+
+  if (viewerForm) {
+    viewerForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const data = new FormData(viewerForm);
+      const email = data.get("email").toString().trim().toLowerCase();
+
+      if (state.users.some((user) => user.email.toLowerCase() === email)) {
+        viewerMessage.textContent = "That email already exists.";
+        return;
+      }
+
+      try {
+        const payload = await apiRequest("/api/admin/add-viewer", {
+          method: "POST",
+          body: JSON.stringify({
+            name: data.get("name").toString().trim(),
+            email,
+            phone: data.get("phone").toString().trim(),
+            password: data.get("password").toString()
+          })
+        });
+        applyServerState(payload);
+        saveState(state);
+        renderDashboard();
+        showToast("View-only user added.");
+      } catch (error) {
+        viewerMessage.textContent = error.message;
       }
     });
   }
@@ -2233,6 +2668,28 @@ function wireCrewAdminPanel() {
       }
     });
   });
+
+  document.querySelectorAll("[data-remove-viewer]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const viewerId = button.dataset.removeViewer;
+      const viewerUser = getUserById(viewerId);
+      if (!viewerId || !viewerUser) return;
+      const confirmed = window.confirm(`Remove view-only user "${viewerUser.name}"?`);
+      if (!confirmed) return;
+
+      state.users = state.users.filter((user) => user.id !== viewerId);
+      try {
+        await syncAdminState();
+        saveState(state);
+        renderDashboard();
+        showToast("View-only user removed.");
+      } catch (error) {
+        showToast(error.message);
+        await refreshFromServer();
+        renderDashboard();
+      }
+    });
+  });
 }
 
 function render() {
@@ -2240,6 +2697,7 @@ function render() {
   ensureViewState();
   normalizeState();
   const user = getCurrentUser();
+  document.querySelector(".app-shell")?.classList.toggle("logged-in", Boolean(user));
   document.querySelector(".hero-banner")?.classList.toggle("hidden", !user);
   document.querySelector(".topbar")?.classList.toggle("hidden", !user);
   renderSidebarTabs();
@@ -2250,7 +2708,6 @@ function render() {
 
 async function initApp() {
   try {
-    await handleEmailVerification();
     await refreshFromServer();
   } catch (error) {
     showToast("Server connection failed.");

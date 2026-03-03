@@ -12,23 +12,22 @@
 <body>
   <div class="app-shell">
     <aside class="sidebar">
-      <div>
-        <div class="brand-lockup">
+      <div class="sidebar-top">
+        <div class="brand-lockup desktop-brand">
           <img src="PIXELBUG.JPG" alt="PixelBug logo" class="brand-logo">
           <div>
             <h1>PixelBug Calendar</h1>
           </div>
         </div>
-        <nav class="sidebar-tabs" id="sidebarTabs"></nav>
+        <nav class="sidebar-tabs desktop-tabs" id="sidebarTabsDesktop"></nav>
       </div>
-
       <div class="sidebar-card" id="authPanel"></div>
     </aside>
 
     <main class="main-content">
       <header class="topbar">
-        <div>
-          <p class="eyebrow">Shared Company Planner</p>
+        <div class="topbar-brand">
+          <img src="PIXELBUG.JPG" alt="PixelBug logo" class="topbar-logo">
           <h2 id="viewTitle">Crew Calendar</h2>
         </div>
         <div class="topbar-actions" id="sessionActions"></div>
@@ -36,12 +35,11 @@
 
       <section class="hero-banner">
         <div>
-          <p class="eyebrow">PixelBug Crew Ops</p>
-          <h3>Show Planning for Touring Teams</h3>
-          <p>Track venues, travel, operator payouts, and assigned crews from one common calendar.</p>
+          <h3>Pixelbug Show Planner</h3>
         </div>
-        <img src="PIXELBUG.JPG" alt="PixelBug mark" class="hero-logo">
       </section>
+
+      <nav class="sidebar-tabs horizontal-tabs mobile-tabs" id="sidebarTabsMobile"></nav>
 
       <section class="panel hidden" id="dashboard"></section>
     </main>

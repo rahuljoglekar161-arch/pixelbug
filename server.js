@@ -66,6 +66,9 @@ function ensureDatabase() {
     CREATE TABLE IF NOT EXISTS shows (
       id TEXT PRIMARY KEY,
       show_date TEXT NOT NULL,
+      show_date_from TEXT,
+      show_date_to TEXT,
+      show_status TEXT NOT NULL DEFAULT 'confirmed',
       show_name TEXT NOT NULL,
       client TEXT,
       venue TEXT,
@@ -74,6 +77,24 @@ function ensureDatabase() {
       amount_show REAL NOT NULL DEFAULT 0,
       assignments_json TEXT NOT NULL DEFAULT '[]'
     );
+  `);
+
+  const showColumns = db.prepare("PRAGMA table_info(shows)").all().map((column) => column.name);
+  if (!showColumns.includes("show_date_from")) {
+    db.exec("ALTER TABLE shows ADD COLUMN show_date_from TEXT");
+  }
+  if (!showColumns.includes("show_date_to")) {
+    db.exec("ALTER TABLE shows ADD COLUMN show_date_to TEXT");
+  }
+  if (!showColumns.includes("show_status")) {
+    db.exec("ALTER TABLE shows ADD COLUMN show_status TEXT NOT NULL DEFAULT 'confirmed'");
+  }
+  db.exec(`
+    UPDATE shows
+    SET show_date_from = COALESCE(show_date_from, show_date),
+        show_date_to = COALESCE(show_date_to, show_date),
+        show_status = COALESCE(show_status, 'confirmed')
+    WHERE show_date_from IS NULL OR show_date_to IS NULL OR show_status IS NULL
   `);
 
   migrateLegacyJsonToDatabase();
@@ -98,8 +119,8 @@ function migrateLegacyJsonToDatabase() {
   `);
   const insertShow = database.prepare(`
     INSERT INTO shows (
-      id, show_date, show_name, client, venue, location, show_time, amount_show, assignments_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, show_date, show_date_from, show_date_to, show_status, show_name, client, venue, location, show_time, amount_show, assignments_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   database.exec("BEGIN");
@@ -126,6 +147,9 @@ function migrateLegacyJsonToDatabase() {
       insertShow.run(
         normalized.id,
         normalized.showDate,
+        normalized.showDateFrom,
+        normalized.showDateTo,
+        normalized.showStatus,
         normalized.showName,
         normalized.client,
         normalized.venue,
@@ -164,12 +188,15 @@ function readStore() {
   }));
 
   const shows = database.prepare(`
-    SELECT id, show_date, show_name, client, venue, location, show_time, amount_show, assignments_json
+    SELECT id, show_date, show_date_from, show_date_to, show_status, show_name, client, venue, location, show_time, amount_show, assignments_json
     FROM shows
-    ORDER BY show_date ASC, show_time ASC, show_name COLLATE NOCASE
+    ORDER BY COALESCE(show_date_from, show_date) ASC, show_time ASC, show_name COLLATE NOCASE
   `).all().map((show) => ({
     id: show.id,
     showDate: show.show_date,
+    showDateFrom: show.show_date_from || show.show_date,
+    showDateTo: show.show_date_to || show.show_date_from || show.show_date,
+    showStatus: show.show_status || "confirmed",
     showName: show.show_name,
     client: show.client || "",
     venue: show.venue || "",
@@ -191,8 +218,8 @@ function writeStore(store) {
   `);
   const replaceShow = database.prepare(`
     INSERT OR REPLACE INTO shows (
-      id, show_date, show_name, client, venue, location, show_time, amount_show, assignments_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, show_date, show_date_from, show_date_to, show_status, show_name, client, venue, location, show_time, amount_show, assignments_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const clearUsers = database.prepare("DELETE FROM users");
   const clearShows = database.prepare("DELETE FROM shows");
@@ -224,6 +251,9 @@ function writeStore(store) {
       replaceShow.run(
         normalized.id,
         normalized.showDate,
+        normalized.showDateFrom,
+        normalized.showDateTo,
+        normalized.showStatus,
         normalized.showName,
         normalized.client,
         normalized.venue,
@@ -354,9 +384,14 @@ function verifyPassword(password, storedValue) {
 }
 
 function normalizeShow(show) {
+  const showDateFrom = String(show.showDateFrom || show.showDate || "");
+  const showDateTo = String(show.showDateTo || show.showDateFrom || show.showDate || "");
   return {
     id: show.id || uid("show"),
-    showDate: String(show.showDate || ""),
+    showDate: showDateFrom,
+    showDateFrom,
+    showDateTo,
+    showStatus: show.showStatus === "tentative" ? "tentative" : "confirmed",
     showName: String(show.showName || "").trim(),
     client: String(show.client || "").trim(),
     venue: String(show.venue || "").trim(),
@@ -369,9 +404,11 @@ function normalizeShow(show) {
           .map((assignment) => ({
             crewId: String(assignment.crewId),
             operatorAmount: Number(assignment.operatorAmount || 0),
-            travelDate: String(assignment.travelDate || ""),
-            travelSector: String(assignment.travelSector || "").trim(),
-            travelNotes: String(assignment.travelNotes || "").trim()
+            onwardTravelDate: String(assignment.onwardTravelDate || assignment.travelDate || ""),
+            returnTravelDate: String(assignment.returnTravelDate || ""),
+            onwardTravelSector: String(assignment.onwardTravelSector || assignment.travelSector || "").trim(),
+            returnTravelSector: String(assignment.returnTravelSector || "").trim(),
+            notes: String(assignment.notes || assignment.travelNotes || "").trim()
           }))
       : []
   };
@@ -460,18 +497,6 @@ async function sendEmail({ to, subject, html, text }) {
   return { delivered: false, provider: "outbox", outboxFile: OUTBOX_FILE };
 }
 
-async function deliverVerificationEmail(user) {
-  const verificationPath = buildVerificationPath(user.verificationToken);
-  const absoluteUrl = `${process.env.PIXELBUG_BASE_URL || `http://${HOST}:${PORT}`}${verificationPath}`;
-  const delivery = await sendEmail({
-    to: user.email,
-    subject: "Verify your PixelBug account",
-    html: `<p>Verify your PixelBug account by opening this link:</p><p><a href="${absoluteUrl}">${absoluteUrl}</a></p>`,
-    text: `Verify your PixelBug account: ${absoluteUrl}`
-  });
-  return { verificationPath, absoluteUrl, delivery };
-}
-
 async function deliverResetEmail(user) {
   const resetPath = buildResetPath(user.resetToken);
   const absoluteUrl = `${process.env.PIXELBUG_BASE_URL || `http://${HOST}:${PORT}`}${resetPath}`;
@@ -558,11 +583,6 @@ async function handleApi(req, res) {
       return true;
     }
 
-    if (!user.emailVerified) {
-      sendJson(res, 403, { error: "Verify your email before login." });
-      return true;
-    }
-
     if (!user.approved) {
       sendJson(res, 403, { error: "Account request is pending admin approval." });
       return true;
@@ -609,8 +629,6 @@ async function handleApi(req, res) {
       return true;
     }
 
-    const verificationToken = crypto.randomBytes(24).toString("hex");
-
     const newUser = {
       id: uid(role),
       name: String(body.name || "").trim(),
@@ -619,37 +637,17 @@ async function handleApi(req, res) {
       role,
       approved: false,
       color: role === "crew" || role === "admin" ? color : null,
-      emailVerified: false,
-      verificationToken,
+      emailVerified: true,
+      verificationToken: null,
       passwordHash: hashPassword(String(body.password || ""))
     };
 
     store.users.push(newUser);
 
     writeStore(store);
-    const delivery = await deliverVerificationEmail(newUser);
     sendJson(res, 200, {
-      ok: true,
-      verificationPath: delivery.verificationPath,
-      verificationUrl: delivery.absoluteUrl,
-      emailDelivery: delivery.delivery
+      ok: true
     });
-    return true;
-  }
-
-  if (req.method === "POST" && pathname === "/api/verify-email") {
-    const body = await readJson(req);
-    const token = String(body.token || "");
-    const user = store.users.find((item) => item.verificationToken === token);
-    if (!user) {
-      sendJson(res, 404, { error: "Verification link is invalid or expired." });
-      return true;
-    }
-
-    user.emailVerified = true;
-    user.verificationToken = null;
-    writeStore(store);
-    sendJson(res, 200, { ok: true });
     return true;
   }
 
@@ -735,7 +733,6 @@ async function handleApi(req, res) {
       return true;
     }
 
-    const verificationToken = crypto.randomBytes(24).toString("hex");
     const newUser = {
       id: uid("crew"),
       name,
@@ -744,25 +741,55 @@ async function handleApi(req, res) {
       role: "crew",
       approved: true,
       color,
-      emailVerified: false,
-      verificationToken,
+      emailVerified: true,
+      verificationToken: null,
       passwordHash: hashPassword(password)
     };
     store.users.push(newUser);
 
     writeStore(store);
-    const delivery = await deliverVerificationEmail(newUser);
-    sendJson(res, 200, {
-      ...{
-        users: store.users.map(sanitizeUser),
-        shows: store.shows,
-        currentUserId: currentUser?.id || null,
-        hasAdmin: hasApprovedAdmin(store)
-      },
-      verificationPath: delivery.verificationPath,
-      verificationUrl: delivery.absoluteUrl,
-      emailDelivery: delivery.delivery
-    });
+    sendBootstrap(res, store, currentUser);
+    return true;
+  }
+
+  if (req.method === "POST" && pathname === "/api/admin/add-viewer") {
+    const body = await readJson(req);
+    const name = String(body.name || "").trim();
+    const email = String(body.email || "").trim().toLowerCase();
+    const phone = String(body.phone || "").trim();
+    const password = String(body.password || "");
+
+    if (!name || !email || !phone) {
+      sendJson(res, 400, { error: "All view-only fields are required." });
+      return true;
+    }
+
+    if (!isStrongPassword(password)) {
+      sendJson(res, 400, { error: "Password must be 8+ characters and include upper, lower, and number." });
+      return true;
+    }
+
+    if (store.users.some((user) => user.email.toLowerCase() === email)) {
+      sendJson(res, 409, { error: "That email already exists." });
+      return true;
+    }
+
+    const newUser = {
+      id: uid("viewer"),
+      name,
+      email,
+      phone,
+      role: "viewer",
+      approved: true,
+      color: null,
+      emailVerified: true,
+      verificationToken: null,
+      passwordHash: hashPassword(password)
+    };
+    store.users.push(newUser);
+
+    writeStore(store);
+    sendBootstrap(res, store, currentUser);
     return true;
   }
 

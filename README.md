@@ -51,7 +51,7 @@ This setup keeps SQLite on a Render persistent disk. It is suitable for a single
 - Operator amount visible to admins and the assigned crew member only
 - SQLite-backed shared data store
 - Password change and password reset flows
-- Email verification flow for new accounts
+- Admin approval flow for new accounts
 
 ## Note
 
@@ -61,7 +61,7 @@ On first launch, create the initial admin account from the login panel, then add
 
 ## Email Delivery
 
-To send real verification and password reset emails, set:
+To send real password reset emails, set:
 
 ```bash
 export RESEND_API_KEY=your_key_here
