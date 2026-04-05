@@ -2,3 +2,5 @@ data/pixelbug.db
 data/pixelbug.db-*
 data/email-outbox.log
 node_modules
+.env.local
+.env

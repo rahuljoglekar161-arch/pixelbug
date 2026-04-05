@@ -1,27 +1,48 @@
 const STORAGE_KEY = "pixelbug-calendar-ui-v1";
 const COLOR_OPTIONS = [
-  "#ee8f8f",
-  "#f2b779",
-  "#e6cf72",
-  "#9fd67b",
-  "#73cfc0",
-  "#79afea",
-  "#9b92ef",
-  "#c78eeb",
-  "#ee97bf",
-  "#8fc3a0",
-  "#d9b27c",
-  "#7fd6f5",
-  "#f59fc1"
+  "#d93025",
+  "#f29900",
+  "#f6bf26",
+  "#7cb342",
+  "#33b679",
+  "#4285f4",
+  "#7986cb",
+  "#8e24aa",
+  "#e67c73",
+  "#0b8043",
+  "#039be5",
+  "#c26401",
+  "#d81b60"
 ];
+const COLOR_REMAP = {
+  "#ee8f8f": "#d93025",
+  "#f2b779": "#f29900",
+  "#e6cf72": "#f6bf26",
+  "#9fd67b": "#7cb342",
+  "#73cfc0": "#33b679",
+  "#79afea": "#4285f4",
+  "#9b92ef": "#7986cb",
+  "#c78eeb": "#8e24aa",
+  "#ee97bf": "#e67c73",
+  "#8fc3a0": "#0b8043",
+  "#d9b27c": "#c26401",
+  "#7fd6f5": "#039be5",
+  "#f59fc1": "#d81b60"
+};
 
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const SHOW_BLOCK_MINUTES = 120;
 const DAY_START_HOUR = 6;
 const DAY_END_HOUR = 24;
+let profileMenuOutsideHandler = null;
 
 function uid(prefix) {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function resolveCrewColor(color) {
+  if (!color) return color;
+  return COLOR_REMAP[color] || color;
 }
 
 function formatCurrency(amount) {
@@ -496,6 +517,13 @@ function seedState() {
     users: [],
     shows: [],
     currentUserId: null,
+    google: {
+      configured: false,
+      connected: false,
+      calendarId: "",
+      lastSyncAt: "",
+      lastError: ""
+    },
     view: {
       year: new Date().getFullYear(),
       month: new Date().getMonth(),
@@ -509,9 +537,13 @@ function seedState() {
       selectedShowYear: "all",
       showSortMode: "date",
       selectedCrewFilter: "all",
+      googleEntriesView: "needsCompletion",
+      googleArchiveYear: "all",
+      googleArchiveMonth: "all",
       expandedCalendarWeeks: {},
       selectedCalendarShowId: null,
       calendarReturnMode: "month",
+      themePreference: "system",
       authPanelMode: "profile",
       authPanelOpen: false
     }
@@ -529,7 +561,8 @@ function loadLocalUiState() {
     return {
       ...seedState(),
       view: parsed.view || seedState().view,
-      ui: parsed.ui || seedState().ui
+      ui: parsed.ui || seedState().ui,
+      google: seedState().google
     };
   } catch (error) {
     return seedState();
@@ -547,6 +580,7 @@ function normalizeState() {
 
     const assignments = (show.assignments || []).map((assignment) => ({
       ...assignment,
+      lightDesignerId: assignment.lightDesignerId ?? "",
       onwardTravelDate: assignment.onwardTravelDate ?? assignment.travelDate ?? legacyTravelDate,
       returnTravelDate: assignment.returnTravelDate ?? "",
       onwardTravelSector: assignment.onwardTravelSector ?? assignment.travelSector ?? legacyTravelSector,
@@ -563,6 +597,15 @@ function normalizeState() {
       showDateTo: show.showDateTo ?? show.showDateFrom ?? show.showDate ?? "",
       showDate: show.showDateFrom ?? show.showDate ?? "",
       showStatus: show.showStatus === "tentative" ? "tentative" : "confirmed",
+      googleEventId: show.googleEventId ?? "",
+      googleSyncSource: show.googleSyncSource ?? "",
+      googleSyncStatus: show.googleSyncStatus ?? (show.googleEventId ? "synced" : ""),
+      googleNotes: show.googleNotes ?? "",
+      googleLastSyncedAt: show.googleLastSyncedAt ?? "",
+      needsAdminCompletion: Boolean(show.needsAdminCompletion),
+      googleArchived: Boolean(show.googleArchived),
+      googleArchivedAt: show.googleArchivedAt ?? "",
+      googlePinned: Boolean(show.googlePinned),
       assignments,
       travelDate: undefined,
       travelSector: undefined,
@@ -572,9 +615,14 @@ function normalizeState() {
 }
 
 function saveState(nextState) {
+  const persistedUi = {
+    ...nextState.ui,
+    authPanelOpen: false,
+    authPanelMode: "profile"
+  };
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
     view: nextState.view,
-    ui: nextState.ui
+    ui: persistedUi
   }));
 }
 
@@ -582,6 +630,7 @@ function applyServerState(payload) {
   state.users = payload.users || [];
   state.shows = payload.shows || [];
   state.currentUserId = payload.currentUserId || null;
+  state.google = payload.google || seedState().google;
   normalizeState();
 }
 
@@ -620,6 +669,55 @@ async function syncAdminState() {
 }
 
 let state = loadLocalUiState();
+let mediaThemeListenerAttached = false;
+let googleAutoRefreshIntervalId = null;
+
+function getSystemTheme() {
+  if (!window.matchMedia) return "dark";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function applyThemeFromState() {
+  const preference = state.ui?.themePreference || "system";
+  const resolved = preference === "system" ? getSystemTheme() : preference;
+  document.documentElement.dataset.theme = resolved;
+}
+
+function setupGoogleAutoRefresh() {
+  if (googleAutoRefreshIntervalId) {
+    window.clearInterval(googleAutoRefreshIntervalId);
+    googleAutoRefreshIntervalId = null;
+  }
+  const user = getCurrentUser();
+  if (!user || user.role !== "admin" || !state.google?.connected) {
+    return;
+  }
+  googleAutoRefreshIntervalId = window.setInterval(async () => {
+    if (document.hidden) return;
+    try {
+      await refreshFromServer();
+      render();
+    } catch (error) {
+      console.warn("Google auto-refresh failed", error);
+    }
+  }, 1000 * 45);
+}
+
+function attachThemeListener() {
+  if (mediaThemeListenerAttached || !window.matchMedia) return;
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+  const handler = () => {
+    if (state.ui?.themePreference === "system") {
+      applyThemeFromState();
+    }
+  };
+  if (media.addEventListener) {
+    media.addEventListener("change", handler);
+  } else {
+    media.addListener(handler);
+  }
+  mediaThemeListenerAttached = true;
+}
 
 function getCurrentUser() {
   return state.users.find((user) => user.id === state.currentUserId) || null;
@@ -658,9 +756,11 @@ function ensureUiState() {
       selectedShowYear: "all",
       showSortMode: "date",
       selectedCrewFilter: "all",
+      googleEntriesView: "needsCompletion",
       expandedCalendarWeeks: {},
       selectedCalendarShowId: null,
       calendarReturnMode: "month",
+      themePreference: "system",
       authPanelMode: "profile",
       authPanelOpen: false
     };
@@ -682,6 +782,18 @@ function ensureUiState() {
     state.ui.selectedCrewFilter = "all";
   }
 
+  if (!state.ui.googleEntriesView) {
+    state.ui.googleEntriesView = "needsCompletion";
+  }
+
+  if (!state.ui.googleArchiveYear) {
+    state.ui.googleArchiveYear = "all";
+  }
+
+  if (!state.ui.googleArchiveMonth) {
+    state.ui.googleArchiveMonth = "all";
+  }
+
   if (!state.ui.expandedCalendarWeeks || typeof state.ui.expandedCalendarWeeks !== "object") {
     state.ui.expandedCalendarWeeks = {};
   }
@@ -692,6 +804,10 @@ function ensureUiState() {
 
   if (!state.ui.calendarReturnMode) {
     state.ui.calendarReturnMode = "month";
+  }
+
+  if (!state.ui.themePreference) {
+    state.ui.themePreference = "system";
   }
 
   if (!state.ui.authPanelMode) {
@@ -740,6 +856,7 @@ function getSidebarTabs(user) {
         { id: "calendarPanel", label: "Calendar", meta: "Month, week, day" },
         { id: "showFormPanel", label: "Create Show", meta: "Add or edit entries" },
         { id: "showsPanel", label: "All Shows", meta: "All scheduled shows" },
+        { id: "googleEntriesPanel", label: "Google Calendar", meta: "Imported and synced shows" },
         { id: "crewAdminPanel", label: "Crew Management", meta: "Add or remove crew" }
       ]
     : [
@@ -759,7 +876,7 @@ function ensureActiveSidebarTab(user) {
 function getTakenColors(excludeUserId = null) {
   return state.users
     .filter((user) => (user.role === "crew" || user.role === "admin") && user.approved && user.id !== excludeUserId)
-    .map((user) => user.color)
+    .map((user) => resolveCrewColor(user.color))
     .filter(Boolean);
 }
 
@@ -790,6 +907,46 @@ function filterShowsBySelectedCrew(shows) {
   return shows.filter((show) => show.assignments.some((assignment) => assignment.crewId === state.ui.selectedCrewFilter));
 }
 
+function getGoogleLinkedShows(shows = state.shows) {
+  return shows.filter((show) => show.googleEventId || show.googleSyncSource === "google" || show.googleSyncStatus);
+}
+
+function formatSyncStatus(show) {
+  if (show.needsAdminCompletion) return "Needs Admin Completion";
+  if (show.googleSyncStatus === "pending_push") return "Edited in PixelBug";
+  if (show.googleSyncStatus === "updated_from_google") return "Updated from Google";
+  if (show.googleSyncStatus === "sync_error") return "Sync Error";
+  if (show.googleSyncStatus === "unlinked") return "Unlinked";
+  if (show.googleSyncStatus === "synced") return "Synced";
+  return "Imported";
+}
+
+function getArchiveYearOptions(shows) {
+  return [...new Set(shows.map((show) => getShowStartDate(show).slice(0, 4)).filter(Boolean))].sort((a, b) => b.localeCompare(a));
+}
+
+function getArchiveMonthOptions(shows, selectedYear = "all") {
+  const monthKeys = shows
+    .filter((show) => selectedYear === "all" || getShowStartDate(show).slice(0, 4) === selectedYear)
+    .map((show) => getShowStartDate(show).slice(0, 7))
+    .filter(Boolean);
+  return [...new Set(monthKeys)].sort((a, b) => b.localeCompare(a));
+}
+
+function filterArchivedGoogleShows(shows) {
+  const selectedYear = state.ui.googleArchiveYear || "all";
+  const selectedMonth = state.ui.googleArchiveMonth || "all";
+  return shows.filter((show) => {
+    const start = getShowStartDate(show);
+    if (!start) return false;
+    const year = start.slice(0, 4);
+    const month = start.slice(0, 7);
+    if (selectedYear !== "all" && year !== selectedYear) return false;
+    if (selectedMonth !== "all" && month !== selectedMonth) return false;
+    return true;
+  });
+}
+
 function renderCrewFilterControl(selectId, options = {}) {
   const label = options.label ?? "Crew";
   const wrapperClass = options.compact ? "sort-control compact-control" : "sort-control";
@@ -799,13 +956,110 @@ function renderCrewFilterControl(selectId, options = {}) {
   return `
     <label class="${wrapperClass}">
       ${label ? `<span>${label}</span>` : ""}
-      <select id="${selectId}">
+      <select id="${selectId}" data-fallback-label="${allLabel}">
         <option value="all" ${state.ui.selectedCrewFilter === "all" ? "selected" : ""}>${allLabel}</option>
         ${includeUnassigned ? `<option value="unassigned" ${state.ui.selectedCrewFilter === "unassigned" ? "selected" : ""}>Unassigned</option>` : ""}
         ${crewUsers.map((crewUser) => `<option value="${crewUser.id}" ${state.ui.selectedCrewFilter === crewUser.id ? "selected" : ""}>${crewUser.name}</option>`).join("")}
       </select>
     </label>
   `;
+}
+
+function getSelectedCrewFilterLabel() {
+  const selected = state.ui.selectedCrewFilter || "all";
+  if (selected === "all") return "All Crew";
+  if (selected === "unassigned") return "Unassigned";
+  return getCrewUsers().find((user) => user.id === selected)?.name || "All Crew";
+}
+
+let customSelectOutsideHandlerAttached = false;
+
+function closeAllCustomSelects(except = null) {
+  document.querySelectorAll(".custom-select.open").forEach((wrapper) => {
+    if (except && wrapper === except) return;
+    wrapper.classList.remove("open");
+    const trigger = wrapper.querySelector(".custom-select-trigger");
+    if (trigger) trigger.setAttribute("aria-expanded", "false");
+  });
+}
+
+function syncCustomSelect(select) {
+  const wrapper = select.closest(".custom-select");
+  if (!wrapper) return;
+  const trigger = wrapper.querySelector(".custom-select-trigger");
+  const selectedOption = [...select.options].find((option) => option.value === select.value) || select.options[0];
+  const fallbackLabel = select.dataset.fallbackLabel || "";
+  const displayLabel = selectedOption?.textContent?.trim() || fallbackLabel || getSelectedCrewFilterLabel();
+  if (trigger) {
+    trigger.innerHTML = `<span class="custom-select-value">${displayLabel}</span>`;
+    trigger.title = displayLabel;
+  }
+  wrapper.querySelectorAll(".custom-select-option").forEach((optionButton) => {
+    optionButton.classList.toggle("is-selected", optionButton.dataset.value === select.value);
+  });
+}
+
+function enhanceCustomSelects(root = document) {
+  if (!customSelectOutsideHandlerAttached) {
+    document.addEventListener("click", (event) => {
+      if (!event.target.closest(".custom-select")) {
+        closeAllCustomSelects();
+      }
+    });
+    customSelectOutsideHandlerAttached = true;
+  }
+
+  root.querySelectorAll("select").forEach((select) => {
+    if (select.dataset.customSelectReady === "true") {
+      syncCustomSelect(select);
+      return;
+    }
+
+    select.dataset.customSelectReady = "true";
+    select.classList.add("native-select-hidden");
+
+    const wrapper = document.createElement("div");
+    wrapper.className = "custom-select";
+
+    const trigger = document.createElement("button");
+    trigger.type = "button";
+    trigger.className = "custom-select-trigger";
+    trigger.setAttribute("aria-haspopup", "listbox");
+    trigger.setAttribute("aria-expanded", "false");
+
+    const menu = document.createElement("div");
+    menu.className = "custom-select-menu";
+    menu.setAttribute("role", "listbox");
+
+    [...select.options].forEach((option) => {
+      const optionButton = document.createElement("button");
+      optionButton.type = "button";
+      optionButton.className = "custom-select-option";
+      optionButton.dataset.value = option.value;
+      optionButton.textContent = option.textContent;
+      optionButton.addEventListener("click", () => {
+        select.value = option.value;
+        syncCustomSelect(select);
+        wrapper.classList.remove("open");
+        trigger.setAttribute("aria-expanded", "false");
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      menu.appendChild(optionButton);
+    });
+
+    trigger.addEventListener("click", () => {
+      const isOpen = wrapper.classList.contains("open");
+      closeAllCustomSelects(wrapper);
+      wrapper.classList.toggle("open", !isOpen);
+      trigger.setAttribute("aria-expanded", String(!isOpen));
+    });
+
+    select.parentNode.insertBefore(wrapper, select);
+    wrapper.appendChild(select);
+    wrapper.appendChild(trigger);
+    wrapper.appendChild(menu);
+    syncCustomSelect(select);
+  });
 }
 
 function renderAuthPanel() {
@@ -908,6 +1162,11 @@ function renderSidebarTabs() {
     node.querySelectorAll("[data-target-panel]").forEach((button) => {
       button.addEventListener("click", () => {
         state.ui.activeSidebarTab = button.dataset.targetPanel;
+        if (button.dataset.targetPanel === "calendarPanel") {
+          state.view.mode = "month";
+          state.ui.selectedCalendarShowId = null;
+          state.ui.calendarReturnMode = "month";
+        }
         saveState(state);
         renderSidebarTabs();
         renderDashboard();
@@ -1110,18 +1369,20 @@ function renderColorChoices(selected = null, containerId = "colorChoices", exclu
   const container = document.getElementById(containerId);
   if (!container) return;
   const taken = getTakenColors(excludeUserId);
+  const resolvedSelected = resolveCrewColor(selected);
   container.innerHTML = "";
 
   COLOR_OPTIONS.forEach((color) => {
-    if (taken.includes(color) && selected !== color) {
+    const resolvedColor = resolveCrewColor(color);
+    if (taken.includes(resolvedColor) && resolvedSelected !== resolvedColor) {
       return;
     }
     const button = document.createElement("button");
     button.type = "button";
-    button.className = `color-option ${selected === color ? "selected" : ""}`;
-    button.style.background = color;
-    button.dataset.color = color;
-    button.title = color;
+    button.className = `color-option ${resolvedSelected === resolvedColor ? "selected" : ""}`;
+    button.style.background = resolvedColor;
+    button.dataset.color = resolvedColor;
+    button.title = resolvedColor;
     button.addEventListener("click", () => {
       container.querySelectorAll(".color-option").forEach((node) => node.classList.remove("selected"));
       button.classList.add("selected");
@@ -1132,8 +1393,19 @@ function renderColorChoices(selected = null, containerId = "colorChoices", exclu
 
 function renderSessionActions(user) {
   const node = document.getElementById("sessionActions");
+  if (profileMenuOutsideHandler) {
+    document.removeEventListener("click", profileMenuOutsideHandler);
+    profileMenuOutsideHandler = null;
+  }
   node.innerHTML = "";
   if (!user) return;
+
+  const themePreference = state.ui.themePreference || "system";
+  const themeButtonLabel = themePreference === "light"
+    ? "Light Mode"
+    : themePreference === "dark"
+      ? "Dark Mode"
+      : "Auto Theme";
 
   node.innerHTML = `
     <div class="profile-menu-wrap">
@@ -1143,6 +1415,7 @@ function renderSessionActions(user) {
           <div class="profile-menu-tabs">
             <button type="button" class="ghost small ${state.ui.authPanelMode === "profile" ? "is-active" : ""}" id="profilePanelButton">Info</button>
             <button type="button" class="ghost small ${state.ui.authPanelMode === "password" ? "is-active" : ""}" id="passwordPanelButton">Password</button>
+            <button type="button" class="ghost small" id="themeCycleButton">Theme: ${themeButtonLabel}</button>
           </div>
           ${state.ui.authPanelMode === "password" ? `
             <form id="changePasswordForm" class="stack tight profile-menu-form">
@@ -1196,6 +1469,19 @@ function renderSessionActions(user) {
     renderSessionActions(user);
   });
 
+  document.getElementById("themeCycleButton")?.addEventListener("click", () => {
+    const current = state.ui.themePreference || "system";
+    const next = current === "light"
+      ? "system"
+      : current === "system"
+        ? "dark"
+        : "light";
+    state.ui.themePreference = next;
+    saveState(state);
+    applyThemeFromState();
+    renderSessionActions(user);
+  });
+
   const changePasswordForm = document.getElementById("changePasswordForm");
   if (changePasswordForm) {
     changePasswordForm.addEventListener("submit", async (event) => {
@@ -1234,6 +1520,21 @@ function renderSessionActions(user) {
       })
       .catch((error) => showToast(error.message));
   });
+
+  if (state.ui.authPanelOpen) {
+    profileMenuOutsideHandler = (event) => {
+      if (!node.contains(event.target)) {
+        state.ui.authPanelOpen = false;
+        saveState(state);
+        renderSessionActions(user);
+      }
+    };
+    window.setTimeout(() => {
+      if (profileMenuOutsideHandler) {
+        document.addEventListener("click", profileMenuOutsideHandler);
+      }
+    }, 0);
+  }
 }
 
 function renderDashboard() {
@@ -1272,6 +1573,12 @@ function renderDashboard() {
   if (state.ui.activeSidebarTab === "showsPanel") {
     singleView.innerHTML = `<section class="panel" id="showsPanel"></section>`;
     renderShowsList(user, shows, visibleShows);
+    return;
+  }
+
+  if (state.ui.activeSidebarTab === "googleEntriesPanel" && isAdmin(user)) {
+    singleView.innerHTML = `<section class="panel" id="googleEntriesPanel"></section>`;
+    renderGoogleEntriesPanel(user);
     return;
   }
 
@@ -1469,6 +1776,7 @@ function renderCalendar(user, shows) {
   if (isAdmin(user)) {
     wireCalendarDragAndDrop(panel);
   }
+  enhanceCustomSelects(panel);
   panel.querySelectorAll("[data-calendar-show-id]").forEach((node) => {
     node.addEventListener("click", () => {
       const show = shows.find((item) => item.id === node.dataset.calendarShowId);
@@ -1478,6 +1786,18 @@ function renderCalendar(user, shows) {
       state.ui.calendarReturnMode = "month";
       state.view.mode = "day";
       syncViewDateParts(parseDateKey(node.dataset.focusDate || getShowStartDate(show)));
+      saveState(state);
+      renderDashboard();
+    });
+  });
+  panel.querySelectorAll("[data-date-key]").forEach((cell) => {
+    cell.addEventListener("click", (event) => {
+      if (event.target.closest("[data-calendar-show-id], .calendar-more-toggle")) return;
+      ensureUiState();
+      state.ui.selectedCalendarShowId = null;
+      state.ui.calendarReturnMode = "month";
+      syncViewDateParts(parseDateKey(cell.dataset.dateKey));
+      state.view.mode = "day";
       saveState(state);
       renderDashboard();
     });
@@ -1498,7 +1818,7 @@ function getShowDisplayMeta(show, user) {
   const crewUsers = show.assignments
     .map((assignment) => getUserById(assignment.crewId))
     .filter(Boolean);
-  const palette = crewUsers.map((crewUser) => crewUser.color).filter(Boolean);
+  const palette = crewUsers.map((crewUser) => resolveCrewColor(crewUser.color)).filter(Boolean);
   const color = palette.length > 1
     ? `linear-gradient(135deg, ${palette.join(", ")})`
     : (palette[0] || "linear-gradient(135deg, #575e70, #8b93a5)");
@@ -1511,8 +1831,8 @@ function getShowDisplayMeta(show, user) {
 function renderMonthRangeBar(show, user, startIndex, endIndex, laneIndex, clippedStart, clippedEnd) {
   const { visibleAssignees, color } = getShowDisplayMeta(show, user);
   const span = (endIndex - startIndex) + 1;
-  const left = `calc(${startIndex} * (100% / 7) + 6px)`;
-  const width = `calc(${span} * (100% / 7) - 12px)`;
+  const left = `calc(${startIndex} * (((100% - (6 * var(--calendar-gap))) / 7) + var(--calendar-gap)) + 6px)`;
+  const width = `calc(${span} * ((100% - (6 * var(--calendar-gap))) / 7) + (${Math.max(span - 1, 0)} * var(--calendar-gap)) - 12px)`;
   const startClass = clippedStart ? "continued-start" : "";
   const endClass = clippedEnd ? "continued-end" : "";
   const locationLabel = show.location ? ` - ${show.location}` : "";
@@ -1601,6 +1921,7 @@ function renderWeekCalendar(user, shows) {
   if (isAdmin(user)) {
     wireCalendarDragAndDrop(panel);
   }
+  enhanceCustomSelects(panel);
   panel.querySelectorAll("[data-calendar-show-id]").forEach((node) => {
     node.addEventListener("click", () => {
       const show = shows.find((item) => item.id === node.dataset.calendarShowId);
@@ -1614,14 +1935,26 @@ function renderWeekCalendar(user, shows) {
       renderDashboard();
     });
   });
+  panel.querySelectorAll("[data-date-key]").forEach((cell) => {
+    cell.addEventListener("click", (event) => {
+      if (event.target.closest("[data-calendar-show-id]")) return;
+      ensureUiState();
+      state.ui.selectedCalendarShowId = null;
+      state.ui.calendarReturnMode = "week";
+      syncViewDateParts(parseDateKey(cell.dataset.dateKey));
+      state.view.mode = "day";
+      saveState(state);
+      renderDashboard();
+    });
+  });
   wireCalendarToolbarControls(panel);
 }
 
 function renderWeekRangeBar(show, user, startIndex, endIndex, laneIndex, clippedStart, clippedEnd) {
   const { visibleAssignees, color } = getShowDisplayMeta(show, user);
   const span = (endIndex - startIndex) + 1;
-  const left = `calc(${startIndex} * (100% / 7) + 6px)`;
-  const width = `calc(${span} * (100% / 7) - 12px)`;
+  const left = `calc(${startIndex} * (((100% - (6 * var(--calendar-gap))) / 7) + var(--calendar-gap)) + 6px)`;
+  const width = `calc(${span} * ((100% - (6 * var(--calendar-gap))) / 7) + (${Math.max(span - 1, 0)} * var(--calendar-gap)) - 12px)`;
   const startClass = clippedStart ? "continued-start" : "";
   const endClass = clippedEnd ? "continued-end" : "";
   const locationLabel = show.location ? ` - ${show.location}` : "";
@@ -1684,6 +2017,7 @@ function renderDayCalendar(user, shows) {
       </div>
     </section>
   `;
+  enhanceCustomSelects(panel);
   panel.querySelector("#closeCalendarShowPanel")?.addEventListener("click", () => {
     ensureUiState();
     state.ui.selectedCalendarShowId = null;
@@ -1691,6 +2025,9 @@ function renderDayCalendar(user, shows) {
     state.ui.calendarReturnMode = "month";
     saveState(state);
     renderDashboard();
+  });
+  panel.querySelectorAll("[data-edit-show]").forEach((button) => {
+    button.addEventListener("click", () => fillShowForm(button.dataset.editShow));
   });
   wireCalendarToolbarControls(panel);
 }
@@ -1817,7 +2154,7 @@ function renderLegend(user) {
       <div class="legend">
         ${legendUsers.map((crewUser) => `
           <div class="legend-item">
-            <div><span class="legend-swatch" style="background:${crewUser.color}"></span><strong>${crewUser.name}</strong></div>
+            <div><span class="legend-swatch" style="background:${resolveCrewColor(crewUser.color)}"></span><strong>${crewUser.name}</strong></div>
             <div class="meta">${crewUser.phone}</div>
           </div>
         `).join("")}
@@ -1928,6 +2265,8 @@ function renderShowsList(user, shows, sourceShows = shows) {
     </div>
   `;
 
+  enhanceCustomSelects(panel);
+
   const yearFilterSelect = document.getElementById("showYearFilter");
   if (yearFilterSelect) {
     yearFilterSelect.addEventListener("change", () => {
@@ -1989,6 +2328,7 @@ function renderShowCard(show, user) {
   const assignments = show.assignments.map((assignment) => {
     const crewUser = getUserById(assignment.crewId);
     if (!crewUser) return "";
+    const lightDesigner = assignment.lightDesignerId ? getUserById(assignment.lightDesignerId) : null;
     const amount = canSeeOperatorAmount(user, assignment) ? formatCurrency(assignment.operatorAmount) : "Hidden";
     const onwardTravelDate = assignment.onwardTravelDate ? formatDate(assignment.onwardTravelDate) : "-";
     const returnTravelDate = assignment.returnTravelDate ? formatDate(assignment.returnTravelDate) : "-";
@@ -2001,7 +2341,7 @@ function renderShowCard(show, user) {
           <div>
             <strong>${crewUser.name}</strong>
           </div>
-          <span class="pill" style="background:${crewUser.color}; color:white;">Crew</span>
+          <span class="pill" style="background:${resolveCrewColor(crewUser.color)}; color:white;">Crew</span>
         </header>
         <details class="assignment-details">
           <summary>
@@ -2009,6 +2349,7 @@ function renderShowCard(show, user) {
             <span class="less-label">Less..</span>
           </summary>
           <div class="assignment-details-body">
+            <div class="meta">Light Designer: ${lightDesigner?.name || "-"}</div>
             <div class="meta">Operator Amount: ${amount}</div>
             <div class="meta">Onward Travel Date: ${onwardTravelDate}</div>
             <div class="meta">Return Travel Date: ${returnTravelDate}</div>
@@ -2044,9 +2385,261 @@ function renderShowCard(show, user) {
   `;
 }
 
+function renderGoogleEntriesPanel(user) {
+  const panel = document.getElementById("googleEntriesPanel");
+  const googleShows = sortShows(getGoogleLinkedShows(visibleShowsForUser(user)), "date");
+  const currentMonthStart = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}-01`;
+  const activeGoogleShows = googleShows.filter((show) => !show.googleArchived && (show.googlePinned || getShowEndDate(show) >= currentMonthStart));
+  const archivedGoogleShows = googleShows.filter((show) => show.googleArchived || (!show.googlePinned && getShowEndDate(show) < currentMonthStart));
+  const needsCompletion = activeGoogleShows.filter((show) => show.needsAdminCompletion);
+  const synced = activeGoogleShows.filter((show) => !show.needsAdminCompletion);
+  const archiveYearOptions = getArchiveYearOptions(archivedGoogleShows);
+  const archiveMonthOptions = getArchiveMonthOptions(archivedGoogleShows, state.ui.googleArchiveYear || "all");
+  const filteredArchivedShows = sortShows(filterArchivedGoogleShows(archivedGoogleShows), "date");
+  const googleStatus = state.google || {};
+  const googleEntriesView = state.ui.googleEntriesView || "needsCompletion";
+  const googleEntriesMap = {
+    needsCompletion: {
+      title: "Needs Completion",
+      empty: "No Google entries currently need admin completion.",
+      shows: needsCompletion
+    },
+    synced: {
+      title: "Synced",
+      empty: "No synced Google entries in the current month window.",
+      shows: synced
+    },
+    archived: {
+      title: "Archived",
+      empty: "No archived Google-linked entries for the selected month/year.",
+      shows: filteredArchivedShows
+    }
+  };
+  const selectedGoogleEntriesView = googleEntriesMap[googleEntriesView] || googleEntriesMap.needsCompletion;
+
+  panel.innerHTML = `
+    <div class="stack google-calendar-panel">
+      <div class="form-header google-calendar-topbar">
+        <div>
+          <h3>Google Calendar</h3>
+          <p class="muted-note">Use the tabs below to switch between entries that need admin completion, already synced entries, and archived Google-linked items.</p>
+        </div>
+        <div class="toolbar google-calendar-actions">
+          <span class="pill">${activeGoogleShows.length} ${activeGoogleShows.length === 1 ? "entry" : "entries"}</span>
+          ${googleStatus.connected
+            ? `<button type="button" class="secondary small" id="googleSyncNowButton">Sync Now</button>`
+            : `<button type="button" class="secondary small" id="googleConnectButton" ${googleStatus.configured ? "" : "disabled"}>${googleStatus.configured ? "Connect Google Calendar" : "Google Not Configured"}</button>`}
+        </div>
+      </div>
+      <div class="summary-grid google-calendar-summary-grid">
+        <button type="button" class="summary-card summary-tab ${googleEntriesView === "needsCompletion" ? "is-active" : ""}" data-google-view="needsCompletion">
+          <span class="summary-kicker">Needs Completion</span>
+          <strong>${needsCompletion.length}</strong>
+          <span class="summary-foot">Imported from Google and still missing admin-only details.</span>
+        </button>
+        <button type="button" class="summary-card summary-tab ${googleEntriesView === "synced" ? "is-active" : ""}" data-google-view="synced">
+          <span class="summary-kicker">Synced</span>
+          <strong>${synced.length}</strong>
+          <span class="summary-foot">Linked entries already completed in PixelBug.</span>
+        </button>
+        <button type="button" class="summary-card summary-tab ${googleEntriesView === "archived" ? "is-active" : ""}" data-google-view="archived">
+          <span class="summary-kicker">Archived</span>
+          <strong>${archivedGoogleShows.length}</strong>
+          <span class="summary-foot">Linked entries from older months or manually archived items.</span>
+        </button>
+      </div>
+      ${(googleStatus.lastSyncAt || googleStatus.lastError) ? `
+        <div class="assignment-card google-sync-meta-row google-calendar-meta-row">
+          <div class="google-sync-meta-left">
+            ${googleStatus.lastSyncAt ? `<div class="meta">Last Sync: ${new Date(googleStatus.lastSyncAt).toLocaleString("en-IN")}</div>` : ""}
+            ${googleStatus.lastError ? `<div class="meta">Last Error: ${googleStatus.lastError}</div>` : ""}
+          </div>
+          <div class="google-sync-meta-right">
+            <div class="meta"><strong>Status:</strong> ${googleStatus.connected ? "Connected" : googleStatus.configured ? "Ready to connect" : "Missing config"}</div>
+            ${googleStatus.calendarId ? `<div class="meta">Calendar: ${googleStatus.calendarId}</div>` : ""}
+          </div>
+        </div>
+      ` : `
+        <div class="assignment-card google-sync-meta-row google-calendar-meta-row">
+          <div class="google-sync-meta-left"></div>
+          <div class="google-sync-meta-right">
+            <div class="meta"><strong>Status:</strong> ${googleStatus.connected ? "Connected" : googleStatus.configured ? "Ready to connect" : "Missing config"}</div>
+            ${googleStatus.calendarId ? `<div class="meta">Calendar: ${googleStatus.calendarId}</div>` : ""}
+          </div>
+        </div>
+      `}
+      <div class="form-header google-calendar-subhead" style="margin-top: 8px;">
+        <div>
+          <h4>${selectedGoogleEntriesView.title}</h4>
+          <p class="muted-note">
+            ${googleEntriesView === "archived"
+              ? "Archived Google-linked entries can be filtered by month and year and restored whenever needed."
+              : googleEntriesView === "synced"
+                ? "Entries here are already linked and completed inside PixelBug."
+                : "Entries here still need admin completion before they are fully ready in PixelBug."}
+          </p>
+        </div>
+        <div class="toolbar google-calendar-subhead-actions">
+          <span class="pill">${selectedGoogleEntriesView.shows.length} ${selectedGoogleEntriesView.shows.length === 1 ? "entry" : "entries"}</span>
+        </div>
+      </div>
+      ${googleEntriesView === "archived" ? `
+        <div class="toolbar google-calendar-archive-toolbar">
+          <label class="field">
+            <span>Year</span>
+            <select id="googleArchiveYear">
+              <option value="all" ${state.ui.googleArchiveYear === "all" ? "selected" : ""}>All Years</option>
+              ${archiveYearOptions.map((year) => `<option value="${year}" ${state.ui.googleArchiveYear === year ? "selected" : ""}>${year}</option>`).join("")}
+            </select>
+          </label>
+          <label class="field">
+            <span>Month</span>
+            <select id="googleArchiveMonth">
+              <option value="all" ${state.ui.googleArchiveMonth === "all" ? "selected" : ""}>All Months</option>
+              ${archiveMonthOptions.map((monthKey) => {
+                const [year, month] = monthKey.split("-");
+                return `<option value="${monthKey}" ${state.ui.googleArchiveMonth === monthKey ? "selected" : ""}>${monthLabel(Number(year), Number(month) - 1)}</option>`;
+              }).join("")}
+            </select>
+          </label>
+        </div>
+      ` : ""}
+      <div class="show-groups">
+        ${selectedGoogleEntriesView.shows.length ? selectedGoogleEntriesView.shows.map((show) => `
+          <article class="show-card">
+            <header>
+              <div>
+                <h4>${show.showName}</h4>
+                <div class="meta">${formatDateRange(getShowStartDate(show), getShowEndDate(show))}</div>
+              </div>
+              <div class="toolbar">
+                <span class="pill">${formatSyncStatus(show)}</span>
+                ${googleEntriesView === "archived"
+                  ? `<button type="button" class="secondary small" data-restore-google-show="${show.id}">Restore</button>`
+                  : `<button type="button" class="secondary small" data-edit-show="${show.id}">${show.needsAdminCompletion ? "Complete Entry" : "Edit"}</button>
+                     <button type="button" class="ghost small" data-archive-google-show="${show.id}">Archive</button>`}
+              </div>
+            </header>
+            <div class="show-banner">
+              <span class="show-banner-item">${show.location || "Location TBD"}</span>
+              <span class="show-banner-item">${show.googleSyncSource === "google" ? "Imported from Google" : "Pushed from PixelBug"}</span>
+              <span class="show-banner-item">${googleEntriesView === "archived"
+                ? (show.googleArchivedAt ? `Archived ${new Date(show.googleArchivedAt).toLocaleDateString("en-IN")}` : "Older Month")
+                : show.googleEventId ? "Linked" : "Unlinked"}</span>
+            </div>
+            <div class="stack" style="margin-top:12px;">
+              <strong>Google Sync Fields</strong>
+              <div class="assignment-card">
+                <div class="meta">Crew Summary: ${(show.assignments || []).map((assignment) => getUserById(assignment.crewId)?.name).filter(Boolean).join(", ") || "Unassigned"}</div>
+                <div class="meta">Notes: ${show.googleNotes || "-"}</div>
+                <div class="meta">Last Google Sync: ${show.googleLastSyncedAt ? new Date(show.googleLastSyncedAt).toLocaleString("en-IN") : "-"}</div>
+                ${show.googleEventId ? `<div class="meta">Google Event ID: ${show.googleEventId}</div>` : ""}
+              </div>
+            </div>
+          </article>
+        `).join("") : `<p>${selectedGoogleEntriesView.empty}</p>`}
+        </div>
+    </div>
+  `;
+
+  enhanceCustomSelects(panel);
+
+  panel.querySelectorAll("[data-google-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ui.googleEntriesView = button.dataset.googleView;
+      saveState(state);
+      renderDashboard();
+    });
+  });
+
+  panel.querySelectorAll("[data-edit-show]").forEach((button) => {
+    button.addEventListener("click", () => fillShowForm(button.dataset.editShow));
+  });
+
+  panel.querySelectorAll("[data-archive-google-show]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const show = state.shows.find((item) => item.id === button.dataset.archiveGoogleShow);
+      if (!show) return;
+      show.googleArchived = true;
+      show.googleArchivedAt = new Date().toISOString();
+      show.googlePinned = false;
+      try {
+        await syncAdminState();
+        saveState(state);
+        render();
+        showToast("Google entry archived.");
+      } catch (error) {
+        showToast(error.message);
+        await refreshFromServer();
+        render();
+      }
+    });
+  });
+
+  panel.querySelectorAll("[data-restore-google-show]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const show = state.shows.find((item) => item.id === button.dataset.restoreGoogleShow);
+      if (!show) return;
+      show.googleArchived = false;
+      show.googleArchivedAt = "";
+      show.googlePinned = true;
+      try {
+        await syncAdminState();
+        saveState(state);
+        render();
+        showToast("Google entry restored.");
+      } catch (error) {
+        showToast(error.message);
+        await refreshFromServer();
+        render();
+      }
+    });
+  });
+
+  document.getElementById("googleArchiveYear")?.addEventListener("change", (event) => {
+    state.ui.googleArchiveYear = event.currentTarget.value;
+    if (state.ui.googleArchiveYear !== "all") {
+      const monthOptions = getArchiveMonthOptions(archivedGoogleShows, state.ui.googleArchiveYear);
+      if (state.ui.googleArchiveMonth !== "all" && !monthOptions.includes(state.ui.googleArchiveMonth)) {
+        state.ui.googleArchiveMonth = "all";
+      }
+    }
+    saveState(state);
+    render();
+  });
+
+  document.getElementById("googleArchiveMonth")?.addEventListener("change", (event) => {
+    state.ui.googleArchiveMonth = event.currentTarget.value;
+    saveState(state);
+    render();
+  });
+
+  document.getElementById("googleConnectButton")?.addEventListener("click", async () => {
+    try {
+      const payload = await apiRequest("/api/admin/google/auth");
+      window.location.href = payload.authUrl;
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+
+  document.getElementById("googleSyncNowButton")?.addEventListener("click", async () => {
+    try {
+      const payload = await apiRequest("/api/admin/google/sync", { method: "POST" });
+      applyServerState(payload);
+      saveState(state);
+      render();
+      showToast("Google Calendar synced.");
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+}
+
 function renderShowForm() {
   const panel = document.getElementById("showFormPanel");
   const crewOptions = getCrewUsers();
+  const adminOptions = getApprovedAdminUsers();
   ensureUiState();
   const editingShow = state.ui.editingShowId
     ? state.shows.find((show) => show.id === state.ui.editingShowId)
@@ -2064,15 +2657,15 @@ function renderShowForm() {
           ${isEditing ? '<span class="pill edit-pill">Edit Mode</span>' : ""}
         </div>
       </div>
-      <form id="showForm" class="stack tight">
+      <form id="showForm" class="stack tight" autocomplete="off">
         <input type="hidden" name="showId">
         <div class="form-grid">
-          <label class="field"><span>Show Date From</span><input type="date" name="showDateFrom" required></label>
-          <label class="field"><span>Show Date To</span><input type="date" name="showDateTo" required></label>
-          <label class="field"><span>Show Name</span><input type="text" name="showName" required></label>
-          <label class="field"><span>Client</span><input type="text" name="client"></label>
-          <label class="field"><span>Location</span><input type="text" name="location"></label>
-          <label class="field"><span>Amount of the Show</span><input type="number" name="amountShow" min="0" step="1"></label>
+          <label class="field"><span>Show Date From</span><input type="date" name="showDateFrom" required autocomplete="off"></label>
+          <label class="field"><span>Show Date To</span><input type="date" name="showDateTo" required autocomplete="off"></label>
+          <label class="field"><span>Show Name</span><input type="text" name="showName" required autocomplete="off" data-form-type="other"></label>
+          <label class="field"><span>Client</span><input type="text" name="client" autocomplete="off" data-form-type="other"></label>
+          <label class="field"><span>Location</span><input type="text" name="location" autocomplete="off" data-form-type="other"></label>
+          <label class="field"><span>Amount of the Show</span><input type="number" name="amountShow" min="0" step="1" autocomplete="off"></label>
         </div>
         <div class="field">
           <span>Show Status</span>
@@ -2102,11 +2695,19 @@ function renderShowForm() {
   `;
 
   const assignmentEditor = document.getElementById("assignmentEditor");
+  enhanceCustomSelects(panel);
 
   function addAssignmentRow(assignment = null) {
     const row = document.createElement("div");
     row.className = "form-grid";
     row.innerHTML = `
+      <label class="field">
+        <span>Light Designer</span>
+        <select name="assignmentLightDesigner">
+          <option value="">Select admin</option>
+          ${adminOptions.map((adminUser) => `<option value="${adminUser.id}" ${assignment?.lightDesignerId === adminUser.id ? "selected" : ""}>${adminUser.name}</option>`).join("")}
+        </select>
+      </label>
       <label class="field">
         <span>Crew</span>
         <select name="assignmentCrew">
@@ -2116,32 +2717,33 @@ function renderShowForm() {
       </label>
       <label class="field">
         <span>Amount of the Operator</span>
-        <input type="number" name="assignmentAmount" min="0" step="1" value="${assignment?.operatorAmount ?? ""}">
+        <input type="number" name="assignmentAmount" min="0" step="1" value="${assignment?.operatorAmount ?? ""}" autocomplete="off">
       </label>
       <label class="field">
         <span>Onward Travel Date</span>
-        <input type="date" name="assignmentOnwardTravelDate" value="${assignment?.onwardTravelDate ?? ""}">
+        <input type="date" name="assignmentOnwardTravelDate" value="${assignment?.onwardTravelDate ?? ""}" autocomplete="off">
       </label>
       <label class="field">
         <span>Return Travel Date</span>
-        <input type="date" name="assignmentReturnTravelDate" value="${assignment?.returnTravelDate ?? ""}">
+        <input type="date" name="assignmentReturnTravelDate" value="${assignment?.returnTravelDate ?? ""}" autocomplete="off">
       </label>
       <label class="field">
         <span>Onward Travel Sector</span>
-        <input type="text" name="assignmentOnwardTravelSector" value="${assignment?.onwardTravelSector ?? ""}">
+        <input type="text" name="assignmentOnwardTravelSector" value="${assignment?.onwardTravelSector ?? ""}" autocomplete="off" data-form-type="other">
       </label>
       <label class="field">
         <span>Return Travel Sector</span>
-        <input type="text" name="assignmentReturnTravelSector" value="${assignment?.returnTravelSector ?? ""}">
+        <input type="text" name="assignmentReturnTravelSector" value="${assignment?.returnTravelSector ?? ""}" autocomplete="off" data-form-type="other">
       </label>
       <label class="field">
         <span>Notes</span>
-        <input type="text" name="assignmentNotes" value="${assignment?.notes ?? ""}">
+        <input type="text" name="assignmentNotes" value="${assignment?.notes ?? ""}" autocomplete="off" data-form-type="other">
       </label>
       <button type="button" class="ghost small remove-assignment">Remove</button>
     `;
-    row.querySelector(".remove-assignment").addEventListener("click", () => row.remove());
     assignmentEditor.append(row);
+    enhanceCustomSelects(row);
+    row.querySelector(".remove-assignment").addEventListener("click", () => row.remove());
   }
 
   addAssignmentRow();
@@ -2181,6 +2783,7 @@ function renderShowForm() {
     const assignments = assignmentRows
       .map((row) => ({
         crewId: row.querySelector('select[name="assignmentCrew"]').value,
+        lightDesignerId: row.querySelector('select[name="assignmentLightDesigner"]').value,
         operatorAmount: row.querySelector('input[name="assignmentAmount"]').value,
         onwardTravelDate: row.querySelector('input[name="assignmentOnwardTravelDate"]').value,
         returnTravelDate: row.querySelector('input[name="assignmentReturnTravelDate"]').value,
@@ -2191,6 +2794,7 @@ function renderShowForm() {
       .filter((assignment) => assignment.crewId)
       .map((assignment) => ({
         crewId: assignment.crewId,
+        lightDesignerId: assignment.lightDesignerId,
         operatorAmount: Number(assignment.operatorAmount || 0),
         onwardTravelDate: assignment.onwardTravelDate,
         returnTravelDate: assignment.returnTravelDate,
@@ -2211,6 +2815,12 @@ function renderShowForm() {
       showDateTo: formData.get("showDateTo").toString(),
       showDate: formData.get("showDateFrom").toString(),
       showStatus: formData.get("showStatus").toString() === "tentative" ? "tentative" : "confirmed",
+      googleEventId: editingShow?.googleEventId || "",
+      googleSyncSource: "pixelbug",
+      googleSyncStatus: "pending_push",
+      googleNotes: editingShow?.googleNotes || "",
+      googleLastSyncedAt: editingShow?.googleLastSyncedAt || "",
+      needsAdminCompletion: editingShow?.googleEventId ? false : Boolean(editingShow?.needsAdminCompletion),
       showName: formData.get("showName").toString().trim(),
       client: formData.get("client").toString().trim(),
       location: formData.get("location").toString().trim(),
@@ -2290,6 +2900,7 @@ function fillShowForm(showId) {
     addButton.click();
     const row = editor.lastElementChild;
     row.querySelector('select[name="assignmentCrew"]').value = assignment.crewId;
+    row.querySelector('select[name="assignmentLightDesigner"]').value = assignment.lightDesignerId || "";
     row.querySelector('input[name="assignmentAmount"]').value = assignment.operatorAmount;
     row.querySelector('input[name="assignmentOnwardTravelDate"]').value = assignment.onwardTravelDate || "";
     row.querySelector('input[name="assignmentReturnTravelDate"]').value = assignment.returnTravelDate || "";
@@ -2320,7 +2931,7 @@ function renderApprovalsSection() {
               </div>
               <span class="pill">${user.role === "viewer" ? "View Only" : user.role === "admin" ? "Admin" : "Crew"}</span>
             </header>
-            ${(user.role === "crew" || user.role === "admin") && user.color ? `<div class="meta">Requested color <span class="legend-swatch" style="background:${user.color}"></span>${user.color}</div>` : ""}
+            ${(user.role === "crew" || user.role === "admin") && user.color ? `<div class="meta">Requested color <span class="legend-swatch" style="background:${resolveCrewColor(user.color)}"></span>${resolveCrewColor(user.color)}</div>` : ""}
             <div class="toolbar" style="margin-top:12px;">
               <button class="small" data-approve="${user.id}">Approve</button>
               <button class="secondary small" data-reject="${user.id}">Reject</button>
@@ -2431,7 +3042,7 @@ function renderCrewAdminPanel() {
           ${assignableTeam.map((member) => `
             <div class="legend-item">
               <div>
-                <span class="legend-swatch" style="background:${member.color || "#264653"}"></span>
+                <span class="legend-swatch" style="background:${resolveCrewColor(member.color) || "#264653"}"></span>
                 <strong>${member.name}</strong>
               </div>
               <div class="meta">${member.role === "admin" ? "Admin" : "Crew"}</div>
@@ -2482,7 +3093,7 @@ function renderCrewAdminPanel() {
                   <strong>${member.name}</strong>
                   <div class="meta">${member.email} · ${member.phone}</div>
                 </div>
-                <span class="pill" style="background:${member.color}; color:white;">Crew</span>
+                <span class="pill" style="background:${resolveCrewColor(member.color)}; color:white;">Crew</span>
               </header>
               <div class="toolbar" style="margin-top:12px;">
                 <button type="button" class="danger small" data-remove-crew="${member.id}">Remove Crew</button>
@@ -2696,6 +3307,9 @@ function render() {
   ensureUiState();
   ensureViewState();
   normalizeState();
+  applyThemeFromState();
+  attachThemeListener();
+  setupGoogleAutoRefresh();
   const user = getCurrentUser();
   document.querySelector(".app-shell")?.classList.toggle("logged-in", Boolean(user));
   document.querySelector(".hero-banner")?.classList.toggle("hidden", !user);
@@ -2711,6 +3325,17 @@ async function initApp() {
     await refreshFromServer();
   } catch (error) {
     showToast("Server connection failed.");
+  }
+  const url = new URL(window.location.href);
+  const googleStatus = url.searchParams.get("google");
+  if (googleStatus === "connected") {
+    showToast("Google Calendar connected.");
+    url.searchParams.delete("google");
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}`);
+  } else if (googleStatus === "error") {
+    showToast("Google Calendar connection failed.");
+    url.searchParams.delete("google");
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}`);
   }
   render();
 }
