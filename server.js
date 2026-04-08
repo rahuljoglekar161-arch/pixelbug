@@ -675,17 +675,21 @@ function normalizeClient(client) {
 }
 
 function validateClients(clients) {
-  const seenNames = new Set();
+  const seenKeys = new Set();
   for (const rawClient of clients) {
     const client = normalizeClient(rawClient);
     if (!client.name) {
       return "Client name is required.";
     }
-    const normalizedName = client.name.toLowerCase();
-    if (seenNames.has(normalizedName)) {
-      return "Client names must remain unique.";
+    const uniquenessKey = [
+      client.name.toLowerCase(),
+      client.state.toLowerCase(),
+      client.gstin.toLowerCase()
+    ].join("|");
+    if (seenKeys.has(uniquenessKey)) {
+      return "Client entries must remain unique by name, state, and GSTIN.";
     }
-    seenNames.add(normalizedName);
+    seenKeys.add(uniquenessKey);
   }
   return "";
 }
@@ -953,9 +957,15 @@ function saveClient(clientInput) {
     throw new Error(validationError);
   }
 
-  const duplicateClient = database.prepare("SELECT id FROM clients WHERE lower(name) = lower(?) AND id != ?").get(client.name, client.id);
+  const duplicateClient = database.prepare(`
+    SELECT id FROM clients
+    WHERE lower(name) = lower(?)
+      AND lower(COALESCE(state, '')) = lower(?)
+      AND lower(COALESCE(gstin, '')) = lower(?)
+      AND id != ?
+  `).get(client.name, client.state || "", client.gstin || "", client.id);
   if (duplicateClient) {
-    throw new Error("A client with that name already exists.");
+    throw new Error("A client with the same name, state, and GSTIN already exists.");
   }
 
   const existingClient = database.prepare("SELECT id, created_at FROM clients WHERE id = ?").get(client.id);

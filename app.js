@@ -1517,6 +1517,7 @@ function getFixedInvoiceCompanyProfile() {
     bankAccountType: "Current Account",
     bankBranchName: "Karvenagar, Pune",
     bankIfsc: "HDFC0001115",
+    signatureImage: "signature-sachin.jpg",
     signatureHolder: "Sachin Dunakhe, Director, PixelBug",
     footerNote: "Please include the invoice number with your payment reference."
   };
@@ -1684,11 +1685,24 @@ function normalizeClient(client = {}) {
   };
 }
 
+function getClientDisplayName(client, clients = state.clients || []) {
+  const normalizedClient = normalizeClient(client);
+  const normalizedName = normalizedClient.name.trim().toLowerCase();
+  if (!normalizedName) return "";
+  const duplicateCount = (clients || [])
+    .map((item) => normalizeClient(item))
+    .filter((item) => item.name.trim().toLowerCase() === normalizedName)
+    .length;
+  return duplicateCount > 1 && normalizedClient.state
+    ? `${normalizedClient.name} (${normalizedClient.state})`
+    : normalizedClient.name;
+}
+
 function getSortedClients() {
   return [...(state.clients || [])]
     .map((client) => normalizeClient(client))
     .filter((client) => client.name)
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => getClientDisplayName(a).localeCompare(getClientDisplayName(b)));
 }
 
 function getClientById(clientId) {
@@ -1699,7 +1713,16 @@ function getClientById(clientId) {
 function getClientByName(name) {
   const normalized = String(name || "").trim().toLowerCase();
   if (!normalized) return null;
-  return (state.clients || []).find((client) => String(client.name || "").trim().toLowerCase() === normalized) || null;
+  return (state.clients || []).find((client) => {
+    const normalizedClient = normalizeClient(client);
+    return normalizedClient.name.trim().toLowerCase() === normalized
+      || getClientDisplayName(normalizedClient).trim().toLowerCase() === normalized;
+  }) || null;
+}
+
+function getClientDisplayValue(clientId, fallbackName = "") {
+  const client = getClientById(clientId) || getClientByName(fallbackName);
+  return client ? getClientDisplayName(client) : String(fallbackName || "").trim();
 }
 
 function sortInvoices(invoices = state.invoices) {
@@ -3444,7 +3467,7 @@ function renderShowCard(show, user, selectedForInvoice = false) {
       </header>
       <div class="show-banner">
         <span class="show-banner-item">${show.location || "Location TBD"}</span>
-        <span class="show-banner-item">${show.client || "Client TBD"}</span>
+        <span class="show-banner-item">${escapeHtml(getClientDisplayValue(show.clientId, show.client) || "Client TBD")}</span>
         ${isAdmin(user) ? `<span class="show-banner-item">${formatCurrency(show.amountShow)}</span>` : ""}
         <span class="show-banner-item">${show.showStatus === "tentative" ? "Tentative" : "Confirmed"}</span>
       </div>
@@ -3672,7 +3695,9 @@ function getInvoiceDocumentMarkup(invoice) {
         <div class="invoice-print-balance"><span>Balance Due</span><strong>${escapeHtml(formatCurrency(invoiceBalanceDue))}</strong></div>
         <div class="invoice-print-balance-rule"></div>
         <div class="invoice-print-signature">
-          <div class="invoice-print-signature-space"></div>
+          <div class="invoice-print-signature-space">
+            ${companyProfile.signatureImage ? `<img src="${escapeHtml(companyProfile.signatureImage)}" alt="Authorised signature" class="invoice-print-signature-image">` : ""}
+          </div>
           ${companyProfile.signatureHolder ? `<strong>${escapeHtml(companyProfile.signatureHolder)}</strong>` : ""}
           <span>Authorised Signature</span>
         </div>
@@ -3747,7 +3772,8 @@ function getInvoicePrintStyles() {
     .invoice-print-balance { border-top: 2px solid #dfe6ef; border-bottom: 1px solid #dfe6ef; padding-top: 7px; font-size: 13px; }
     .invoice-print-balance-rule { grid-column: 2; height: 0; margin-top: 3px; border-top: 2px solid #17212b; }
     .invoice-print-signature { grid-column: 2; display: block; margin-top: 6px; text-align: center; }
-    .invoice-print-signature-space { height: 58px; margin: 5px 0 5px; border-bottom: 1px solid #17212b; }
+    .invoice-print-signature-space { height: 58px; margin: 5px 0 5px; border-bottom: 1px solid #17212b; display: flex; align-items: end; justify-content: center; overflow: hidden; }
+    .invoice-print-signature-image { max-height: 52px; width: auto; max-width: 180px; object-fit: contain; }
     .invoice-print-signature strong { display: block; margin-bottom: 3px; color: #17212b; font-size: 10px; white-space: nowrap; }
     .invoice-print-signature span { color: #17212b; font-size: 10px; font-weight: 700; }
     .invoice-print-footer { margin-top: 12px; border-top: 1px solid #dfe6ef; padding-top: 8px; color: #667789; font-size: 9px; line-height: 1.3; }
@@ -3920,7 +3946,7 @@ function renderInvoicesPanel() {
               <span>Client</span>
               <select name="clientId" required data-searchable="true" data-search-placeholder="Search clients">
                 <option value="">Select client</option>
-                ${clientMasterOptions.map((client) => `<option value="${client.id}">${client.name}</option>`).join("")}
+                ${clientMasterOptions.map((client) => `<option value="${client.id}">${escapeHtml(getClientDisplayName(client))}</option>`).join("")}
               </select>
             </label>
             <label class="field"><span>Issue Date</span><input type="date" name="issueDate" required autocomplete="off"></label>
@@ -4050,7 +4076,7 @@ function renderInvoicesPanel() {
               <header>
                 <div>
                   <h4>${invoice.invoiceNumber}</h4>
-                  <div class="meta">${invoice.clientName} · Issued ${formatInvoiceDate(invoice.issueDate)}${invoice.dueDate ? ` · Due ${formatInvoiceDate(invoice.dueDate)}` : ""}</div>
+                  <div class="meta">${escapeHtml(getClientDisplayValue(invoice.clientId, invoice.clientName))} · Issued ${formatInvoiceDate(invoice.issueDate)}${invoice.dueDate ? ` · Due ${formatInvoiceDate(invoice.dueDate)}` : ""}</div>
                   ${getInvoiceLinkedShowNames(invoice).length ? `<div class="meta">Show: ${escapeHtml(getInvoiceLinkedShowNames(invoice).join(", "))}</div>` : ""}
                   <div class="meta">${getInvoiceLightDesignerLabel(invoice) ? `Light Designer: ${getInvoiceLightDesignerLabel(invoice)}` : "Light Designer: -"}</div>
                 </div>
@@ -5070,7 +5096,7 @@ function renderClientsPanel() {
             <article class="show-card">
               <header>
                 <div>
-                  <h4>${client.name}</h4>
+                  <h4>${escapeHtml(getClientDisplayName(client))}</h4>
                   <div class="meta">${client.contactName || "No contact"}${client.contactEmail ? ` · ${client.contactEmail}` : ""}${client.contactPhone ? ` · ${client.contactPhone}` : ""}</div>
                   <div class="meta">${client.state || "State not added yet"}</div>
                   <div class="meta">${client.gstin ? `GSTIN: ${client.gstin}` : "GSTIN not added yet"}</div>
@@ -5183,15 +5209,8 @@ function renderClientsPanel() {
       billingAddress: form.elements.namedItem("billingAddress").value,
       notes: form.elements.namedItem("clientNotes").value
     });
-    const duplicate = state.clients.find((client) =>
-      client.id !== normalized.id && client.name.trim().toLowerCase() === normalized.name.trim().toLowerCase()
-    );
     if (!normalized.name) {
       message.textContent = "Client name is required.";
-      return;
-    }
-    if (duplicate) {
-      message.textContent = "A client with that name already exists.";
       return;
     }
     const existingIndex = state.clients.findIndex((client) => client.id === normalized.id);
@@ -5312,7 +5331,7 @@ function renderShowForm() {
             <span>Client</span>
             <select name="clientId" ${clientOptions.length ? "required" : ""} data-searchable="true" data-search-placeholder="Search clients">
               <option value="">${clientOptions.length ? "Select client" : "No clients yet"}</option>
-              ${clientOptions.map((client) => `<option value="${client.id}" ${selectedClientId === client.id ? "selected" : ""}>${client.name}</option>`).join("")}
+              ${clientOptions.map((client) => `<option value="${client.id}" ${selectedClientId === client.id ? "selected" : ""}>${escapeHtml(getClientDisplayName(client))}</option>`).join("")}
             </select>
           </label>
           <label class="field">
