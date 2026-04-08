@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=signature-image-20260408a">
+  <link rel="stylesheet" href="styles.css?v=manual-crew-save-20260408c">
 </head>
 <body>
   <div class="app-shell">
@@ -54,6 +54,16 @@
           <h2 id="invoicePreviewTitle">Ready to Print</h2>
         </div>
         <div class="toolbar">
+          <label class="invoice-preview-copy-control">
+            <span>Copies</span>
+            <select id="invoicePrintCopies">
+              <option value="1">One Copy</option>
+              <option value="2">Two Copies</option>
+              <option value="3">Three Copies</option>
+              <option value="4">Four Copies</option>
+              <option value="5">Five Copies</option>
+            </select>
+          </label>
           <button type="button" class="secondary small" id="printInvoicePreview">Print</button>
           <button type="button" class="ghost small" id="closeInvoicePreview">Close</button>
         </div>
@@ -203,6 +213,6 @@
     </div>
   </template>
 
-  <script src="app.js?v=signature-image-20260408a"></script>
+  <script src="app.js?v=manual-crew-save-20260408c"></script>
 </body>
 </html>

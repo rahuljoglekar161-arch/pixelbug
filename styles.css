@@ -925,6 +925,24 @@ button.danger {
   box-shadow: var(--shadow);
 }
 
+.clients-subtab-row {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.clients-toolbar-inline {
+  flex: 1 1 360px;
+  justify-content: flex-end;
+}
+
+.clients-toolbar-inline .invoice-search-control {
+  flex: 1 1 260px;
+  min-width: 220px;
+}
+
 .pagination-bar {
   display: flex;
   align-items: center;
@@ -2206,6 +2224,18 @@ button.danger {
   margin-bottom: 10px;
 }
 
+.invoice-preview-copy-control {
+  min-width: 140px;
+}
+
+.invoice-preview-copy-control span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
 .invoice-preview-content {
   overflow: auto;
   padding: 24px;
@@ -2287,6 +2317,16 @@ button.danger {
   line-height: 1.05;
   text-align: right;
   white-space: nowrap;
+}
+
+.invoice-print-copy-label {
+  margin-top: 6px;
+  color: #5c6b7a;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: right;
 }
 
 .invoice-print-subtle {
@@ -2428,6 +2468,32 @@ button.danger {
 }
 
 .invoice-print-table th {
+  background: #f8fafc;
+  color: #5c6b7a;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.invoice-print-hsn-summary h2 {
+  margin-bottom: 6px;
+}
+
+.invoice-print-hsn-summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+}
+
+.invoice-print-hsn-summary-table th,
+.invoice-print-hsn-summary-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid #dfe6ef;
+  text-align: left;
+  vertical-align: top;
+}
+
+.invoice-print-hsn-summary-table th {
   background: #f8fafc;
   color: #5c6b7a;
   font-size: 9px;
@@ -2581,6 +2647,10 @@ button.danger {
 
 .invoice-print-page-number {
   display: none;
+}
+
+.invoice-print-page + .invoice-print-page {
+  margin-top: 18px;
 }
 
 .meta {

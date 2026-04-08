@@ -814,6 +814,7 @@ function seedState() {
       clientsSubtab: "list",
       clientSearchQuery: "",
       clientGstFilter: "all",
+      invoicePrintCopies: 1,
       invoiceLineDefaults: {
         description: "",
         sac: ""
@@ -1240,6 +1241,8 @@ function ensureUiState() {
   if (!state.ui.clientGstFilter) {
     state.ui.clientGstFilter = "all";
   }
+  const normalizedInvoicePrintCopies = Number(state.ui.invoicePrintCopies || 1);
+  state.ui.invoicePrintCopies = [1, 2, 3, 4, 5].includes(normalizedInvoicePrintCopies) ? normalizedInvoicePrintCopies : 1;
 
   if (!state.ui.invoiceLineDefaults || typeof state.ui.invoiceLineDefaults !== "object") {
     state.ui.invoiceLineDefaults = { description: "", sac: "" };
@@ -1449,7 +1452,7 @@ function normalizeInvoiceDetails(details = {}) {
     clientBillingAddress: String(source.clientBillingAddress || "").trim(),
     clientGstin: String(source.clientGstin || "").trim(),
     placeOfSupply: String(source.placeOfSupply || "").trim(),
-    paymentTerms: String(source.paymentTerms || "Due on receipt").trim(),
+    paymentTerms: String(source.paymentTerms || "Net 15").trim(),
     bankAccountName: String(source.bankAccountName || "").trim(),
     bankName: String(source.bankName || "").trim(),
     bankAccountNumber: String(source.bankAccountNumber || "").trim(),
@@ -1461,7 +1464,7 @@ function normalizeInvoiceDetails(details = {}) {
 function getDueDateFromTerms(issueDate, paymentTerms) {
   const normalizedIssueDate = String(issueDate || "").trim();
   if (!normalizedIssueDate) return "";
-  const normalizedTerms = String(paymentTerms || "Due on receipt").trim().toLowerCase();
+  const normalizedTerms = String(paymentTerms || "Net 15").trim().toLowerCase();
   const offsets = {
     "due on receipt": 0,
     "net 10": 10,
@@ -3570,7 +3573,47 @@ function numberToIndianWords(value) {
   return `${parts.join(" ")} rupees only`;
 }
 
-function getInvoiceDocumentMarkup(invoice) {
+function getInvoiceCopyLabels(copyCount = 1) {
+  const count = Math.max(1, Math.min(5, Number(copyCount || 1)));
+  const labels = {
+    1: ["Original Copy"],
+    2: ["Supplier Copy", "Recipient Copy"],
+    3: ["Supplier Copy", "Transporter Copy", "Recipient Copy"],
+    4: ["Original Copy", "Duplicate Copy", "Triplicate Copy", "Additional Copy"],
+    5: ["Original Copy", "Duplicate Copy", "Triplicate Copy", "Additional Copy 1", "Additional Copy 2"]
+  };
+  return labels[count] || labels[1];
+}
+
+function getInvoiceHsnSacSummaryRows(lineItems = [], placeOfSupply = "") {
+  const summaryMap = new Map();
+  const intraState = isMaharashtraSupply(placeOfSupply);
+  lineItems.forEach((item) => {
+    const baseAmount = Number(item.quantity || 1) * Number(item.unitRate || 0);
+    const discountAmount = getDiscountAmount(item.discount || "", baseAmount);
+    const taxableAmount = Math.max(0, baseAmount - discountAmount);
+    const key = String(item.sac || "").trim() || "-";
+    const current = summaryMap.get(key) || { sac: key, taxableAmount: 0 };
+    current.taxableAmount += taxableAmount;
+    summaryMap.set(key, current);
+  });
+  return [...summaryMap.values()].map((row) => {
+    const taxableAmount = Math.round(row.taxableAmount * 100) / 100;
+    const sgstAmount = intraState ? Math.round(taxableAmount * 0.09 * 100) / 100 : 0;
+    const cgstAmount = intraState ? Math.round(taxableAmount * 0.09 * 100) / 100 : 0;
+    const igstAmount = intraState ? 0 : Math.round(taxableAmount * 0.18 * 100) / 100;
+    const gstAmount = Math.round((sgstAmount + cgstAmount + igstAmount) * 100) / 100;
+    return {
+      sac: row.sac,
+      taxableAmount,
+      gstRateLabel: intraState ? "SGST 9% + CGST 9%" : "IGST 18%",
+      gstAmount,
+      totalAmount: Math.round((taxableAmount + gstAmount) * 100) / 100
+    };
+  });
+}
+
+function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
   const lightDesigner = getInvoiceLightDesignerLabel(invoice) || "-";
   const details = normalizeInvoiceDetails(invoice.details);
   const invoiceClient = getClientById(invoice.clientId) || getClientByName(invoice.clientName);
@@ -3579,6 +3622,7 @@ function getInvoiceDocumentMarkup(invoice) {
   const effectiveClientGstin = details.clientGstin || invoiceClient?.gstin || "";
   const companyProfile = getFixedInvoiceCompanyProfile();
   const gstBreakup = getInvoiceCalculationFromValues(invoice.lineItems || [], effectivePlaceOfSupply);
+  const hsnSacSummaryRows = getInvoiceHsnSacSummaryRows(invoice.lineItems || [], effectivePlaceOfSupply);
   const invoiceAmountPaid = Number(invoice.amountPaid || 0);
   const invoiceBalanceDue = Math.max(0, gstBreakup.totalAmount - invoiceAmountPaid);
   const bankRows = [
@@ -3627,7 +3671,10 @@ function getInvoiceDocumentMarkup(invoice) {
               ${companyProfile.email ? `<div class="invoice-print-company-line">${escapeHtml(companyProfile.email)}</div>` : ""}
               ${companyProfile.website ? `<div class="invoice-print-company-line">${escapeHtml(companyProfile.website)}</div>` : ""}
             </div>
-            <div class="invoice-print-document-title">Tax Invoice</div>
+            <div>
+              <div class="invoice-print-document-title">Tax Invoice</div>
+              <div class="invoice-print-copy-label">${escapeHtml(copyLabel)}</div>
+            </div>
           </div>
         </div>
       </header>
@@ -3637,7 +3684,7 @@ function getInvoiceDocumentMarkup(invoice) {
           <div class="invoice-print-detail-list">
             <div><span>Invoice No</span><strong>${escapeHtml(invoice.invoiceNumber)}</strong></div>
             <div><span>Issue Date</span><strong>${escapeHtml(formatInvoiceDate(invoice.issueDate))}</strong></div>
-            <div><span>Payment Terms</span><strong>${escapeHtml(details.paymentTerms || "Due on receipt")}</strong></div>
+            <div><span>Payment Terms</span><strong>${escapeHtml(details.paymentTerms || "Net 15")}</strong></div>
             <div><span>Due Date</span><strong>${escapeHtml(formatInvoiceDate(effectiveDueDate))}</strong></div>
           </div>
         </div>
@@ -3665,7 +3712,7 @@ function getInvoiceDocumentMarkup(invoice) {
           <thead>
             <tr>
               <th>#</th>
-              <th>Description</th>
+              <th>Particulars</th>
               <th>SAC</th>
               <th>Qty</th>
               <th>Rate</th>
@@ -3707,16 +3754,51 @@ function getInvoiceDocumentMarkup(invoice) {
             ${companyProfile.signatureImage ? `<img src="${escapeHtml(companyProfile.signatureImage)}" alt="Authorised signature" class="invoice-print-signature-image">` : ""}
           </div>
           ${companyProfile.signatureHolder ? `<strong>${escapeHtml(companyProfile.signatureHolder)}</strong>` : ""}
-          <span>Authorised Signature</span>
+          <span>Authorised Signatory</span>
         </div>
       </section>
+      ${hsnSacSummaryRows.length ? `
+        <section class="invoice-print-section invoice-print-hsn-summary">
+          <h2>HSN/SAC Summary</h2>
+          <table class="invoice-print-hsn-summary-table">
+            <thead>
+              <tr>
+                <th>HSN/SAC</th>
+                <th>Taxable Amount</th>
+                <th>GST Rate</th>
+                <th>GST Amount</th>
+                <th>Total Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${hsnSacSummaryRows.map((row) => `
+                <tr>
+                  <td>${escapeHtml(row.sac)}</td>
+                  <td>${escapeHtml(formatCurrency(row.taxableAmount))}</td>
+                  <td>${escapeHtml(row.gstRateLabel)}</td>
+                  <td>${escapeHtml(formatCurrency(row.gstAmount))}</td>
+                  <td>${escapeHtml(formatCurrency(row.totalAmount))}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </section>
+      ` : ""}
       <footer class="invoice-print-footer">
         <div class="invoice-print-thank-you">Thank you for your business.</div>
+        <div class="invoice-print-payment-note">Please clear the dues within 15 working days.</div>
         ${companyProfile.footerNote ? `<div class="invoice-print-payment-note">${escapeHtml(companyProfile.footerNote)}</div>` : ""}
       </footer>
       <div class="invoice-print-page-number"></div>
     </div>
   `;
+}
+
+function getInvoiceDocumentMarkup(invoice, options = {}) {
+  const copyLabels = Array.isArray(options.copyLabels) && options.copyLabels.length
+    ? options.copyLabels
+    : getInvoiceCopyLabels(options.copyCount || 1);
+  return copyLabels.map((copyLabel) => getSingleInvoiceDocumentMarkup(invoice, copyLabel)).join("");
 }
 
 function getInvoicePrintStyles() {
@@ -3741,6 +3823,7 @@ function getInvoicePrintStyles() {
     .invoice-print-brand-title { margin: 0 0 5px; font-family: "Space Grotesk", sans-serif; font-size: 24px; font-weight: 700; line-height: 1.05; }
     .invoice-print-company-line { margin: 0 0 2px; color: #4a5b6d; font-size: 10px; line-height: 1.25; }
     .invoice-print-document-title { margin-left: auto; font-family: "Space Grotesk", sans-serif; font-size: 24px; font-weight: 700; line-height: 1.05; text-align: right; white-space: nowrap; }
+    .invoice-print-copy-label { margin-top: 6px; color: #5c6b7a; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; text-align: right; }
     .invoice-print-subtle { color: #667789; font-size: 10px; line-height: 1.3; }
     .invoice-print-meta { min-width: 260px; display: grid; gap: 12px; padding: 18px; border: 1px solid #dfe6ef; border-radius: 18px; background: #f8fafc; }
     .invoice-print-meta div { display: flex; justify-content: space-between; gap: 18px; }
@@ -3763,6 +3846,10 @@ function getInvoicePrintStyles() {
     .invoice-print-table { width: 100%; border-collapse: collapse; table-layout: auto; border: 0; }
     .invoice-print-table th, .invoice-print-table td { padding: 7px 8px; border: 0; border-bottom: 1px solid #dfe6ef; text-align: left; vertical-align: top; }
     .invoice-print-table th { color: #5c6b7a; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; background: #f8fafc; }
+    .invoice-print-hsn-summary h2 { margin: 0 0 6px; color: #5c6b7a; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+    .invoice-print-hsn-summary-table { width: 100%; border-collapse: collapse; table-layout: auto; }
+    .invoice-print-hsn-summary-table th, .invoice-print-hsn-summary-table td { padding: 6px 8px; border-bottom: 1px solid #dfe6ef; text-align: left; vertical-align: top; }
+    .invoice-print-hsn-summary-table th { color: #5c6b7a; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; background: #f8fafc; }
     .invoice-print-totals { margin-left: 0; display: grid; grid-template-columns: 1fr minmax(250px, 300px); column-gap: 14px; row-gap: 0; }
     .invoice-print-totals > div:not(.invoice-print-amount-words) { grid-column: 2; }
     .invoice-print-totals > div:not(.invoice-print-amount-words):not(.invoice-print-signature) { display: flex; justify-content: space-between; gap: 12px; }
@@ -3788,7 +3875,8 @@ function getInvoicePrintStyles() {
     .invoice-print-thank-you { margin-bottom: 4px; color: #17212b; font-weight: 700; }
     .invoice-print-payment-note { font-size: 9px; line-height: 1.3; }
     .invoice-print-page-number { display: none; }
-    @media print { body { background: #fff; } .invoice-print-page { margin: 0; box-shadow: none; border-radius: 0; } }
+    .invoice-print-page + .invoice-print-page { margin-top: 18px; page-break-before: always; }
+    @media print { body { background: #fff; } .invoice-print-page { margin: 0; box-shadow: none; border-radius: 0; } .invoice-print-page + .invoice-print-page { margin-top: 0; page-break-before: always; } }
   `;
 }
 
@@ -3800,8 +3888,12 @@ function openInvoicePrintPreview(invoiceId) {
   }
   const modal = document.getElementById("invoicePreviewModal");
   const content = document.getElementById("invoicePreviewContent");
+  const copiesSelect = document.getElementById("invoicePrintCopies");
   if (!modal || !content) return;
-  content.innerHTML = getInvoiceDocumentMarkup(invoice);
+  if (copiesSelect) {
+    copiesSelect.value = String(state.ui.invoicePrintCopies || 1);
+  }
+  content.innerHTML = getInvoiceDocumentMarkup(invoice, { copyCount: state.ui.invoicePrintCopies || 1 });
   modal.dataset.invoiceId = invoice.id;
   modal.classList.remove("hidden");
   modal.setAttribute("aria-hidden", "false");
@@ -3819,7 +3911,7 @@ function closeInvoicePrintPreview() {
   document.body.classList.remove("modal-open");
 }
 
-function printInvoiceById(invoiceId) {
+function printInvoiceById(invoiceId, copyCount = state.ui.invoicePrintCopies || 1) {
   const invoice = (state.invoices || []).find((item) => item.id === invoiceId);
   if (!invoice) {
     showToast("Invoice not found.");
@@ -3839,7 +3931,7 @@ function printInvoiceById(invoiceId) {
         <title>${escapeHtml(invoice.invoiceNumber)}</title>
         <style>${getInvoicePrintStyles()}</style>
       </head>
-      <body>${getInvoiceDocumentMarkup(invoice)}</body>
+      <body>${getInvoiceDocumentMarkup(invoice, { copyCount })}</body>
     </html>
   `);
   printWindow.document.close();
@@ -3983,7 +4075,7 @@ function renderInvoicesPanel() {
           <div class="stack tight">
             <div class="form-header">
               <div>
-                <h4>Description</h4>
+                <h4>Particulars</h4>
               </div>
               <button type="button" class="secondary small" id="addInvoiceLineItem">Add Line Item</button>
             </div>
@@ -4319,7 +4411,7 @@ function renderInvoicesPanel() {
     row.innerHTML = `
       <input type="hidden" name="lineId" value="${lineId}">
       <label class="field">
-        <span>Description</span>
+        <span>Particulars</span>
         <input type="text" name="lineDescription" value="${lineDescription}" placeholder="Light Designing and Operating Charges" required autocomplete="off" data-form-type="other">
       </label>
       <label class="field">
@@ -4335,7 +4427,7 @@ function renderInvoicesPanel() {
         <input type="number" name="lineUnitRate" min="0" step="0.01" value="${lineItem?.unitRate ?? 0}" autocomplete="off">
       </label>
       <label class="field invoice-line-wide-field">
-        <span>Custom Details</span>
+        <span>Description</span>
         <input type="text" name="lineCustomDetails" value="${lineItem?.customDetails || ""}" placeholder="Write extra custom details here" autocomplete="off" data-form-type="other">
       </label>
       <label class="field invoice-line-wide-field">
@@ -4572,7 +4664,7 @@ function renderInvoicesPanel() {
   form.elements.namedItem("status").value = initialInvoice.status || "draft";
   form.elements.namedItem("amountPaid").value = initialInvoice.amountPaid ?? 0;
   form.elements.namedItem("notes").value = initialInvoice.notes || "";
-  form.elements.namedItem("paymentTerms").value = initialInvoice.details.paymentTerms || "";
+  form.elements.namedItem("paymentTerms").value = initialInvoice.details.paymentTerms || "Net 15";
   syncCustomSelect(form.elements.namedItem("clientId"));
   lineItemsContainer.innerHTML = "";
   if (initialInvoice.lineItems.length) {
@@ -4744,6 +4836,7 @@ function renderInvoicesPanel() {
 
   const invoicePreviewModal = document.getElementById("invoicePreviewModal");
   const closeInvoicePreviewButton = document.getElementById("closeInvoicePreview");
+  const invoicePrintCopiesSelect = document.getElementById("invoicePrintCopies");
   if (closeInvoicePreviewButton) {
     closeInvoicePreviewButton.onclick = () => {
       closeInvoicePrintPreview();
@@ -4754,7 +4847,19 @@ function renderInvoicesPanel() {
     printInvoicePreviewButton.onclick = () => {
       const invoiceId = invoicePreviewModal?.dataset.invoiceId || "";
       if (invoiceId) {
-        printInvoiceById(invoiceId);
+        printInvoiceById(invoiceId, state.ui.invoicePrintCopies || 1);
+      }
+    };
+  }
+  if (invoicePrintCopiesSelect) {
+    invoicePrintCopiesSelect.onchange = () => {
+      state.ui.invoicePrintCopies = Number(invoicePrintCopiesSelect.value || 1);
+      saveState(state);
+      const invoiceId = invoicePreviewModal?.dataset.invoiceId || "";
+      const previewContent = document.getElementById("invoicePreviewContent");
+      const invoice = (state.invoices || []).find((item) => item.id === invoiceId);
+      if (invoice && previewContent) {
+        previewContent.innerHTML = getInvoiceDocumentMarkup(invoice, { copyCount: state.ui.invoicePrintCopies || 1 });
       }
     };
   }
@@ -5085,9 +5190,32 @@ function renderClientsPanel() {
         </div>
         <span class="pill">${clients.length} ${clients.length === 1 ? "client" : "clients"}</span>
       </div>
-      <div class="invoice-subtabs" role="tablist" aria-label="Client sections">
-        <button type="button" class="${activeClientsSubtab === "create" ? "is-active" : ""}" data-clients-subtab="create">Create Clients</button>
-        <button type="button" class="${activeClientsSubtab === "list" ? "is-active" : ""}" data-clients-subtab="list">Clients</button>
+      <div class="clients-subtab-row">
+        <div class="invoice-subtabs" role="tablist" aria-label="Client sections">
+          <button type="button" class="${activeClientsSubtab === "create" ? "is-active" : ""}" data-clients-subtab="create">Create Clients</button>
+          <button type="button" class="${activeClientsSubtab === "list" ? "is-active" : ""}" data-clients-subtab="list">Clients</button>
+        </div>
+        ${activeClientsSubtab === "list" ? `
+          <div class="shows-toolbar-top clients-toolbar-inline">
+            <label class="sort-control invoice-search-control">
+              <span>Search</span>
+              <input
+                type="search"
+                id="clientSearchInput"
+                placeholder="Search clients"
+                value="${escapeHtml(state.ui.clientSearchQuery || "")}"
+              >
+            </label>
+            <label class="sort-control">
+              <span>GST Details</span>
+              <select id="clientGstFilter">
+                <option value="all" ${clientGstFilter === "all" ? "selected" : ""}>All Clients</option>
+                <option value="missing" ${clientGstFilter === "missing" ? "selected" : ""}>Empty GST Details</option>
+                <option value="available" ${clientGstFilter === "available" ? "selected" : ""}>With GST Details</option>
+              </select>
+            </label>
+          </div>
+        ` : ""}
       </div>
       <form id="clientForm" class="stack tight ${activeClientsSubtab === "create" ? "" : "hidden"}" autocomplete="off">
         <input type="hidden" name="clientId">
@@ -5122,25 +5250,6 @@ function renderClientsPanel() {
         <div id="clientFormMessage" class="message"></div>
       </form>
       <div class="stack ${activeClientsSubtab === "list" ? "" : "hidden"}" data-clients-section="list">
-        <div class="shows-toolbar-top clients-toolbar">
-          <label class="sort-control invoice-search-control">
-            <span>Search</span>
-            <input
-              type="search"
-              id="clientSearchInput"
-              placeholder="Client, GSTIN, state, contact"
-              value="${escapeHtml(state.ui.clientSearchQuery || "")}"
-            >
-          </label>
-          <label class="sort-control">
-            <span>GST Details</span>
-            <select id="clientGstFilter">
-              <option value="all" ${clientGstFilter === "all" ? "selected" : ""}>All Clients</option>
-              <option value="missing" ${clientGstFilter === "missing" ? "selected" : ""}>Empty GST Details</option>
-              <option value="available" ${clientGstFilter === "available" ? "selected" : ""}>With GST Details</option>
-            </select>
-          </label>
-        </div>
         <div class="approval-list">
           ${clientPagination.items.length ? clientPagination.items.map((client) => `
             <article class="show-card">
@@ -5459,18 +5568,14 @@ function renderShowForm() {
   function addAssignmentRow(assignment = null) {
     const row = document.createElement("div");
     row.className = "form-grid";
+    row.dataset.assignmentRow = "true";
     row.innerHTML = `
       <label class="field">
         <span>Crew</span>
         <select name="assignmentCrew">
           <option value="">Select crew</option>
-          <option value="__manual__" ${assignment?.manualCrewName ? "selected" : ""}>Manual Crew Name</option>
           ${crewOptions.map((crewUser) => `<option value="${crewUser.id}" ${assignment?.crewId === crewUser.id ? "selected" : ""}>${crewUser.name}</option>`).join("")}
         </select>
-      </label>
-      <label class="field ${assignment?.manualCrewName ? "" : "hidden"}" data-manual-crew-field>
-        <span>Manual Crew Name</span>
-        <input type="text" name="assignmentManualCrewName" value="${escapeHtml(assignment?.manualCrewName ?? "")}" autocomplete="off" data-form-type="other">
       </label>
       <label class="field">
         <span>Amount of the Operator</span>
@@ -5500,17 +5605,6 @@ function renderShowForm() {
     `;
     assignmentEditor.append(row);
     enhanceCustomSelects(row);
-    const crewSelect = row.querySelector('select[name="assignmentCrew"]');
-    const manualCrewField = row.querySelector("[data-manual-crew-field]");
-    const syncManualCrewField = () => {
-      const isManual = crewSelect.value === "__manual__";
-      manualCrewField.classList.toggle("hidden", !isManual);
-      if (!isManual) {
-        row.querySelector('input[name="assignmentManualCrewName"]').value = "";
-      }
-    };
-    crewSelect.addEventListener("change", syncManualCrewField);
-    syncManualCrewField();
     row.querySelector(".remove-assignment").addEventListener("click", () => {
       const confirmed = window.confirm("Remove this crew assignment?");
       if (!confirmed) return;
@@ -5557,24 +5651,30 @@ function renderShowForm() {
     const form = event.currentTarget;
     const formData = new FormData(form);
     const showId = formData.get("showId").toString();
-    const assignmentRows = [...assignmentEditor.children];
     const showLightDesignerId = formData.get("showLightDesignerId").toString();
-    const assignments = assignmentRows
-      .map((row) => {
-        const crewValue = row.querySelector('select[name="assignmentCrew"]').value;
-        const isManualCrew = crewValue === "__manual__";
-        return {
-          crewId: isManualCrew ? "" : crewValue,
-          manualCrewName: isManualCrew ? row.querySelector('input[name="assignmentManualCrewName"]').value.trim() : "",
-          lightDesignerId: showLightDesignerId,
-          operatorAmount: row.querySelector('input[name="assignmentAmount"]').value,
-          onwardTravelDate: row.querySelector('input[name="assignmentOnwardTravelDate"]').value,
-          returnTravelDate: row.querySelector('input[name="assignmentReturnTravelDate"]').value,
-          onwardTravelSector: row.querySelector('input[name="assignmentOnwardTravelSector"]').value,
-          returnTravelSector: row.querySelector('input[name="assignmentReturnTravelSector"]').value,
-          notes: row.querySelector('input[name="assignmentNotes"]').value
-        };
-      })
+    const assignmentRows = [...assignmentEditor.querySelectorAll('[data-assignment-row="true"]')];
+    const assignments = assignmentRows.map((row) => {
+      const crewSelect = row.querySelector('select[name="assignmentCrew"]');
+      const operatorAmountInput = row.querySelector('input[name="assignmentAmount"]');
+      const onwardTravelDateInput = row.querySelector('input[name="assignmentOnwardTravelDate"]');
+      const returnTravelDateInput = row.querySelector('input[name="assignmentReturnTravelDate"]');
+      const onwardTravelSectorInput = row.querySelector('input[name="assignmentOnwardTravelSector"]');
+      const returnTravelSectorInput = row.querySelector('input[name="assignmentReturnTravelSector"]');
+      const notesInput = row.querySelector('input[name="assignmentNotes"]');
+      const crewValue = crewSelect?.value || "";
+
+      return {
+        crewId: crewValue,
+        manualCrewName: "",
+        lightDesignerId: showLightDesignerId,
+        operatorAmount: operatorAmountInput?.value || "",
+        onwardTravelDate: onwardTravelDateInput?.value || "",
+        returnTravelDate: returnTravelDateInput?.value || "",
+        onwardTravelSector: onwardTravelSectorInput?.value || "",
+        returnTravelSector: returnTravelSectorInput?.value || "",
+        notes: notesInput?.value || ""
+      };
+    })
       .filter((assignment) => assignment.crewId || assignment.manualCrewName)
       .map((assignment) => ({
         crewId: assignment.crewId,
