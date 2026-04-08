@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=list-card-stretch-20260408a">
 </head>
 <body>
   <div class="app-shell">
@@ -46,6 +46,21 @@
   </div>
 
   <div id="toast" class="toast hidden" aria-live="polite"></div>
+  <div id="invoicePreviewModal" class="invoice-preview-modal hidden" aria-hidden="true">
+    <div class="invoice-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="invoicePreviewTitle">
+      <div class="invoice-preview-header">
+        <div>
+          <p class="eyebrow">Invoice Preview</p>
+          <h2 id="invoicePreviewTitle">Ready to Print</h2>
+        </div>
+        <div class="toolbar">
+          <button type="button" class="secondary small" id="printInvoicePreview">Print</button>
+          <button type="button" class="ghost small" id="closeInvoicePreview">Close</button>
+        </div>
+      </div>
+      <div id="invoicePreviewContent" class="invoice-preview-content"></div>
+    </div>
+  </div>
 
   <template id="loginTemplate">
     <div class="stack">
@@ -188,6 +203,6 @@
     </div>
   </template>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=list-card-stretch-20260408a"></script>
 </body>
 </html>

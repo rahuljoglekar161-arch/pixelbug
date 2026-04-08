@@ -26,20 +26,35 @@ loadLocalEnvFile(path.join(__dirname, ".env"));
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || 4173);
 const ROOT = __dirname;
-const DATA_DIR = path.join(ROOT, "data");
-const DATA_FILE = path.join(DATA_DIR, "store.json");
-const DB_FILE = path.join(DATA_DIR, "pixelbug.db");
-const OUTBOX_FILE = path.join(DATA_DIR, "email-outbox.log");
+const DATA_DIR = process.env.PIXELBUG_DATA_DIR
+  ? path.resolve(process.env.PIXELBUG_DATA_DIR)
+  : path.join(ROOT, "data");
+const DATA_FILE = process.env.PIXELBUG_STORE_PATH
+  ? path.resolve(process.env.PIXELBUG_STORE_PATH)
+  : path.join(DATA_DIR, "store.json");
+const DB_FILE = process.env.PIXELBUG_DB_PATH
+  ? path.resolve(process.env.PIXELBUG_DB_PATH)
+  : path.join(DATA_DIR, "pixelbug.db");
+const OUTBOX_FILE = process.env.PIXELBUG_OUTBOX_PATH
+  ? path.resolve(process.env.PIXELBUG_OUTBOX_PATH)
+  : path.join(DATA_DIR, "email-outbox.log");
 const SESSION_COOKIE = "pixelbug_session";
 const GOOGLE_TOKEN_SETTING_KEY = "google_oauth_tokens";
 const GOOGLE_LAST_SYNC_SETTING_KEY = "google_last_sync_at";
 const GOOGLE_LAST_ERROR_SETTING_KEY = "google_last_sync_error";
 const GOOGLE_SYNC_DEBOUNCE_MS = 1000 * 30;
+const INVOICE_STATUSES = new Set(["draft", "sent", "partially_paid", "paid", "cancelled"]);
+const SELF_SERVICE_ROLES = new Set(["admin", "crew", "viewer"]);
 const sessions = new Map();
 const googleOauthStates = new Map();
 let db;
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const COOKIE_SECURE = process.env.PIXELBUG_COOKIE_SECURE === "true" || IS_PRODUCTION;
+const GST_LOOKUP_API_URL = process.env.GST_LOOKUP_API_URL || "";
+const GST_LOOKUP_API_KEY = process.env.GST_LOOKUP_API_KEY || "";
+const GST_LOOKUP_API_KEY_HEADER = process.env.GST_LOOKUP_API_KEY_HEADER || "x-api-key";
+const CLEARTAX_GST_LOOKUP_URL = process.env.CLEARTAX_GST_LOOKUP_URL || "https://cleartax.in/f/compliance-report";
+const CLEARTAX_GST_LOOKUP_ENABLED = process.env.CLEARTAX_GST_LOOKUP_ENABLED !== "false";
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -53,17 +68,178 @@ const MIME_TYPES = {
   ".ico": "image/x-icon"
 };
 
+const GST_STATE_OPTIONS = [
+  "Jammu and Kashmir (01)",
+  "Himachal Pradesh (02)",
+  "Punjab (03)",
+  "Chandigarh (04)",
+  "Uttarakhand (05)",
+  "Haryana (06)",
+  "Delhi (07)",
+  "Rajasthan (08)",
+  "Uttar Pradesh (09)",
+  "Bihar (10)",
+  "Sikkim (11)",
+  "Arunachal Pradesh (12)",
+  "Nagaland (13)",
+  "Manipur (14)",
+  "Mizoram (15)",
+  "Tripura (16)",
+  "Meghalaya (17)",
+  "Assam (18)",
+  "West Bengal (19)",
+  "Jharkhand (20)",
+  "Odisha (21)",
+  "Chhattisgarh (22)",
+  "Madhya Pradesh (23)",
+  "Gujarat (24)",
+  "Dadra and Nagar Haveli and Daman and Diu (26)",
+  "Maharashtra (27)",
+  "Karnataka (29)",
+  "Goa (30)",
+  "Lakshadweep (31)",
+  "Kerala (32)",
+  "Tamil Nadu (33)",
+  "Puducherry (34)",
+  "Andaman and Nicobar Islands (35)",
+  "Telangana (36)",
+  "Andhra Pradesh (37)",
+  "Ladakh (38)"
+];
+
 function uid(prefix) {
   return `${prefix}_${crypto.randomBytes(6).toString("hex")}`;
 }
 
-function ensureDataStore() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+function getStateFromGstin(gstin) {
+  const code = String(gstin || "").trim().slice(0, 2);
+  if (!/^\d{2}$/.test(code)) return "";
+  return GST_STATE_OPTIONS.find((stateName) => stateName.endsWith(`(${code})`)) || "";
+}
+
+function getNestedValue(source, paths) {
+  for (const pathKey of paths) {
+    const value = pathKey.split(".").reduce((current, key) => current && current[key], source);
+    if (value !== undefined && value !== null && String(value).trim()) {
+      return value;
+    }
+  }
+  return "";
+}
+
+function normalizeGstinLookupPayload(gstin, payload = {}) {
+  const source = payload?.data && typeof payload.data === "object"
+    ? payload.data
+    : payload?.taxpayerInfo && typeof payload.taxpayerInfo === "object"
+      ? payload.taxpayerInfo
+      : payload;
+  const addressParts = [
+    getNestedValue(source, ["pradr.addr.bno", "principalPlaceOfBusiness.address.buildingNumber"]),
+    getNestedValue(source, ["pradr.addr.flno", "principalPlaceOfBusiness.address.floorNumber"]),
+    getNestedValue(source, ["pradr.addr.bnm", "principalPlaceOfBusiness.address.buildingName"]),
+    getNestedValue(source, ["pradr.addr.st", "principalPlaceOfBusiness.address.street"]),
+    getNestedValue(source, ["pradr.addr.loc", "principalPlaceOfBusiness.address.location"]),
+    getNestedValue(source, ["pradr.addr.dst", "principalPlaceOfBusiness.address.district"]),
+    getNestedValue(source, ["pradr.addr.stcd", "principalPlaceOfBusiness.address.state"]),
+    getNestedValue(source, ["pradr.addr.pncd", "principalPlaceOfBusiness.address.pincode"])
+  ].filter(Boolean);
+
+  return {
+    gstin,
+    state: getStateFromGstin(gstin),
+    name: String(getNestedValue(source, ["lgnm", "legalName", "legal_name", "taxpayer.legalName"]) || getNestedValue(source, ["tradeNam", "tradeName", "trade_name"]) || "").trim(),
+    billingAddress: String(getNestedValue(source, ["address", "billingAddress", "principalAddress"]) || addressParts.join(", ")).trim(),
+    contactEmail: String(getNestedValue(source, ["email", "contactEmail", "contact.email"]) || "").trim(),
+    contactPhone: String(getNestedValue(source, ["mobile", "phone", "contactPhone", "contact.mobile"]) || "").trim(),
+    tradeName: String(getNestedValue(source, ["tradeNam", "tradeName", "trade_name"]) || "").trim(),
+    status: String(getNestedValue(source, ["sts", "status", "gstinStatus"]) || "").trim()
+  };
+}
+
+function hasGstinLookupDetails(result) {
+  return Boolean(result?.name || result?.billingAddress || result?.tradeName || result?.status);
+}
+
+async function lookupConfiguredGstinApi(normalizedGstin) {
+  if (!GST_LOOKUP_API_URL) return null;
+  const headers = { "Content-Type": "application/json" };
+  if (GST_LOOKUP_API_KEY) {
+    headers[GST_LOOKUP_API_KEY_HEADER] = GST_LOOKUP_API_KEY;
+  }
+  const response = await fetch(GST_LOOKUP_API_URL, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ gstin: normalizedGstin })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || payload.message || "GST lookup failed.");
+  }
+  return {
+    ...normalizeGstinLookupPayload(normalizedGstin, payload),
+    configured: true,
+    source: "configured-api",
+    message: "GST details fetched. Please review before saving."
+  };
+}
+
+async function lookupCleartaxGstinDetails(normalizedGstin) {
+  if (!CLEARTAX_GST_LOOKUP_ENABLED) return null;
+  const endpoint = `${CLEARTAX_GST_LOOKUP_URL.replace(/\/$/, "")}/${encodeURIComponent(normalizedGstin)}/?captcha_token=`;
+  const response = await fetch(endpoint, {
+    headers: {
+      Accept: "application/json,text/plain,*/*",
+      "User-Agent": "PixelBug GST lookup (https://www.pixelbug.in)"
+    }
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) return null;
+  const normalized = normalizeGstinLookupPayload(normalizedGstin, payload);
+  if (!hasGstinLookupDetails(normalized)) return null;
+  return {
+    ...normalized,
+    configured: true,
+    source: "cleartax",
+    message: "GST details fetched from ClearTax. Please review before saving."
+  };
+}
+
+async function lookupGstinDetails(gstin) {
+  const normalizedGstin = String(gstin || "").trim().toUpperCase();
+  if (!/^\d{2}[A-Z0-9]{13}$/.test(normalizedGstin)) {
+    throw new Error("Enter a valid 15-character GSTIN.");
   }
 
+  const state = getStateFromGstin(normalizedGstin);
+
+  const configuredResult = await lookupConfiguredGstinApi(normalizedGstin);
+  if (hasGstinLookupDetails(configuredResult)) {
+    return configuredResult;
+  }
+
+  const cleartaxResult = await lookupCleartaxGstinDetails(normalizedGstin).catch(() => null);
+  if (hasGstinLookupDetails(cleartaxResult)) {
+    return cleartaxResult;
+  }
+
+  return {
+    gstin: normalizedGstin,
+    state,
+    configured: false,
+    message: "State filled from GSTIN. ClearTax did not return public details for this GSTIN, so please fill the remaining client info manually."
+  };
+}
+
+function ensureDataStore() {
+  const requiredDirs = new Set([DATA_DIR, path.dirname(DATA_FILE), path.dirname(DB_FILE), path.dirname(OUTBOX_FILE)]);
+  requiredDirs.forEach((dirPath) => {
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+  });
+
   if (!fs.existsSync(DATA_FILE)) {
-    fs.writeFileSync(DATA_FILE, JSON.stringify({ users: [], shows: [] }, null, 2));
+    fs.writeFileSync(DATA_FILE, JSON.stringify({ users: [], shows: [], clients: [] }, null, 2));
   }
 }
 
@@ -103,6 +279,7 @@ function ensureDatabase() {
       google_archived_at TEXT,
       google_pinned INTEGER NOT NULL DEFAULT 0,
       show_name TEXT NOT NULL,
+      client_id TEXT,
       client TEXT,
       venue TEXT,
       location TEXT,
@@ -110,11 +287,150 @@ function ensureDatabase() {
       amount_show REAL NOT NULL DEFAULT 0,
       assignments_json TEXT NOT NULL DEFAULT '[]'
     );
+    CREATE TABLE IF NOT EXISTS clients (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      state TEXT,
+      billing_address TEXT,
+      gstin TEXT,
+      contact_name TEXT,
+      contact_email TEXT,
+      contact_phone TEXT,
+      notes TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
       value TEXT
     );
+    CREATE TABLE IF NOT EXISTS invoices (
+      id TEXT PRIMARY KEY,
+      invoice_number TEXT NOT NULL UNIQUE,
+      client_name TEXT NOT NULL,
+      client_id TEXT,
+      issue_date TEXT NOT NULL,
+      due_date TEXT,
+      status TEXT NOT NULL DEFAULT 'draft',
+      notes TEXT,
+      details_json TEXT NOT NULL DEFAULT '{}',
+      tax_percent REAL NOT NULL DEFAULT 0,
+      subtotal REAL NOT NULL DEFAULT 0,
+      tax_amount REAL NOT NULL DEFAULT 0,
+      total_amount REAL NOT NULL DEFAULT 0,
+      amount_paid REAL NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'INR',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS invoice_line_items (
+      id TEXT PRIMARY KEY,
+      invoice_id TEXT NOT NULL,
+      show_id TEXT,
+      description TEXT NOT NULL,
+      sac TEXT,
+      custom_details TEXT,
+      discount TEXT,
+      discount_amount REAL NOT NULL DEFAULT 0,
+      quantity REAL NOT NULL DEFAULT 1,
+      unit_rate REAL NOT NULL DEFAULT 0,
+      amount REAL NOT NULL DEFAULT 0,
+      line_order INTEGER NOT NULL DEFAULT 0,
+      FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS invoice_payments (
+      id TEXT PRIMARY KEY,
+      invoice_id TEXT NOT NULL,
+      payment_date TEXT NOT NULL,
+      amount REAL NOT NULL DEFAULT 0,
+      note TEXT,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+    );
   `);
+
+  const existingTables = new Set(
+    db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name)
+  );
+  if (!existingTables.has("clients")) {
+    db.exec(`
+      CREATE TABLE clients (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        billing_address TEXT,
+        gstin TEXT,
+        contact_name TEXT,
+        contact_email TEXT,
+        contact_phone TEXT,
+        notes TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+  }
+  if (!existingTables.has("app_settings")) {
+    db.exec(`
+      CREATE TABLE app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT
+      )
+    `);
+  }
+  if (!existingTables.has("invoices")) {
+    db.exec(`
+      CREATE TABLE invoices (
+        id TEXT PRIMARY KEY,
+        invoice_number TEXT NOT NULL UNIQUE,
+        client_name TEXT NOT NULL,
+        client_id TEXT,
+        issue_date TEXT NOT NULL,
+        due_date TEXT,
+        status TEXT NOT NULL DEFAULT 'draft',
+        notes TEXT,
+        details_json TEXT NOT NULL DEFAULT '{}',
+        tax_percent REAL NOT NULL DEFAULT 0,
+        subtotal REAL NOT NULL DEFAULT 0,
+        tax_amount REAL NOT NULL DEFAULT 0,
+        total_amount REAL NOT NULL DEFAULT 0,
+        amount_paid REAL NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'INR',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `);
+  }
+  if (!existingTables.has("invoice_line_items")) {
+    db.exec(`
+      CREATE TABLE invoice_line_items (
+        id TEXT PRIMARY KEY,
+        invoice_id TEXT NOT NULL,
+        show_id TEXT,
+        description TEXT NOT NULL,
+        sac TEXT,
+        custom_details TEXT,
+        discount TEXT,
+        discount_amount REAL NOT NULL DEFAULT 0,
+        quantity REAL NOT NULL DEFAULT 1,
+        unit_rate REAL NOT NULL DEFAULT 0,
+        amount REAL NOT NULL DEFAULT 0,
+        line_order INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+      )
+    `);
+  }
+  if (!existingTables.has("invoice_payments")) {
+    db.exec(`
+      CREATE TABLE invoice_payments (
+        id TEXT PRIMARY KEY,
+        invoice_id TEXT NOT NULL,
+        payment_date TEXT NOT NULL,
+        amount REAL NOT NULL DEFAULT 0,
+        note TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+      )
+    `);
+  }
 
   const showColumns = db.prepare("PRAGMA table_info(shows)").all().map((column) => column.name);
   if (!showColumns.includes("show_date_from")) {
@@ -153,6 +469,33 @@ function ensureDatabase() {
   if (!showColumns.includes("google_pinned")) {
     db.exec("ALTER TABLE shows ADD COLUMN google_pinned INTEGER NOT NULL DEFAULT 0");
   }
+  if (!showColumns.includes("client_id")) {
+    db.exec("ALTER TABLE shows ADD COLUMN client_id TEXT");
+  }
+  const clientColumns = db.prepare("PRAGMA table_info(clients)").all().map((column) => column.name);
+  if (!clientColumns.includes("state")) {
+    db.exec("ALTER TABLE clients ADD COLUMN state TEXT");
+  }
+  const invoiceColumns = db.prepare("PRAGMA table_info(invoices)").all().map((column) => column.name);
+  if (!invoiceColumns.includes("client_id")) {
+    db.exec("ALTER TABLE invoices ADD COLUMN client_id TEXT");
+  }
+  if (!invoiceColumns.includes("details_json")) {
+    db.exec("ALTER TABLE invoices ADD COLUMN details_json TEXT NOT NULL DEFAULT '{}'");
+  }
+  const invoiceLineItemColumns = db.prepare("PRAGMA table_info(invoice_line_items)").all().map((column) => column.name);
+  if (!invoiceLineItemColumns.includes("sac")) {
+    db.exec("ALTER TABLE invoice_line_items ADD COLUMN sac TEXT");
+  }
+  if (!invoiceLineItemColumns.includes("custom_details")) {
+    db.exec("ALTER TABLE invoice_line_items ADD COLUMN custom_details TEXT");
+  }
+  if (!invoiceLineItemColumns.includes("discount")) {
+    db.exec("ALTER TABLE invoice_line_items ADD COLUMN discount TEXT");
+  }
+  if (!invoiceLineItemColumns.includes("discount_amount")) {
+    db.exec("ALTER TABLE invoice_line_items ADD COLUMN discount_amount REAL NOT NULL DEFAULT 0");
+  }
   db.exec(`
     UPDATE shows
     SET show_date_from = COALESCE(show_date_from, show_date),
@@ -167,7 +510,507 @@ function ensureDatabase() {
   `);
 
   migrateLegacyJsonToDatabase();
+  syncClientMasterFromExistingRecords(db);
   return db;
+}
+
+function roundMoney(value) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+}
+
+function getDiscountAmount(rawDiscount, baseAmount) {
+  const normalized = String(rawDiscount || "").trim();
+  if (!normalized) return 0;
+  const numeric = Number(normalized.replace(/%$/, "").trim());
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+  const discountAmount = normalized.endsWith("%")
+    ? Number(baseAmount || 0) * (numeric / 100)
+    : numeric;
+  return roundMoney(Math.min(Number(baseAmount || 0), Math.max(0, discountAmount)));
+}
+
+function isMaharashtraSupply(placeOfSupply) {
+  return String(placeOfSupply || "").toLowerCase().includes("maharashtra");
+}
+
+function parseDateKey(value) {
+  if (!value) return new Date();
+  return new Date(`${value}T00:00:00`);
+}
+
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function dateKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function getDueDateFromTerms(issueDate, paymentTerms) {
+  const normalizedIssueDate = String(issueDate || "").trim();
+  if (!normalizedIssueDate) return "";
+  const normalizedTerms = String(paymentTerms || "Due on receipt").trim().toLowerCase();
+  const offsets = {
+    "due on receipt": 0,
+    "net 10": 10,
+    "net 15": 15,
+    "net 30": 30
+  };
+  const offsetDays = offsets[normalizedTerms] ?? 0;
+  return dateKey(addDays(parseDateKey(normalizedIssueDate), offsetDays));
+}
+
+function normalizeInvoiceLineItem(item, index = 0) {
+  const quantity = Number(item.quantity || 0);
+  const unitRate = Number(item.unitRate || 0);
+  const grossAmount = roundMoney((quantity > 0 ? quantity : 1) * unitRate);
+  const discount = String(item.discount || item.discountRaw || "").trim();
+  const discountAmount = getDiscountAmount(discount, grossAmount);
+  return {
+    id: String(item.id || uid("line")).trim(),
+    showId: String(item.showId || "").trim(),
+    description: String(item.description || "").trim(),
+    sac: String(item.sac || "").trim(),
+    customDetails: String(item.customDetails || "").trim(),
+    discount,
+    discountAmount,
+    quantity: quantity > 0 ? quantity : 1,
+    unitRate: roundMoney(unitRate),
+    amount: roundMoney(grossAmount - discountAmount),
+    lineOrder: Number.isFinite(Number(item.lineOrder)) ? Number(item.lineOrder) : index
+  };
+}
+
+function normalizeInvoice(invoice) {
+  const lineItems = Array.isArray(invoice.lineItems)
+    ? invoice.lineItems
+        .map((item, index) => normalizeInvoiceLineItem(item, index))
+        .filter((item) => item.description)
+        .sort((a, b) => a.lineOrder - b.lineOrder)
+    : [];
+  const grossSubtotal = roundMoney(lineItems.reduce((sum, item) => sum + (item.quantity * item.unitRate), 0));
+  const discountAmount = roundMoney(lineItems.reduce((sum, item) => sum + item.discountAmount, 0));
+  const subtotal = roundMoney(grossSubtotal - discountAmount);
+  const taxPercent = 18;
+  const amountPaid = roundMoney(Math.max(0, Number(invoice.amountPaid || 0)));
+  const rawDetails = invoice && typeof invoice.details === "object" && invoice.details !== null ? invoice.details : {};
+  const details = {
+    companyName: String(rawDetails.companyName || "PixelBug").trim(),
+    companyAddress: String(rawDetails.companyAddress || "").trim(),
+    companyEmail: String(rawDetails.companyEmail || "").trim(),
+    companyPhone: String(rawDetails.companyPhone || "").trim(),
+    companyGstin: String(rawDetails.companyGstin || "").trim(),
+    clientBillingAddress: String(rawDetails.clientBillingAddress || "").trim(),
+    clientGstin: String(rawDetails.clientGstin || "").trim(),
+    placeOfSupply: String(rawDetails.placeOfSupply || "").trim(),
+    paymentTerms: String(rawDetails.paymentTerms || "Due on receipt").trim(),
+    bankAccountName: String(rawDetails.bankAccountName || "").trim(),
+    bankName: String(rawDetails.bankName || "").trim(),
+    bankAccountNumber: String(rawDetails.bankAccountNumber || "").trim(),
+    bankIfsc: String(rawDetails.bankIfsc || "").trim(),
+    footerNote: String(rawDetails.footerNote || "Please include the invoice number with your payment reference.").trim()
+  };
+  const intraState = isMaharashtraSupply(details.placeOfSupply);
+  const sgstAmount = intraState ? roundMoney(subtotal * 0.09) : 0;
+  const cgstAmount = intraState ? roundMoney(subtotal * 0.09) : 0;
+  const igstAmount = intraState ? 0 : roundMoney(subtotal * 0.18);
+  const taxAmount = roundMoney(sgstAmount + cgstAmount + igstAmount);
+  const totalAmount = roundMoney(subtotal + taxAmount);
+  const normalizedStatus = amountPaid >= totalAmount && totalAmount > 0
+    ? "paid"
+    : amountPaid > 0
+      ? "partially_paid"
+      : INVOICE_STATUSES.has(invoice.status)
+        ? invoice.status
+        : "draft";
+  details.gstBreakup = {
+    grossSubtotal,
+    discountAmount,
+    taxableAmount: subtotal,
+    sgstAmount,
+    cgstAmount,
+    igstAmount,
+    taxAmount
+  };
+  return {
+    id: String(invoice.id || uid("invoice")).trim(),
+    invoiceNumber: String(invoice.invoiceNumber || "").trim(),
+    clientId: String(invoice.clientId || "").trim(),
+    clientName: String(invoice.clientName || "").trim(),
+    issueDate: String(invoice.issueDate || "").trim(),
+    dueDate: String(invoice.dueDate || getDueDateFromTerms(invoice.issueDate, details.paymentTerms) || "").trim(),
+    status: normalizedStatus,
+    notes: String(invoice.notes || "").trim(),
+    taxPercent: roundMoney(taxPercent),
+    subtotal,
+    taxAmount,
+    totalAmount,
+    amountPaid,
+    balanceDue: roundMoney(Math.max(0, totalAmount - amountPaid)),
+    currency: String(invoice.currency || "INR").trim() || "INR",
+    details,
+    createdAt: String(invoice.createdAt || new Date().toISOString()).trim(),
+    updatedAt: new Date().toISOString(),
+    lineItems,
+    paymentEntries: Array.isArray(invoice.paymentEntries) ? invoice.paymentEntries : []
+  };
+}
+
+function normalizeClient(client) {
+  return {
+    id: String(client.id || uid("client")).trim(),
+    name: String(client.name || "").trim(),
+    state: String(client.state || "").trim(),
+    billingAddress: String(client.billingAddress || "").trim(),
+    gstin: String(client.gstin || "").trim(),
+    contactName: String(client.contactName || "").trim(),
+    contactEmail: String(client.contactEmail || "").trim().toLowerCase(),
+    contactPhone: String(client.contactPhone || "").trim(),
+    notes: String(client.notes || "").trim(),
+    createdAt: String(client.createdAt || new Date().toISOString()).trim(),
+    updatedAt: new Date().toISOString()
+  };
+}
+
+function validateClients(clients) {
+  const seenNames = new Set();
+  for (const rawClient of clients) {
+    const client = normalizeClient(rawClient);
+    if (!client.name) {
+      return "Client name is required.";
+    }
+    const normalizedName = client.name.toLowerCase();
+    if (seenNames.has(normalizedName)) {
+      return "Client names must remain unique.";
+    }
+    seenNames.add(normalizedName);
+  }
+  return "";
+}
+
+function validateInvoice(invoice, database = ensureDatabase()) {
+  if (!invoice.invoiceNumber) {
+    return "Invoice number is required.";
+  }
+  if (!invoice.clientId) {
+    return "Client selection is required.";
+  }
+  const existingClient = database.prepare("SELECT id, name FROM clients WHERE id = ?").get(invoice.clientId);
+  if (!existingClient) {
+    return "Selected client was not found.";
+  }
+  if (!invoice.clientName || String(existingClient.name || "").trim() !== String(invoice.clientName || "").trim()) {
+    return "Invoice client does not match the selected client.";
+  }
+  if (!invoice.issueDate) {
+    return "Issue date is required.";
+  }
+  if (!invoice.lineItems.length) {
+    return "At least one invoice line item is required.";
+  }
+  if (invoice.dueDate && invoice.issueDate && invoice.dueDate < invoice.issueDate) {
+    return "Due date cannot be earlier than issue date.";
+  }
+  return "";
+}
+
+function readInvoices() {
+  const database = ensureDatabase();
+  const invoices = database.prepare(`
+    SELECT id, invoice_number, client_name, client_id, issue_date, due_date, status, notes, details_json, tax_percent, subtotal, tax_amount, total_amount, amount_paid, currency, created_at, updated_at
+    FROM invoices
+    ORDER BY issue_date DESC, created_at DESC, invoice_number COLLATE NOCASE DESC
+  `).all().map((invoice) => ({
+    id: invoice.id,
+    invoiceNumber: invoice.invoice_number,
+    clientId: invoice.client_id || "",
+    clientName: invoice.client_name,
+    issueDate: invoice.issue_date,
+    dueDate: invoice.due_date || "",
+    status: invoice.status,
+    notes: invoice.notes || "",
+    details: (() => {
+      try {
+        const parsed = JSON.parse(invoice.details_json || "{}");
+        return parsed && typeof parsed === "object" ? parsed : {};
+      } catch (error) {
+        return {};
+      }
+    })(),
+    taxPercent: Number(invoice.tax_percent || 0),
+    subtotal: Number(invoice.subtotal || 0),
+    taxAmount: Number(invoice.tax_amount || 0),
+    totalAmount: Number(invoice.total_amount || 0),
+    amountPaid: Number(invoice.amount_paid || 0),
+    balanceDue: roundMoney(Number(invoice.total_amount || 0) - Number(invoice.amount_paid || 0)),
+    currency: invoice.currency || "INR",
+    createdAt: invoice.created_at,
+    updatedAt: invoice.updated_at,
+    lineItems: [],
+    paymentEntries: []
+  }));
+
+  const lineItemsByInvoiceId = new Map(invoices.map((invoice) => [invoice.id, invoice.lineItems]));
+  const lineItems = database.prepare(`
+    SELECT id, invoice_id, show_id, description, sac, custom_details, discount, discount_amount, quantity, unit_rate, amount, line_order
+    FROM invoice_line_items
+    ORDER BY invoice_id, line_order ASC, id ASC
+  `).all();
+
+  lineItems.forEach((item) => {
+    const invoiceItems = lineItemsByInvoiceId.get(item.invoice_id);
+    if (!invoiceItems) return;
+    invoiceItems.push({
+      id: item.id,
+      showId: item.show_id || "",
+      description: item.description,
+      sac: item.sac || "",
+      customDetails: item.custom_details || "",
+      discount: item.discount || "",
+      discountAmount: Number(item.discount_amount || 0),
+      quantity: Number(item.quantity || 0),
+      unitRate: Number(item.unit_rate || 0),
+      amount: Number(item.amount || 0),
+      lineOrder: Number(item.line_order || 0)
+    });
+  });
+
+  const paymentsByInvoiceId = new Map(invoices.map((invoice) => [invoice.id, invoice.paymentEntries]));
+  const payments = database.prepare(`
+    SELECT id, invoice_id, payment_date, amount, note, created_at
+    FROM invoice_payments
+    ORDER BY payment_date ASC, created_at ASC, id ASC
+  `).all();
+  payments.forEach((payment) => {
+    const invoicePayments = paymentsByInvoiceId.get(payment.invoice_id);
+    if (!invoicePayments) return;
+    invoicePayments.push({
+      id: payment.id,
+      paymentDate: payment.payment_date,
+      amount: Number(payment.amount || 0),
+      note: payment.note || "",
+      createdAt: payment.created_at
+    });
+  });
+
+  invoices.forEach((invoice) => {
+    if (!invoice.paymentEntries.length) return;
+    invoice.amountPaid = roundMoney(invoice.paymentEntries.reduce((sum, payment) => sum + Number(payment.amount || 0), 0));
+    invoice.balanceDue = roundMoney(Math.max(0, Number(invoice.totalAmount || 0) - invoice.amountPaid));
+    if (invoice.amountPaid >= Number(invoice.totalAmount || 0) && Number(invoice.totalAmount || 0) > 0) {
+      invoice.status = "paid";
+    } else if (invoice.amountPaid > 0) {
+      invoice.status = "partially_paid";
+    }
+  });
+
+  return invoices;
+}
+
+function saveInvoice(invoiceInput) {
+  const database = ensureDatabase();
+  const invoice = normalizeInvoice(invoiceInput);
+  const validationError = validateInvoice(invoice, database);
+  if (validationError) {
+    throw new Error(validationError);
+  }
+
+  const existingInvoice = database.prepare("SELECT id, created_at FROM invoices WHERE id = ?").get(invoice.id);
+  const duplicateInvoiceNumber = database.prepare("SELECT id FROM invoices WHERE invoice_number = ? AND id != ?").get(invoice.invoiceNumber, invoice.id);
+  if (duplicateInvoiceNumber) {
+    throw new Error("Invoice number already exists.");
+  }
+
+  database.exec("BEGIN");
+  try {
+    database.prepare(`
+      INSERT OR REPLACE INTO invoices (
+        id, invoice_number, client_name, client_id, issue_date, due_date, status, notes, details_json, tax_percent, subtotal, tax_amount, total_amount, amount_paid, currency, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      invoice.id,
+      invoice.invoiceNumber,
+      invoice.clientName,
+      invoice.clientId || null,
+      invoice.issueDate,
+      invoice.dueDate || null,
+      invoice.status,
+      invoice.notes || null,
+      JSON.stringify(invoice.details || {}),
+      invoice.taxPercent,
+      invoice.subtotal,
+      invoice.taxAmount,
+      invoice.totalAmount,
+      invoice.amountPaid,
+      invoice.currency,
+      existingInvoice?.created_at || invoice.createdAt,
+      invoice.updatedAt
+    );
+
+    database.prepare("DELETE FROM invoice_line_items WHERE invoice_id = ?").run(invoice.id);
+    const insertLineItem = database.prepare(`
+      INSERT INTO invoice_line_items (
+        id, invoice_id, show_id, description, sac, custom_details, discount, discount_amount, quantity, unit_rate, amount, line_order
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    invoice.lineItems.forEach((item, index) => {
+      insertLineItem.run(
+        item.id,
+        invoice.id,
+        item.showId || null,
+        item.description,
+        item.sac || null,
+        item.customDetails || null,
+        item.discount || null,
+        item.discountAmount || 0,
+        item.quantity,
+        item.unitRate,
+        item.amount,
+        index
+      );
+    });
+
+    database.exec("COMMIT");
+    return invoice.id;
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function addInvoicePayment(invoiceId, paymentInput = {}) {
+  const database = ensureDatabase();
+  const invoice = database.prepare("SELECT id, total_amount, amount_paid FROM invoices WHERE id = ?").get(invoiceId);
+  if (!invoice) {
+    throw new Error("Invoice not found.");
+  }
+
+  const paymentDate = String(paymentInput.paymentDate || "").trim();
+  const amount = roundMoney(Number(paymentInput.amount || 0));
+  const note = String(paymentInput.note || "").trim();
+  if (!paymentDate) {
+    throw new Error("Payment date is required.");
+  }
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error("Payment amount must be greater than zero.");
+  }
+
+  const existingPaymentCount = database.prepare("SELECT COUNT(*) AS count FROM invoice_payments WHERE invoice_id = ?").get(invoiceId)?.count || 0;
+  const existingPaymentTotal = roundMoney((database.prepare("SELECT COALESCE(SUM(amount), 0) AS total FROM invoice_payments WHERE invoice_id = ?").get(invoiceId)?.total) || 0);
+  const effectiveExistingPaid = existingPaymentCount ? existingPaymentTotal : roundMoney(Number(invoice.amount_paid || 0));
+  const remainingBalance = roundMoney(Math.max(0, Number(invoice.total_amount || 0) - effectiveExistingPaid));
+  if (amount > remainingBalance) {
+    throw new Error(`Payment amount cannot exceed remaining balance of ${remainingBalance}.`);
+  }
+  const now = new Date().toISOString();
+  database.exec("BEGIN");
+  try {
+    if (!existingPaymentCount && Number(invoice.amount_paid || 0) > 0) {
+      database.prepare(`
+        INSERT INTO invoice_payments (id, invoice_id, payment_date, amount, note, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(uid("payment"), invoiceId, paymentDate, roundMoney(Number(invoice.amount_paid || 0)), "Legacy paid amount", now);
+    }
+
+    database.prepare(`
+      INSERT INTO invoice_payments (id, invoice_id, payment_date, amount, note, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(uid("payment"), invoiceId, paymentDate, amount, note || null, now);
+
+    const totalPaid = roundMoney((database.prepare("SELECT COALESCE(SUM(amount), 0) AS total FROM invoice_payments WHERE invoice_id = ?").get(invoiceId)?.total) || 0);
+    const totalAmount = roundMoney(Number(invoice.total_amount || 0));
+    const nextStatus = totalPaid >= totalAmount && totalAmount > 0 ? "paid" : totalPaid > 0 ? "partially_paid" : "sent";
+    database.prepare("UPDATE invoices SET amount_paid = ?, status = ?, updated_at = ? WHERE id = ?").run(totalPaid, nextStatus, now, invoiceId);
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function deleteInvoice(invoiceId) {
+  const database = ensureDatabase();
+  database.exec("BEGIN");
+  try {
+    database.prepare("DELETE FROM invoice_payments WHERE invoice_id = ?").run(invoiceId);
+    database.prepare("DELETE FROM invoice_line_items WHERE invoice_id = ?").run(invoiceId);
+    const result = database.prepare("DELETE FROM invoices WHERE id = ?").run(invoiceId);
+    database.exec("COMMIT");
+    return Number(result.changes || 0) > 0;
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function saveClient(clientInput) {
+  const database = ensureDatabase();
+  const client = normalizeClient(clientInput || {});
+  const validationError = validateClients([client]);
+  if (validationError) {
+    throw new Error(validationError);
+  }
+
+  const duplicateClient = database.prepare("SELECT id FROM clients WHERE lower(name) = lower(?) AND id != ?").get(client.name, client.id);
+  if (duplicateClient) {
+    throw new Error("A client with that name already exists.");
+  }
+
+  const existingClient = database.prepare("SELECT id, created_at FROM clients WHERE id = ?").get(client.id);
+
+  database.exec("BEGIN");
+  try {
+    database.prepare(`
+      INSERT OR REPLACE INTO clients (
+        id, name, state, billing_address, gstin, contact_name, contact_email, contact_phone, notes, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      client.id,
+      client.name,
+      client.state || null,
+      client.billingAddress || null,
+      client.gstin || null,
+      client.contactName || null,
+      client.contactEmail || null,
+      client.contactPhone || null,
+      client.notes || null,
+      existingClient?.created_at || client.createdAt,
+      client.updatedAt
+    );
+
+    database.prepare("UPDATE shows SET client = ? WHERE client_id = ?").run(client.name, client.id);
+    database.prepare("UPDATE invoices SET client_name = ? WHERE client_id = ?").run(client.name, client.id);
+
+    database.exec("COMMIT");
+    return client.id;
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function deleteClient(clientId, options = {}) {
+  const database = ensureDatabase();
+  const linkedShow = database.prepare("SELECT id FROM shows WHERE client_id = ? LIMIT 1").get(clientId);
+  const linkedInvoice = database.prepare("SELECT id FROM invoices WHERE client_id = ? LIMIT 1").get(clientId);
+  if ((linkedShow || linkedInvoice) && !options.keepHistory) {
+    throw new Error("This client is linked to shows or invoices and cannot be deleted yet.");
+  }
+  database.exec("BEGIN");
+  try {
+    if (options.keepHistory) {
+      database.prepare("UPDATE shows SET client_id = NULL WHERE client_id = ?").run(clientId);
+      database.prepare("UPDATE invoices SET client_id = NULL WHERE client_id = ?").run(clientId);
+    }
+    const result = database.prepare("DELETE FROM clients WHERE id = ?").run(clientId);
+    database.exec("COMMIT");
+    return Number(result.changes || 0) > 0;
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 function getSetting(key) {
@@ -199,18 +1042,34 @@ function setGoogleTokens(tokens) {
   setSetting(GOOGLE_TOKEN_SETTING_KEY, JSON.stringify(tokens || {}));
 }
 
+function readFirstConfiguredEnv(keys = []) {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+}
+
 function getGoogleConfig(req) {
-  const clientId = process.env.GOOGLE_CLIENT_ID || "";
-  const clientSecret = process.env.GOOGLE_CLIENT_SECRET || "";
-  const calendarId = process.env.GOOGLE_CALENDAR_ID || "";
-  const baseUrl = process.env.PIXELBUG_BASE_URL || `http://${req?.headers?.host || `${HOST}:${PORT}`}`;
+  const clientId = readFirstConfiguredEnv(["GOOGLE_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_ID", "GOOGLE_CLIENTID"]);
+  const clientSecret = readFirstConfiguredEnv(["GOOGLE_CLIENT_SECRET", "GOOGLE_OAUTH_CLIENT_SECRET", "GOOGLE_SECRET"]);
+  const calendarId = readFirstConfiguredEnv(["GOOGLE_CALENDAR_ID", "GOOGLE_SHARED_CALENDAR_ID", "CALENDAR_ID"]);
+  const baseUrl = (process.env.PIXELBUG_BASE_URL || `http://${req?.headers?.host || `${HOST}:${PORT}`}`).trim().replace(/\/+$/, "");
+  const missing = [];
+  if (!clientId) missing.push("GOOGLE_CLIENT_ID");
+  if (!clientSecret) missing.push("GOOGLE_CLIENT_SECRET");
+  if (!calendarId) missing.push("GOOGLE_CALENDAR_ID");
+
   return {
     clientId,
     clientSecret,
     calendarId,
     baseUrl,
     redirectUri: `${baseUrl}/api/google/callback`,
-    configured: Boolean(clientId && clientSecret && calendarId)
+    configured: missing.length === 0,
+    missing
   };
 }
 
@@ -221,6 +1080,8 @@ function getGoogleStatus(req) {
     configured: config.configured,
     connected: Boolean(tokens?.refresh_token || tokens?.access_token),
     calendarId: config.calendarId || "",
+    redirectUri: config.redirectUri,
+    missingConfig: config.missing || [],
     lastSyncAt: getSetting(GOOGLE_LAST_SYNC_SETTING_KEY) || "",
     lastError: getSetting(GOOGLE_LAST_ERROR_SETTING_KEY) || ""
   };
@@ -237,6 +1098,7 @@ function migrateLegacyJsonToDatabase() {
   const parsed = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
   const users = Array.isArray(parsed.users) ? parsed.users : [];
   const shows = Array.isArray(parsed.shows) ? parsed.shows : [];
+  const clients = Array.isArray(parsed.clients) ? parsed.clients : [];
   const insertUser = database.prepare(`
     INSERT INTO users (
       id, name, email, phone, role, approved, color, email_verified, verification_token, reset_token, reset_token_expires_at, password_hash
@@ -244,8 +1106,13 @@ function migrateLegacyJsonToDatabase() {
   `);
   const insertShow = database.prepare(`
     INSERT INTO shows (
-      id, show_date, show_date_from, show_date_to, show_status, google_event_id, google_sync_source, google_sync_status, google_notes, google_last_synced_at, needs_admin_completion, google_archived, google_archived_at, google_pinned, show_name, client, venue, location, show_time, amount_show, assignments_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, show_date, show_date_from, show_date_to, show_status, google_event_id, google_sync_source, google_sync_status, google_notes, google_last_synced_at, needs_admin_completion, google_archived, google_archived_at, google_pinned, show_name, client_id, client, venue, location, show_time, amount_show, assignments_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertClient = database.prepare(`
+    INSERT OR IGNORE INTO clients (
+      id, name, billing_address, gstin, contact_name, contact_email, contact_phone, notes, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   database.exec("BEGIN");
@@ -267,6 +1134,23 @@ function migrateLegacyJsonToDatabase() {
       );
     });
 
+    clients.forEach((client) => {
+      const normalizedClient = normalizeClient(client);
+      if (!normalizedClient.name) return;
+      insertClient.run(
+        normalizedClient.id,
+        normalizedClient.name,
+        normalizedClient.billingAddress || null,
+        normalizedClient.gstin || null,
+        normalizedClient.contactName || null,
+        normalizedClient.contactEmail || null,
+        normalizedClient.contactPhone || null,
+        normalizedClient.notes || null,
+        normalizedClient.createdAt,
+        normalizedClient.updatedAt
+      );
+    });
+
     shows.forEach((show) => {
       const normalized = normalizeShow(show);
       insertShow.run(
@@ -285,6 +1169,7 @@ function migrateLegacyJsonToDatabase() {
         normalized.googleArchivedAt,
         normalized.googlePinned ? 1 : 0,
         normalized.showName,
+        normalized.clientId || null,
         normalized.client,
         normalized.venue,
         normalized.location,
@@ -292,6 +1177,83 @@ function migrateLegacyJsonToDatabase() {
         normalized.amountShow,
         JSON.stringify(normalized.assignments)
       );
+    });
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function syncClientMasterFromExistingRecords(database) {
+  const existingClients = database.prepare(`
+    SELECT id, name, state, billing_address, gstin, contact_name, contact_email, contact_phone, notes, created_at, updated_at
+    FROM clients
+    ORDER BY name COLLATE NOCASE
+  `).all();
+  const clientMap = new Map(existingClients.map((client) => [String(client.name || "").trim().toLowerCase(), client]));
+  const insertClient = database.prepare(`
+    INSERT INTO clients (
+      id, name, state, billing_address, gstin, contact_name, contact_email, contact_phone, notes, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const linkShowClient = database.prepare("UPDATE shows SET client_id = ? WHERE id = ?");
+  const linkInvoiceClient = database.prepare("UPDATE invoices SET client_id = ? WHERE id = ?");
+  const now = new Date().toISOString();
+
+  const ensureClient = (name) => {
+    const normalizedName = String(name || "").trim();
+    if (!normalizedName) return null;
+    const key = normalizedName.toLowerCase();
+    const existing = clientMap.get(key);
+    if (existing) {
+      return existing.id;
+    }
+    const client = {
+      id: uid("client"),
+      name: normalizedName,
+      state: null,
+      billing_address: null,
+      gstin: null,
+      contact_name: null,
+      contact_email: null,
+      contact_phone: null,
+      notes: null,
+      created_at: now,
+      updated_at: now
+    };
+    insertClient.run(
+      client.id,
+      client.name,
+      client.state,
+      client.billing_address,
+      client.gstin,
+      client.contact_name,
+      client.contact_email,
+      client.contact_phone,
+      client.notes,
+      client.created_at,
+      client.updated_at
+    );
+    clientMap.set(key, client);
+    return client.id;
+  };
+
+  database.exec("BEGIN");
+  try {
+    database.prepare("SELECT id, client_id, client FROM shows").all().forEach((show) => {
+      if (show.client_id) return;
+      const clientId = ensureClient(show.client);
+      if (clientId) {
+        linkShowClient.run(clientId, show.id);
+      }
+    });
+    database.prepare("SELECT id, client_id, client_name FROM invoices").all().forEach((invoice) => {
+      if (invoice.client_id) return;
+      const clientId = ensureClient(invoice.client_name);
+      if (clientId) {
+        linkInvoiceClient.run(clientId, invoice.id);
+      }
     });
     database.exec("COMMIT");
   } catch (error) {
@@ -322,7 +1284,7 @@ function readStore() {
   }));
 
   const shows = database.prepare(`
-    SELECT id, show_date, show_date_from, show_date_to, show_status, show_name, client, venue, location, show_time, amount_show, assignments_json
+    SELECT id, show_date, show_date_from, show_date_to, show_status, show_name, client_id, client, venue, location, show_time, amount_show, assignments_json
     , google_event_id, google_sync_source, google_sync_status, google_notes, google_last_synced_at, needs_admin_completion, google_archived, google_archived_at, google_pinned
     FROM shows
     ORDER BY COALESCE(show_date_from, show_date) ASC, show_time ASC, show_name COLLATE NOCASE
@@ -342,6 +1304,7 @@ function readStore() {
     googleArchivedAt: show.google_archived_at || "",
     googlePinned: Boolean(show.google_pinned),
     showName: show.show_name,
+    clientId: show.client_id || "",
     client: show.client || "",
     venue: show.venue || "",
     location: show.location || "",
@@ -350,7 +1313,25 @@ function readStore() {
     assignments: JSON.parse(show.assignments_json || "[]")
   }));
 
-  return { users, shows };
+  const clients = database.prepare(`
+    SELECT id, name, state, billing_address, gstin, contact_name, contact_email, contact_phone, notes, created_at, updated_at
+    FROM clients
+    ORDER BY name COLLATE NOCASE
+  `).all().map((client) => ({
+    id: client.id,
+    name: client.name,
+    state: client.state || "",
+    billingAddress: client.billing_address || "",
+    gstin: client.gstin || "",
+    contactName: client.contact_name || "",
+    contactEmail: client.contact_email || "",
+    contactPhone: client.contact_phone || "",
+    notes: client.notes || "",
+    createdAt: client.created_at,
+    updatedAt: client.updated_at
+  }));
+
+  return { users, shows, clients };
 }
 
 function writeStore(store) {
@@ -362,16 +1343,23 @@ function writeStore(store) {
   `);
   const replaceShow = database.prepare(`
     INSERT OR REPLACE INTO shows (
-      id, show_date, show_date_from, show_date_to, show_status, google_event_id, google_sync_source, google_sync_status, google_notes, google_last_synced_at, needs_admin_completion, google_archived, google_archived_at, google_pinned, show_name, client, venue, location, show_time, amount_show, assignments_json
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, show_date, show_date_from, show_date_to, show_status, google_event_id, google_sync_source, google_sync_status, google_notes, google_last_synced_at, needs_admin_completion, google_archived, google_archived_at, google_pinned, show_name, client_id, client, venue, location, show_time, amount_show, assignments_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const replaceClient = database.prepare(`
+    INSERT OR REPLACE INTO clients (
+      id, name, state, billing_address, gstin, contact_name, contact_email, contact_phone, notes, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const clearUsers = database.prepare("DELETE FROM users");
   const clearShows = database.prepare("DELETE FROM shows");
+  const clearClients = database.prepare("DELETE FROM clients");
 
   database.exec("BEGIN");
   try {
     clearUsers.run();
     clearShows.run();
+    clearClients.run();
 
     store.users.forEach((user) => {
       replaceUser.run(
@@ -387,6 +1375,23 @@ function writeStore(store) {
         user.resetToken || null,
         user.resetTokenExpiresAt || null,
         user.passwordHash
+      );
+    });
+
+    (store.clients || []).forEach((client) => {
+      const normalizedClient = normalizeClient(client);
+      replaceClient.run(
+        normalizedClient.id,
+        normalizedClient.name,
+        normalizedClient.state || null,
+        normalizedClient.billingAddress || null,
+        normalizedClient.gstin || null,
+        normalizedClient.contactName || null,
+        normalizedClient.contactEmail || null,
+        normalizedClient.contactPhone || null,
+        normalizedClient.notes || null,
+        normalizedClient.createdAt,
+        normalizedClient.updatedAt
       );
     });
 
@@ -408,6 +1413,7 @@ function writeStore(store) {
         normalized.googleArchivedAt,
         normalized.googlePinned ? 1 : 0,
         normalized.showName,
+        normalized.clientId || null,
         normalized.client,
         normalized.venue,
         normalized.location,
@@ -558,6 +1564,7 @@ function normalizeShow(show) {
     googleArchivedAt: String(show.googleArchivedAt || "").trim(),
     googlePinned: Boolean(show.googlePinned),
     showName: String(show.showName || "").trim(),
+    clientId: String(show.clientId || "").trim(),
     client: String(show.client || "").trim(),
     venue: String(show.venue || "").trim(),
     location: String(show.location || "").trim(),
@@ -565,9 +1572,10 @@ function normalizeShow(show) {
     amountShow: Number(show.amountShow || 0),
     assignments: Array.isArray(show.assignments)
       ? show.assignments
-          .filter((assignment) => assignment && assignment.crewId)
+          .filter((assignment) => assignment && (assignment.crewId || assignment.manualCrewName))
           .map((assignment) => ({
-            crewId: String(assignment.crewId),
+            crewId: String(assignment.crewId || ""),
+            manualCrewName: String(assignment.manualCrewName || "").trim(),
             lightDesignerId: String(assignment.lightDesignerId || ""),
             operatorAmount: Number(assignment.operatorAmount || 0),
             onwardTravelDate: String(assignment.onwardTravelDate || assignment.travelDate || ""),
@@ -582,7 +1590,7 @@ function normalizeShow(show) {
 
 function getCrewSummaryFromShow(show, store) {
   return (show.assignments || [])
-    .map((assignment) => store.users.find((user) => user.id === assignment.crewId)?.name)
+    .map((assignment) => store.users.find((user) => user.id === assignment.crewId)?.name || assignment.manualCrewName)
     .filter(Boolean)
     .join(", ");
 }
@@ -603,6 +1611,18 @@ function hasGoogleSyncedFieldChanges(previousShow, nextShow, store) {
 
 function hasApprovedAdmin(store) {
   return store.users.some((user) => user.role === "admin" && user.approved);
+}
+
+function canAccessInvoices(user) {
+  return user?.role === "admin" || user?.role === "accounts";
+}
+
+function isAdminRouteAllowedForUser(pathname, user) {
+  if (user?.role === "admin") return true;
+  if (canAccessInvoices(user) && (pathname === "/api/admin/invoices" || pathname.startsWith("/api/admin/invoices/"))) {
+    return true;
+  }
+  return false;
 }
 
 function usedApprovedColors(users, excludeUserId = null) {
@@ -765,7 +1785,7 @@ function parseGoogleDescription(description = "") {
 
 function buildGoogleDescription(show, store) {
   const crewNames = (show.assignments || [])
-    .map((assignment) => store.users.find((user) => user.id === assignment.crewId)?.name)
+    .map((assignment) => store.users.find((user) => user.id === assignment.crewId)?.name || assignment.manualCrewName)
     .filter(Boolean)
     .join(", ");
   const notes = String(show.googleNotes || "").trim();
@@ -962,7 +1982,8 @@ async function pullGoogleCalendarIntoStore(req, currentStore) {
 
   const nextStore = {
     users: [...currentStore.users],
-    shows: [...currentStore.shows]
+    shows: [...currentStore.shows],
+    clients: [...(currentStore.clients || [])]
   };
   const showsByGoogleId = new Map(nextStore.shows.filter((show) => show.googleEventId).map((show) => [show.googleEventId, show]));
   const cancelledGoogleIds = new Set();
@@ -997,7 +2018,8 @@ async function pushPixelbugShowsToGoogle(req, currentStore) {
   const config = getGoogleConfig(req);
   const nextStore = {
     users: [...currentStore.users],
-    shows: [...currentStore.shows]
+    shows: [...currentStore.shows],
+    clients: [...(currentStore.clients || [])]
   };
   const syncErrors = [];
 
@@ -1066,6 +2088,8 @@ function sendBootstrap(res, store, currentUser, extraHeaders = {}, req = null) {
   sendJson(res, 200, {
     users: store.users.map(sanitizeUser),
     shows: store.shows,
+    clients: store.clients || [],
+    invoices: canAccessInvoices(currentUser) ? readInvoices() : [],
     currentUserId: currentUser?.id || null,
     hasAdmin: hasApprovedAdmin(store),
     google: getGoogleStatus(req)
@@ -1075,7 +2099,8 @@ function sendBootstrap(res, store, currentUser, extraHeaders = {}, req = null) {
 async function handleApi(req, res) {
   let store = readStore();
   let currentUser = getSessionUser(req, store);
-  const pathname = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`).pathname;
+  const requestUrl = new URL(req.url, `http://${req.headers.host || `${HOST}:${PORT}`}`);
+  const pathname = requestUrl.pathname;
 
   if (req.method === "GET" && pathname === "/api/bootstrap") {
     store = await maybeAutoPullGoogleCalendar(req, currentUser, store);
@@ -1165,7 +2190,7 @@ async function handleApi(req, res) {
     const email = String(body.email || "").trim().toLowerCase();
     const color = body.color ? String(body.color).trim() : null;
 
-    if (!["admin", "crew", "viewer"].includes(role)) {
+    if (!SELF_SERVICE_ROLES.has(role)) {
       sendJson(res, 400, { error: "Invalid account type." });
       return true;
     }
@@ -1254,11 +2279,17 @@ async function handleApi(req, res) {
     return true;
   }
 
-  if (!currentUser || currentUser.role !== "admin") {
-    if (pathname.startsWith("/api/admin/")) {
-      sendJson(res, 403, { error: "Admin access required." });
+  if (pathname.startsWith("/api/admin/") && !isAdminRouteAllowedForUser(pathname, currentUser)) {
+    if (!currentUser) {
+      sendJson(res, 403, { error: "Login required." });
       return true;
     }
+    if (currentUser.role === "accounts") {
+      sendJson(res, 403, { error: "Accounts access is limited to invoicing." });
+      return true;
+    }
+    sendJson(res, 403, { error: "Admin access required." });
+    return true;
   }
 
   if (req.method === "GET" && pathname === "/api/admin/google/status") {
@@ -1423,6 +2454,47 @@ async function handleApi(req, res) {
     return true;
   }
 
+  if (req.method === "POST" && pathname === "/api/admin/add-accounts") {
+    const body = await readJson(req);
+    const name = String(body.name || "").trim();
+    const email = String(body.email || "").trim().toLowerCase();
+    const phone = String(body.phone || "").trim();
+    const password = String(body.password || "");
+
+    if (!name || !email || !phone) {
+      sendJson(res, 400, { error: "All accounts fields are required." });
+      return true;
+    }
+
+    if (!isStrongPassword(password)) {
+      sendJson(res, 400, { error: "Password must be 8+ characters and include upper, lower, and number." });
+      return true;
+    }
+
+    if (store.users.some((user) => user.email.toLowerCase() === email)) {
+      sendJson(res, 409, { error: "That email already exists." });
+      return true;
+    }
+
+    const newUser = {
+      id: uid("accounts"),
+      name,
+      email,
+      phone,
+      role: "accounts",
+      approved: true,
+      color: null,
+      emailVerified: true,
+      verificationToken: null,
+      passwordHash: hashPassword(password)
+    };
+    store.users.push(newUser);
+
+    writeStore(store);
+    sendBootstrap(res, store, currentUser, {}, req);
+    return true;
+  }
+
   if (req.method === "POST" && pathname === "/api/change-password") {
     if (!currentUser) {
       sendJson(res, 403, { error: "Login required." });
@@ -1450,10 +2522,74 @@ async function handleApi(req, res) {
     return true;
   }
 
+  if (req.method === "POST" && pathname === "/api/admin/invoices") {
+    const body = await readJson(req);
+    saveInvoice(body || {});
+    sendBootstrap(res, readStore(), currentUser, {}, req);
+    return true;
+  }
+
+  if (req.method === "POST" && pathname.startsWith("/api/admin/invoices/") && pathname.endsWith("/payments")) {
+    const invoiceId = decodeURIComponent(pathname.slice("/api/admin/invoices/".length, -"/payments".length));
+    if (!invoiceId) {
+      sendJson(res, 400, { error: "Invoice id is required." });
+      return true;
+    }
+    const body = await readJson(req);
+    addInvoicePayment(invoiceId, body || {});
+    sendBootstrap(res, readStore(), currentUser, {}, req);
+    return true;
+  }
+
+  if (req.method === "DELETE" && pathname.startsWith("/api/admin/invoices/")) {
+    const invoiceId = decodeURIComponent(pathname.slice("/api/admin/invoices/".length));
+    if (!invoiceId) {
+      sendJson(res, 400, { error: "Invoice id is required." });
+      return true;
+    }
+    const deleted = deleteInvoice(invoiceId);
+    if (!deleted) {
+      sendJson(res, 404, { error: "Invoice not found." });
+      return true;
+    }
+    sendBootstrap(res, readStore(), currentUser, {}, req);
+    return true;
+  }
+
+  if (req.method === "POST" && pathname === "/api/admin/gstin-lookup") {
+    const body = await readJson(req);
+    const result = await lookupGstinDetails(body?.gstin || "");
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  if (req.method === "POST" && pathname === "/api/admin/clients") {
+    const body = await readJson(req);
+    saveClient(body || {});
+    sendBootstrap(res, readStore(), currentUser, {}, req);
+    return true;
+  }
+
+  if (req.method === "DELETE" && pathname.startsWith("/api/admin/clients/")) {
+    const clientId = decodeURIComponent(pathname.slice("/api/admin/clients/".length));
+    if (!clientId) {
+      sendJson(res, 400, { error: "Client id is required." });
+      return true;
+    }
+    const deleted = deleteClient(clientId, { keepHistory: requestUrl.searchParams.get("keepHistory") === "true" });
+    if (!deleted) {
+      sendJson(res, 404, { error: "Client not found." });
+      return true;
+    }
+    sendBootstrap(res, readStore(), currentUser, {}, req);
+    return true;
+  }
+
   if (req.method === "POST" && pathname === "/api/admin/state") {
     const body = await readJson(req);
     const incomingUsers = Array.isArray(body.users) ? body.users : [];
     const incomingShows = Array.isArray(body.shows) ? body.shows : [];
+    const incomingClients = Array.isArray(body.clients) ? body.clients : [];
 
     const usersById = new Map(store.users.map((user) => [user.id, user]));
     const nextUsers = [];
@@ -1470,7 +2606,7 @@ async function handleApi(req, res) {
         name: String(item.name || "").trim(),
         email: String(item.email || "").trim().toLowerCase(),
         phone: String(item.phone || "").trim(),
-        role: item.role === "admin" ? "admin" : item.role === "viewer" ? "viewer" : "crew",
+        role: item.role === "admin" ? "admin" : item.role === "viewer" ? "viewer" : item.role === "accounts" ? "accounts" : "crew",
         approved: Boolean(item.approved),
         color: item.color || null
       });
@@ -1491,14 +2627,29 @@ async function handleApi(req, res) {
       return true;
     }
 
+    const nextClients = incomingClients.map(normalizeClient);
+    const clientValidationError = validateClients(nextClients);
+    if (clientValidationError) {
+      sendJson(res, 400, { error: clientValidationError });
+      return true;
+    }
+
     const allowedUserIds = new Set(nextUsers.filter((user) => user.role === "crew" || user.role === "admin").map((user) => user.id));
+    const clientNamesById = new Map(nextClients.map((client) => [client.id, client.name]));
+    const clientIdsByName = new Map(nextClients.map((client) => [String(client.name || "").trim().toLowerCase(), client.id]));
     const existingShowsById = new Map(store.shows.map((show) => [show.id, show]));
+    const clientIds = new Set(nextClients.map((client) => client.id));
     const nextShows = incomingShows.map(normalizeShow).map((show) => {
+      const previousShow = existingShowsById.get(show.id);
+      const resolvedClientId = show.clientId
+        || clientIdsByName.get(String(show.client || "").trim().toLowerCase())
+        || (previousShow?.clientId && clientIds.has(previousShow.clientId) ? previousShow.clientId : "");
       const filteredShow = {
         ...show,
-        assignments: show.assignments.filter((assignment) => allowedUserIds.has(assignment.crewId))
+        clientId: resolvedClientId,
+        client: resolvedClientId ? (clientNamesById.get(resolvedClientId) || show.client) : show.client,
+        assignments: show.assignments.filter((assignment) => allowedUserIds.has(assignment.crewId) || assignment.manualCrewName)
       };
-      const previousShow = existingShowsById.get(filteredShow.id);
       const isNewGoogleEligibleShow = !previousShow && shouldSyncShowWithGoogle(filteredShow);
       const hasPendingLocalSyncState = filteredShow.googleSyncStatus === "pending_push" || filteredShow.googleSyncStatus === "sync_error";
       const syncedFieldsChanged = filteredShow.googleEventId && hasGoogleSyncedFieldChanges(previousShow, filteredShow, { users: nextUsers });
@@ -1513,13 +2664,24 @@ async function handleApi(req, res) {
       return filteredShow;
     });
 
+    const invalidShow = nextShows.find((show) => {
+      if (show.clientId && clientIds.has(show.clientId)) return false;
+      const previousShow = existingShowsById.get(show.id);
+      const isLegacyBlankClientShow = previousShow && !show.clientId && !String(show.client || "").trim();
+      return !isLegacyBlankClientShow;
+    });
+    if (invalidShow) {
+      sendJson(res, 400, { error: `Show "${invalidShow.showName || "Untitled Show"}" must use a client from the client master.` });
+      return true;
+    }
+
     const stillExists = nextUsers.find((user) => user.id === currentUser.id);
     if (!stillExists || stillExists.role !== "admin" || !stillExists.approved) {
       sendJson(res, 400, { error: "Current admin account must remain approved." });
       return true;
     }
 
-    let nextStore = { users: nextUsers, shows: nextShows };
+    let nextStore = { users: nextUsers, shows: nextShows, clients: nextClients };
     writeStore(nextStore);
 
     const googleStatus = getGoogleStatus(req);

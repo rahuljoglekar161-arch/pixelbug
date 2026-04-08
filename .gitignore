@@ -4,3 +4,5 @@ data/email-outbox.log
 node_modules
 .env.local
 .env
+.DS_Store
+data/pixelbug-backup-*.db

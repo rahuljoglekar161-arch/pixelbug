@@ -35,7 +35,12 @@ Deployment files:
    - `PIXELBUG_BASE_URL`
    - `RESEND_API_KEY`
    - `PIXELBUG_EMAIL_FROM`
+   - `GOOGLE_CLIENT_ID`
+   - `GOOGLE_CLIENT_SECRET`
+   - `GOOGLE_CALENDAR_ID`
 5. Deploy the service.
+
+If the Google tab shows `Google Not Configured`, verify all three Google env vars above are present in your Render service and then redeploy.
 
 ### Deployment Note
 
@@ -55,7 +60,20 @@ This setup keeps SQLite on a Render persistent disk. It is suitable for a single
 
 ## Note
 
-The browser now stores only UI state locally. Shared users and shows are stored in `data/pixelbug.db`.
+The browser now stores only UI state locally. Shared users and shows are stored in SQLite.
+
+Default local paths:
+
+- DB: `data/pixelbug.db`
+- JSON fallback: `data/store.json`
+- email outbox: `data/email-outbox.log`
+
+You can override these paths with environment variables:
+
+- `PIXELBUG_DATA_DIR`
+- `PIXELBUG_DB_PATH`
+- `PIXELBUG_STORE_PATH`
+- `PIXELBUG_OUTBOX_PATH`
 
 On first launch, create the initial admin account from the login panel, then add crew/view-only users through the app workflow.
 
@@ -72,7 +90,7 @@ export PIXELBUG_BASE_URL="http://127.0.0.1:4173"
 Without those env vars, the app writes outgoing emails to:
 
 ```bash
-/Users/Rahul/Documents/Playground/data/email-outbox.log
+data/email-outbox.log
 ```
 
 That fallback is useful for local testing.
