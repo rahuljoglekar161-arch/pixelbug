@@ -812,6 +812,8 @@ function seedState() {
       clientsPage: 1,
       clientsPageSize: 10,
       clientsSubtab: "list",
+      clientSearchQuery: "",
+      clientGstFilter: "all",
       invoiceLineDefaults: {
         description: "",
         sac: ""
@@ -1231,6 +1233,12 @@ function ensureUiState() {
 
   if (!state.ui.clientsSubtab) {
     state.ui.clientsSubtab = "list";
+  }
+  if (typeof state.ui.clientSearchQuery !== "string") {
+    state.ui.clientSearchQuery = "";
+  }
+  if (!state.ui.clientGstFilter) {
+    state.ui.clientGstFilter = "all";
   }
 
   if (!state.ui.invoiceLineDefaults || typeof state.ui.invoiceLineDefaults !== "object") {
@@ -5030,7 +5038,30 @@ function renderGoogleEntriesPanel(user) {
 function renderClientsPanel() {
   const panel = document.getElementById("clientsPanel");
   const clients = getSortedClients();
-  const clientPagination = getPaginationSlice(clients, "clientsPage", "clientsPageSize");
+  const clientSearchQuery = String(state.ui.clientSearchQuery || "").trim().toLowerCase();
+  const clientGstFilter = state.ui.clientGstFilter || "all";
+  const filteredClients = clients.filter((client) => {
+    const matchesSearch = !clientSearchQuery || [
+      getClientDisplayName(client),
+      client.name,
+      client.state,
+      client.gstin,
+      client.contactName,
+      client.contactEmail,
+      client.contactPhone,
+      client.billingAddress,
+      client.notes
+    ].some((value) => String(value || "").toLowerCase().includes(clientSearchQuery));
+    if (!matchesSearch) return false;
+    if (clientGstFilter === "missing") {
+      return !String(client.gstin || "").trim();
+    }
+    if (clientGstFilter === "available") {
+      return Boolean(String(client.gstin || "").trim());
+    }
+    return true;
+  });
+  const clientPagination = getPaginationSlice(filteredClients, "clientsPage", "clientsPageSize");
   const activeClientsSubtab = state.ui.clientsSubtab || "list";
   const showsByClientId = new Map();
   const invoicesByClientId = new Map();
@@ -5091,6 +5122,25 @@ function renderClientsPanel() {
         <div id="clientFormMessage" class="message"></div>
       </form>
       <div class="stack ${activeClientsSubtab === "list" ? "" : "hidden"}" data-clients-section="list">
+        <div class="shows-toolbar-top clients-toolbar">
+          <label class="sort-control invoice-search-control">
+            <span>Search</span>
+            <input
+              type="search"
+              id="clientSearchInput"
+              placeholder="Client, GSTIN, state, contact"
+              value="${escapeHtml(state.ui.clientSearchQuery || "")}"
+            >
+          </label>
+          <label class="sort-control">
+            <span>GST Details</span>
+            <select id="clientGstFilter">
+              <option value="all" ${clientGstFilter === "all" ? "selected" : ""}>All Clients</option>
+              <option value="missing" ${clientGstFilter === "missing" ? "selected" : ""}>Empty GST Details</option>
+              <option value="available" ${clientGstFilter === "available" ? "selected" : ""}>With GST Details</option>
+            </select>
+          </label>
+        </div>
         <div class="approval-list">
           ${clientPagination.items.length ? clientPagination.items.map((client) => `
             <article class="show-card">
@@ -5113,7 +5163,7 @@ function renderClientsPanel() {
                 ${client.notes ? `<div class="meta">${client.notes}</div>` : ""}
               </div>
             </article>
-          `).join("") : "<p>No clients yet. Create the first client above.</p>"}
+          `).join("") : `<p>${clients.length ? "No clients match the current search or GST filter." : "No clients yet. Create the first client above."}</p>`}
         </div>
         ${renderPaginationControls("clients", clientPagination, "clients")}
       </div>
@@ -5125,6 +5175,8 @@ function renderClientsPanel() {
 
   const form = document.getElementById("clientForm");
   const message = document.getElementById("clientFormMessage");
+  const searchInput = document.getElementById("clientSearchInput");
+  const gstFilterSelect = document.getElementById("clientGstFilter");
 
   const clearClientForm = () => {
     form.reset();
@@ -5185,6 +5237,20 @@ function renderClientsPanel() {
     }
   });
 
+  searchInput?.addEventListener("input", (event) => {
+    state.ui.clientSearchQuery = event.currentTarget.value;
+    state.ui.clientsPage = 1;
+    saveState(state);
+    renderClientsPanel();
+  });
+
+  gstFilterSelect?.addEventListener("change", (event) => {
+    state.ui.clientGstFilter = event.currentTarget.value;
+    state.ui.clientsPage = 1;
+    saveState(state);
+    renderClientsPanel();
+  });
+
   panel.querySelectorAll("[data-clients-subtab]").forEach((button) => {
     button.addEventListener("click", () => {
       state.ui.clientsSubtab = button.dataset.clientsSubtab || "list";
@@ -5214,16 +5280,31 @@ function renderClientsPanel() {
       return;
     }
     const existingIndex = state.clients.findIndex((client) => client.id === normalized.id);
+    const isEditingClient = existingIndex >= 0;
     try {
       const payload = await apiRequest("/api/admin/clients", {
         method: "POST",
         body: JSON.stringify(normalized)
       });
       applyServerState(payload);
-      state.ui.clientsSubtab = "list";
+      state.ui.clientsSubtab = isEditingClient ? "list" : "create";
       saveState(state);
       renderDashboard();
-      showToast(existingIndex >= 0 ? "Client updated." : "Client created.");
+      if (isEditingClient) {
+        showToast("Client updated.");
+      } else {
+        const nextForm = document.getElementById("clientForm");
+        const nextMessage = document.getElementById("clientFormMessage");
+        if (nextForm) {
+          nextForm.reset();
+          nextForm.elements.namedItem("clientId").value = "";
+          syncCustomSelect(nextForm.elements.namedItem("clientState"));
+        }
+        if (nextMessage) {
+          nextMessage.textContent = "";
+        }
+        showToast("Client created. You can add the next one right away.");
+      }
     } catch (error) {
       message.textContent = error.message;
       await refreshFromServer();
