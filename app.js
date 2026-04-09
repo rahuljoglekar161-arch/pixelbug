@@ -741,6 +741,231 @@ function exportShowsMonthExcel(monthKey, shows) {
   downloadSingleSheetWorkbook(monthKey, buildShowsSheetXml(shows), `pixelbug-${monthKey}-shows.xlsx`);
 }
 
+function buildClientsSheetXml(clients) {
+  const headers = [
+    "Client Name",
+    "State",
+    "GSTIN",
+    "Contact Person",
+    "Contact Email",
+    "Contact Phone",
+    "Billing Address",
+    "Notes",
+    "Linked Shows",
+    "Linked Invoices"
+  ];
+
+  const rows = [];
+  rows.push(`<row r="1">${headers.map((header, index) => makeWorksheetCell(`${excelColumnName(index + 1)}1`, header, "inlineStr", 1)).join("")}</row>`);
+
+  clients.forEach((client, index) => {
+    const rowNumber = index + 2;
+    const linkedShows = state.shows.filter((show) => (show.clientId || getClientByName(show.client)?.id || "") === client.id).length;
+    const linkedInvoices = state.invoices.filter((invoice) => (invoice.clientId || getClientByName(invoice.clientName)?.id || "") === client.id).length;
+    const values = [
+      getClientDisplayName(client),
+      client.state || "",
+      client.gstin || "",
+      client.contactName || "",
+      client.contactEmail || "",
+      client.contactPhone || "",
+      client.billingAddress || "",
+      client.notes || "",
+      linkedShows,
+      linkedInvoices
+    ];
+    rows.push(`<row r="${rowNumber}">${values.map((value, valueIndex) => {
+      const isNumber = valueIndex >= 8;
+      return makeWorksheetCell(`${excelColumnName(valueIndex + 1)}${rowNumber}`, value, isNumber ? "n" : "inlineStr", isNumber ? null : 2);
+    }).join("")}</row>`);
+  });
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews>
+    <sheetView workbookViewId="0"/>
+  </sheetViews>
+  <sheetFormatPr defaultRowHeight="15"/>
+  <cols>
+    <col min="1" max="1" width="28" customWidth="1"/>
+    <col min="2" max="2" width="18" customWidth="1"/>
+    <col min="3" max="3" width="22" customWidth="1"/>
+    <col min="4" max="4" width="22" customWidth="1"/>
+    <col min="5" max="5" width="28" customWidth="1"/>
+    <col min="6" max="6" width="18" customWidth="1"/>
+    <col min="7" max="7" width="42" customWidth="1"/>
+    <col min="8" max="8" width="28" customWidth="1"/>
+    <col min="9" max="10" width="14" customWidth="1"/>
+  </cols>
+  <sheetData>
+    ${rows.join("")}
+  </sheetData>
+</worksheet>`;
+}
+
+function exportClientsExcel(clients) {
+  if (!clients.length) return;
+  downloadSingleSheetWorkbook("Clients", buildClientsSheetXml(clients), "pixelbug-clients.xlsx");
+}
+
+function getClientInvoiceYearOptions() {
+  return [...new Set((state.invoices || []).map((invoice) => String(invoice.issueDate || "").slice(0, 4)).filter(Boolean))].sort((a, b) => b.localeCompare(a));
+}
+
+function getClientInvoiceMonthOptions(selectedYear = "all") {
+  const monthKeys = (state.invoices || [])
+    .filter((invoice) => selectedYear === "all" || String(invoice.issueDate || "").slice(0, 4) === selectedYear)
+    .map((invoice) => String(invoice.issueDate || "").slice(0, 7))
+    .filter(Boolean);
+  return [...new Set(monthKeys)].sort((a, b) => b.localeCompare(a));
+}
+
+function getClientExportRows(clientIds = [], selectedYear = "all", selectedMonth = "all") {
+  const clientSet = new Set(clientIds.filter(Boolean));
+  const invoices = (state.invoices || []).filter((invoice) => {
+    const invoiceClientId = invoice.clientId || getClientByName(invoice.clientName)?.id || "";
+    if (clientSet.size && !clientSet.has(invoiceClientId)) return false;
+    const invoiceYear = String(invoice.issueDate || "").slice(0, 4);
+    const invoiceMonth = String(invoice.issueDate || "").slice(0, 7);
+    if (selectedYear !== "all" && invoiceYear !== selectedYear) return false;
+    if (selectedMonth !== "all" && invoiceMonth !== selectedMonth) return false;
+    return true;
+  });
+
+  return invoices.map((invoice) => {
+    const client = getClientById(invoice.clientId) || getClientByName(invoice.clientName);
+    const linkedShows = getLinkedInvoiceShows(invoice);
+    const lightDesigner = getInvoiceLightDesignerLabel(invoice) || "-";
+    const crewNames = [...new Set(linkedShows.flatMap((show) => (show.assignments || []).map((assignment) => getAssignmentCrewName(assignment)).filter(Boolean)))];
+    const crewAmounts = linkedShows.flatMap((show) => (show.assignments || []).map((assignment) => Number(assignment.operatorAmount || 0)).filter((amount) => amount > 0));
+    const paymentEntries = Array.isArray(invoice.paymentEntries) ? invoice.paymentEntries : [];
+    const paymentDates = paymentEntries.map((payment) => formatInvoiceDate(payment.paymentDate)).filter(Boolean).join("\n");
+    const paymentAmounts = paymentEntries.map((payment) => Number(payment.amount || 0)).filter((amount) => amount > 0).join("\n");
+    const paymentNotes = paymentEntries.map((payment) => String(payment.note || "").trim()).filter(Boolean).join("\n");
+    return {
+      clientName: getClientDisplayName(client || { name: invoice.clientName || "" }),
+      state: client?.state || "",
+      gstin: client?.gstin || invoice.details?.clientGstin || "",
+      contactName: client?.contactName || "",
+      contactEmail: client?.contactEmail || "",
+      contactPhone: client?.contactPhone || "",
+      billingAddress: client?.billingAddress || "",
+      invoiceNumber: invoice.invoiceNumber || "",
+      issueDate: formatInvoiceDate(invoice.issueDate),
+      dueDate: formatInvoiceDate(invoice.dueDate),
+      invoiceStatus: getInvoiceStatusLabel(invoice),
+      paymentStatus: getInvoicePaymentBucket(invoice),
+      paymentDates,
+      paymentAmounts,
+      paymentNotes,
+      amountPaid: Number(invoice.amountPaid || 0),
+      balanceDue: Number(invoice.balanceDue || 0),
+      totalAmount: Number(invoice.totalAmount || 0),
+      placeOfSupply: invoice.details?.placeOfSupply || client?.state || "",
+      lightDesigner,
+      showNames: linkedShows.map((show) => show.showName).filter(Boolean).join("\n"),
+      showLocations: linkedShows.map((show) => show.location || show.venue || "").filter(Boolean).join("\n"),
+      crewNames: crewNames.join("\n"),
+      crewAmounts: crewAmounts.join("\n"),
+      invoiceNotes: invoice.notes || ""
+    };
+  });
+}
+
+function buildClientInvoiceExportSheetXml(rows) {
+  const headers = [
+    "Client Name",
+    "State",
+    "GSTIN",
+    "Contact Person",
+    "Contact Email",
+    "Contact Phone",
+    "Billing Address",
+    "Invoice No",
+    "Invoice Date",
+    "Due Date",
+    "Invoice Status",
+    "Payment Status",
+    "Payment Dates",
+    "Payment Amounts",
+    "Payment Notes",
+    "Amount Paid",
+    "Balance Due",
+    "Invoice Total",
+    "Place of Supply",
+    "Light Designer",
+    "Show Names",
+    "Show Locations",
+    "Crew Names",
+    "Crew Amounts",
+    "Invoice Notes"
+  ];
+
+  const worksheetRows = [];
+  worksheetRows.push(`<row r="1">${headers.map((header, index) => makeWorksheetCell(`${excelColumnName(index + 1)}1`, header, "inlineStr", 1)).join("")}</row>`);
+
+  rows.forEach((row, index) => {
+    const rowNumber = index + 2;
+    const values = [
+      row.clientName,
+      row.state,
+      row.gstin,
+      row.contactName,
+      row.contactEmail,
+      row.contactPhone,
+      row.billingAddress,
+      row.invoiceNumber,
+      row.issueDate,
+      row.dueDate,
+      row.invoiceStatus,
+      row.paymentStatus,
+      row.paymentDates,
+      row.paymentAmounts,
+      row.paymentNotes,
+      row.amountPaid,
+      row.balanceDue,
+      row.totalAmount,
+      row.placeOfSupply,
+      row.lightDesigner,
+      row.showNames,
+      row.showLocations,
+      row.crewNames,
+      row.crewAmounts,
+      row.invoiceNotes
+    ];
+    worksheetRows.push(`<row r="${rowNumber}">${values.map((value, valueIndex) => {
+      const isNumeric = [15, 16, 17].includes(valueIndex);
+      return makeWorksheetCell(`${excelColumnName(valueIndex + 1)}${rowNumber}`, value, isNumeric ? "n" : "inlineStr", isNumeric ? null : 2);
+    }).join("")}</row>`);
+  });
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews><sheetView workbookViewId="0"/></sheetViews>
+  <sheetFormatPr defaultRowHeight="15"/>
+  <cols>
+    <col min="1" max="1" width="26" customWidth="1"/>
+    <col min="2" max="3" width="18" customWidth="1"/>
+    <col min="4" max="6" width="20" customWidth="1"/>
+    <col min="7" max="7" width="34" customWidth="1"/>
+    <col min="8" max="12" width="16" customWidth="1"/>
+    <col min="13" max="15" width="18" customWidth="1"/>
+    <col min="16" max="18" width="14" customWidth="1"/>
+    <col min="19" max="20" width="18" customWidth="1"/>
+    <col min="21" max="24" width="24" customWidth="1"/>
+    <col min="25" max="25" width="24" customWidth="1"/>
+  </cols>
+  <sheetData>
+    ${worksheetRows.join("")}
+  </sheetData>
+</worksheet>`;
+}
+
+function exportClientInvoiceExcel(exportKey, rows) {
+  if (!rows.length) return;
+  downloadSingleSheetWorkbook("Client Invoices", buildClientInvoiceExportSheetXml(rows), `pixelbug-${safeFileNamePart(exportKey)}-client-invoices.xlsx`);
+}
+
 function exportInvoicesExcel(exportKey, invoices, columns = getInvoiceExportColumns(), options = {}) {
   if (!exportKey || !invoices.length) return;
   const monthKeys = [...new Set(invoices.map(getInvoiceMonthKey))].sort();
@@ -814,6 +1039,9 @@ function seedState() {
       clientsSubtab: "list",
       clientSearchQuery: "",
       clientGstFilter: "all",
+      clientExportYear: "all",
+      clientExportMonth: "all",
+      clientExportClientId: "all",
       invoicePrintCopies: 1,
       invoiceLineDefaults: {
         description: "",
@@ -1136,6 +1364,14 @@ function ensureUiState() {
     state.ui.showSubtab = "list";
   }
 
+  if (!state.ui.showReturnTab) {
+    state.ui.showReturnTab = "showsPanel";
+  }
+
+  if (!Number.isFinite(Number(state.ui.showReturnScrollY)) || Number(state.ui.showReturnScrollY) < 0) {
+    state.ui.showReturnScrollY = 0;
+  }
+
   if (!state.ui.showSortMode) {
     state.ui.showSortMode = "date";
   }
@@ -1241,6 +1477,15 @@ function ensureUiState() {
   if (!state.ui.clientGstFilter) {
     state.ui.clientGstFilter = "all";
   }
+  if (!state.ui.clientExportYear) {
+    state.ui.clientExportYear = "all";
+  }
+  if (!state.ui.clientExportMonth) {
+    state.ui.clientExportMonth = "all";
+  }
+  if (!state.ui.clientExportClientId) {
+    state.ui.clientExportClientId = "all";
+  }
   const normalizedInvoicePrintCopies = Number(state.ui.invoicePrintCopies || 1);
   state.ui.invoicePrintCopies = [1, 2, 3, 4, 5].includes(normalizedInvoicePrintCopies) ? normalizedInvoicePrintCopies : 1;
 
@@ -1289,6 +1534,30 @@ function resetEditingState() {
   state.ui.newShowDate = "";
 }
 
+function getShowReturnTab() {
+  ensureUiState();
+  const returnTab = state.ui.showReturnTab || "showsPanel";
+  return ["calendarPanel", "googleEntriesPanel", "showsPanel"].includes(returnTab) ? returnTab : "showsPanel";
+}
+
+function captureShowReturnContext(returnTab = state.ui.activeSidebarTab || "showsPanel") {
+  ensureUiState();
+  state.ui.showReturnTab = ["calendarPanel", "googleEntriesPanel", "showsPanel"].includes(returnTab) ? returnTab : "showsPanel";
+  state.ui.showReturnScrollY = Math.max(
+    window.scrollY || 0,
+    document.documentElement?.scrollTop || 0,
+    document.body?.scrollTop || 0
+  );
+}
+
+function restoreShowReturnContext() {
+  ensureUiState();
+  const scrollY = Number(state.ui.showReturnScrollY || 0);
+  window.requestAnimationFrame(() => {
+    window.scrollTo({ top: scrollY, behavior: "auto" });
+  });
+}
+
 function resetInvoiceEditingState() {
   ensureUiState();
   state.ui.editingInvoiceId = null;
@@ -1335,6 +1604,9 @@ function getSidebarTabs(user) {
 
   if (user && isAccounts(user)) {
     return [
+      { id: "calendarPanel", label: "Calendar", meta: "Month, week, day" },
+      { id: "showsPanel", label: "Shows", meta: "Create and view shows" },
+      { id: "clientsPanel", label: "Clients", meta: "Client master and billing info" },
       { id: "invoicesPanel", label: "Invoices", meta: "Billing and collections" }
     ];
   }
@@ -1986,6 +2258,12 @@ function enhanceCustomSelects(root = document) {
       search.placeholder = select.dataset.searchPlaceholder || "Search...";
       search.autocomplete = "off";
       search.addEventListener("click", (event) => event.stopPropagation());
+      search.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      });
       search.addEventListener("input", () => {
         const query = search.value.trim().toLowerCase();
         wrapper.querySelectorAll(".custom-select-option").forEach((optionButton) => {
@@ -2538,7 +2816,7 @@ function renderDashboard() {
     return;
   }
 
-  if (state.ui.activeSidebarTab === "clientsPanel" && isAdmin(user)) {
+  if (state.ui.activeSidebarTab === "clientsPanel" && (isAdmin(user) || isAccounts(user))) {
     singleView.innerHTML = `<section class="panel" id="clientsPanel"></section>`;
     renderClientsPanel();
     return;
@@ -3237,7 +3515,7 @@ function renderShowsList(user, shows, sourceShows = shows) {
                 <option value="client" ${state.ui.showSortMode === "client" ? "selected" : ""}>Client</option>
               </select>
             </label>
-            ${isAdmin(user) ? '<button type="button" class="secondary" id="exportMonthButton">Export Excel</button>' : ""}
+            ${(isAdmin(user) || isAccounts(user)) ? '<button type="button" class="secondary" id="exportMonthButton">Export Excel</button>' : ""}
           </div>
           ${isAdmin(user) ? `
             <div class="shows-selection-toolbar">
@@ -3306,7 +3584,7 @@ function renderShowsList(user, shows, sourceShows = shows) {
   wirePaginationControls(panel, "shows", "showsPage", "showsPageSize", () => renderShowsList(user, shows, sourceShows));
 
   const exportButton = document.getElementById("exportMonthButton");
-  if (exportButton && isAdmin(user)) {
+  if (exportButton && (isAdmin(user) || isAccounts(user))) {
     exportButton.addEventListener("click", () => {
       const exportKey = state.ui.activeShowMonth !== "all"
         ? state.ui.activeShowMonth
@@ -3371,7 +3649,7 @@ function renderShowsList(user, shows, sourceShows = shows) {
     syncCreateButtonState();
   }
 
-  if (isAdmin(user)) {
+  if (isAdmin(user) || isAccounts(user)) {
     panel.querySelectorAll("[data-edit-show]").forEach((button) => {
       button.addEventListener("click", () => fillShowForm(button.dataset.editShow));
     });
@@ -3381,9 +3659,10 @@ function renderShowsList(user, shows, sourceShows = shows) {
 function renderShowsPanel(user, shows, sourceShows = shows) {
   const panel = document.getElementById("showsPanel");
   const isEditing = Boolean(state.ui.editingShowId);
-  const activeShowSubtab = isAdmin(user) ? (isEditing ? "create" : state.ui.showSubtab || "list") : "list";
+  const canManageShows = isAdmin(user);
+  const activeShowSubtab = canManageShows ? (isEditing ? "create" : state.ui.showSubtab || "list") : "list";
 
-  if (!isAdmin(user)) {
+  if (!canManageShows) {
     renderShowsList(user, shows, sourceShows);
     return;
   }
@@ -5145,6 +5424,14 @@ function renderClientsPanel() {
   const clients = getSortedClients();
   const clientSearchQuery = String(state.ui.clientSearchQuery || "").trim().toLowerCase();
   const clientGstFilter = state.ui.clientGstFilter || "all";
+  const clientExportYearOptions = getClientInvoiceYearOptions();
+  if (!["all", ...clientExportYearOptions].includes(state.ui.clientExportYear)) {
+    state.ui.clientExportYear = "all";
+  }
+  const clientExportMonthKeys = getClientInvoiceMonthOptions(state.ui.clientExportYear || "all");
+  if (!["all", ...clientExportMonthKeys].includes(state.ui.clientExportMonth)) {
+    state.ui.clientExportMonth = "all";
+  }
   const filteredClients = clients.filter((client) => {
     const matchesSearch = !clientSearchQuery || [
       getClientDisplayName(client),
@@ -5168,6 +5455,13 @@ function renderClientsPanel() {
   });
   const clientPagination = getPaginationSlice(filteredClients, "clientsPage", "clientsPageSize");
   const activeClientsSubtab = state.ui.clientsSubtab || "list";
+  const clientExportOptions = [
+    { value: "all", label: "All Clients" },
+    ...filteredClients.map((client) => ({ value: client.id, label: getClientDisplayName(client) }))
+  ];
+  if (!clientExportOptions.some((option) => option.value === state.ui.clientExportClientId)) {
+    state.ui.clientExportClientId = "all";
+  }
   const showsByClientId = new Map();
   const invoicesByClientId = new Map();
   state.shows.forEach((show) => {
@@ -5195,28 +5489,53 @@ function renderClientsPanel() {
           <button type="button" class="${activeClientsSubtab === "create" ? "is-active" : ""}" data-clients-subtab="create">Create Clients</button>
           <button type="button" class="${activeClientsSubtab === "list" ? "is-active" : ""}" data-clients-subtab="list">Clients</button>
         </div>
-        ${activeClientsSubtab === "list" ? `
-          <div class="shows-toolbar-top clients-toolbar-inline">
-            <label class="sort-control invoice-search-control">
-              <span>Search</span>
-              <input
-                type="search"
-                id="clientSearchInput"
-                placeholder="Search clients"
-                value="${escapeHtml(state.ui.clientSearchQuery || "")}"
-              >
+      </div>
+      ${activeClientsSubtab === "list" ? `
+        <div class="shows-toolbar-top clients-search-toolbar">
+          <label class="sort-control invoice-search-control">
+            <span>Search</span>
+            <input
+              type="search"
+              id="clientSearchInput"
+              placeholder="Search clients"
+              value="${escapeHtml(state.ui.clientSearchQuery || "")}"
+            >
+          </label>
+          <label class="sort-control">
+            <span>GST Details</span>
+            <select id="clientGstFilter">
+              <option value="all" ${clientGstFilter === "all" ? "selected" : ""}>All Clients</option>
+              <option value="missing" ${clientGstFilter === "missing" ? "selected" : ""}>Empty GST Details</option>
+              <option value="available" ${clientGstFilter === "available" ? "selected" : ""}>With GST Details</option>
+            </select>
+          </label>
+        </div>
+        <div class="shows-toolbar-top clients-export-toolbar">
+          <div class="clients-export-controls">
+            <label class="sort-control">
+              <span>Year</span>
+              <select id="clientExportYearFilter">
+                <option value="all" ${state.ui.clientExportYear === "all" ? "selected" : ""}>All Years</option>
+                ${clientExportYearOptions.map((year) => `<option value="${year}" ${state.ui.clientExportYear === year ? "selected" : ""}>${year}</option>`).join("")}
+              </select>
             </label>
             <label class="sort-control">
-              <span>GST Details</span>
-              <select id="clientGstFilter">
-                <option value="all" ${clientGstFilter === "all" ? "selected" : ""}>All Clients</option>
-                <option value="missing" ${clientGstFilter === "missing" ? "selected" : ""}>Empty GST Details</option>
-                <option value="available" ${clientGstFilter === "available" ? "selected" : ""}>With GST Details</option>
+              <span>Month</span>
+              <select id="clientExportMonthFilter">
+                <option value="all" ${state.ui.clientExportMonth === "all" ? "selected" : ""}>All Months</option>
+                ${clientExportMonthKeys.map((monthKey) => `<option value="${monthKey}" ${state.ui.clientExportMonth === monthKey ? "selected" : ""}>${monthGroupLabel(`${monthKey}-01`).split(" ")[0]}</option>`).join("")}
+              </select>
+            </label>
+            <label class="sort-control">
+              <span>Client</span>
+              <select id="clientExportClientFilter">
+                ${clientExportOptions.map((option) => `<option value="${option.value}" ${state.ui.clientExportClientId === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
               </select>
             </label>
           </div>
-        ` : ""}
-      </div>
+          <button type="button" class="secondary" id="exportClientsButton">Export Excel</button>
+        </div>
+      ` : ""}
       <form id="clientForm" class="stack tight ${activeClientsSubtab === "create" ? "" : "hidden"}" autocomplete="off">
         <input type="hidden" name="clientId">
         <div class="form-grid">
@@ -5286,6 +5605,10 @@ function renderClientsPanel() {
   const message = document.getElementById("clientFormMessage");
   const searchInput = document.getElementById("clientSearchInput");
   const gstFilterSelect = document.getElementById("clientGstFilter");
+  const clientExportYearFilter = document.getElementById("clientExportYearFilter");
+  const clientExportMonthFilter = document.getElementById("clientExportMonthFilter");
+  const clientExportClientFilter = document.getElementById("clientExportClientFilter");
+  const exportClientsButton = document.getElementById("exportClientsButton");
 
   const clearClientForm = () => {
     form.reset();
@@ -5358,6 +5681,44 @@ function renderClientsPanel() {
     state.ui.clientsPage = 1;
     saveState(state);
     renderClientsPanel();
+  });
+
+  clientExportYearFilter?.addEventListener("change", (event) => {
+    state.ui.clientExportYear = event.currentTarget.value;
+    state.ui.clientExportMonth = "all";
+    saveState(state);
+    renderClientsPanel();
+  });
+
+  clientExportMonthFilter?.addEventListener("change", (event) => {
+    state.ui.clientExportMonth = event.currentTarget.value;
+    saveState(state);
+    renderClientsPanel();
+  });
+
+  clientExportClientFilter?.addEventListener("change", (event) => {
+    state.ui.clientExportClientId = event.currentTarget.value;
+    saveState(state);
+  });
+
+  exportClientsButton?.addEventListener("click", () => {
+    const selectedClientIds = state.ui.clientExportClientId === "all"
+      ? filteredClients.map((client) => client.id)
+      : [state.ui.clientExportClientId];
+    const rows = getClientExportRows(selectedClientIds, state.ui.clientExportYear || "all", state.ui.clientExportMonth || "all");
+    if (!rows.length) {
+      showToast("No client invoice records found for the selected filters.");
+      return;
+    }
+    const exportKey = [
+      state.ui.clientExportClientId !== "all"
+        ? safeFileNamePart(clientExportOptions.find((option) => option.value === state.ui.clientExportClientId)?.label || "client")
+        : "all-clients",
+      state.ui.clientExportYear !== "all" ? state.ui.clientExportYear : "",
+      state.ui.clientExportMonth !== "all" ? state.ui.clientExportMonth : ""
+    ].filter(Boolean).join("-");
+    exportClientInvoiceExcel(exportKey, rows);
+    showToast("Client invoice export ready.");
   });
 
   panel.querySelectorAll("[data-clients-subtab]").forEach((button) => {
@@ -5620,10 +5981,13 @@ function renderShowForm() {
 
   document.getElementById("addAssignmentRow").addEventListener("click", () => addAssignmentRow());
   document.getElementById("resetShowForm").addEventListener("click", () => {
+    const returnTab = getShowReturnTab();
     resetEditingState();
-    state.ui.showSubtab = "create";
+    state.ui.activeSidebarTab = returnTab;
+    state.ui.showSubtab = returnTab === "showsPanel" ? "create" : "list";
     saveState(state);
     renderDashboard();
+    restoreShowReturnContext();
   });
 
   if (isEditing) {
@@ -5631,12 +5995,15 @@ function renderShowForm() {
       const confirmDelete = window.confirm(`Delete "${editingShow.showName}"?`);
       if (!confirmDelete) return;
       state.shows = state.shows.filter((show) => show.id !== editingShow.id);
+      const returnTab = getShowReturnTab();
       resetEditingState();
       try {
         await syncAdminState();
-        state.ui.showSubtab = "list";
+        state.ui.activeSidebarTab = returnTab;
+        state.ui.showSubtab = returnTab === "showsPanel" ? "list" : "list";
         saveState(state);
         renderDashboard();
+        restoreShowReturnContext();
         showToast("Show deleted.");
       } catch (error) {
         showToast(error.message);
@@ -5738,9 +6105,12 @@ function renderShowForm() {
     resetEditingState();
     try {
       await syncAdminState();
-      state.ui.showSubtab = "list";
+      const returnTab = getShowReturnTab();
+      state.ui.activeSidebarTab = returnTab;
+      state.ui.showSubtab = returnTab === "showsPanel" ? "list" : "list";
       saveState(state);
       renderDashboard();
+      restoreShowReturnContext();
       showToast(existingIndex >= 0 ? "Show updated." : "Show created.");
     } catch (error) {
       showToast(error.message);
@@ -5750,10 +6120,11 @@ function renderShowForm() {
   });
 }
 
-function fillShowForm(showId) {
+function fillShowForm(showId, returnTab = state.ui.activeSidebarTab || "showsPanel") {
   const show = state.shows.find((item) => item.id === showId);
   if (!show) return;
   ensureUiState();
+  captureShowReturnContext(returnTab);
   state.ui.editingShowId = showId;
   state.ui.newShowDate = "";
   state.ui.showSubtab = "create";
@@ -5796,8 +6167,7 @@ function fillShowForm(showId) {
     const addButton = document.getElementById("addAssignmentRow");
     addButton.click();
     const row = editor.lastElementChild;
-    row.querySelector('select[name="assignmentCrew"]').value = assignment.crewId || (assignment.manualCrewName ? "__manual__" : "");
-    row.querySelector('input[name="assignmentManualCrewName"]').value = assignment.manualCrewName || "";
+    row.querySelector('select[name="assignmentCrew"]').value = assignment.crewId || "";
     row.querySelector('select[name="assignmentCrew"]').dispatchEvent(new Event("change", { bubbles: true }));
     row.querySelector('input[name="assignmentAmount"]').value = assignment.operatorAmount;
     row.querySelector('input[name="assignmentOnwardTravelDate"]').value = assignment.onwardTravelDate || "";
@@ -5812,6 +6182,7 @@ function fillShowForm(showId) {
 
 function startShowDraftForDate(showDate) {
   ensureUiState();
+  captureShowReturnContext("calendarPanel");
   state.ui.editingShowId = null;
   state.ui.newShowDate = showDate || dateKey(new Date());
   state.ui.showSubtab = "create";

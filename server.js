@@ -1632,6 +1632,13 @@ function isAdminRouteAllowedForUser(pathname, user) {
   if (canAccessInvoices(user) && (pathname === "/api/admin/invoices" || pathname.startsWith("/api/admin/invoices/"))) {
     return true;
   }
+  if (user?.role === "accounts" && (
+    pathname === "/api/admin/gstin-lookup"
+    || pathname === "/api/admin/clients"
+    || pathname.startsWith("/api/admin/clients/")
+  )) {
+    return true;
+  }
   return false;
 }
 
@@ -2295,7 +2302,7 @@ async function handleApi(req, res) {
       return true;
     }
     if (currentUser.role === "accounts") {
-      sendJson(res, 403, { error: "Accounts access is limited to invoicing." });
+      sendJson(res, 403, { error: "Accounts access is limited to calendar view, shows view, clients, and invoicing." });
       return true;
     }
     sendJson(res, 403, { error: "Admin access required." });

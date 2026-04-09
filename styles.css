@@ -927,20 +927,39 @@ button.danger {
 
 .clients-subtab-row {
   display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.clients-search-toolbar,
+.clients-export-toolbar {
   align-items: end;
+}
+
+.clients-search-toolbar .invoice-search-control {
+  flex: 1 1 260px;
+  min-width: 220px;
+}
+
+.clients-export-toolbar {
   justify-content: space-between;
   gap: 14px;
   flex-wrap: wrap;
 }
 
-.clients-toolbar-inline {
-  flex: 1 1 360px;
-  justify-content: flex-end;
+.clients-export-controls {
+  display: flex;
+  align-items: end;
+  gap: 14px;
+  flex-wrap: wrap;
+  flex: 1 1 520px;
 }
 
-.clients-toolbar-inline .invoice-search-control {
-  flex: 1 1 260px;
-  min-width: 220px;
+.clients-export-toolbar #exportClientsButton {
+  align-self: end;
+  margin-left: auto;
 }
 
 .pagination-bar {

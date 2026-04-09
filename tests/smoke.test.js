@@ -268,6 +268,6 @@ test("accounts users can manage invoices but not admin-only routes", async (t) =
   {
     const { response, payload } = await apiRequest(baseUrl, accountsJar, "/api/admin/google/status");
     assert.equal(response.status, 403, stderr);
-    assert.equal(payload.error, "Accounts access is limited to invoicing.");
+    assert.equal(payload.error, "Accounts access is limited to calendar view, shows view, clients, and invoicing.");
   }
 });
