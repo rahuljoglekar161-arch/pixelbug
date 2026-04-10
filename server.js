@@ -55,6 +55,36 @@ const GST_LOOKUP_API_KEY = process.env.GST_LOOKUP_API_KEY || "";
 const GST_LOOKUP_API_KEY_HEADER = process.env.GST_LOOKUP_API_KEY_HEADER || "x-api-key";
 const CLEARTAX_GST_LOOKUP_URL = process.env.CLEARTAX_GST_LOOKUP_URL || "https://cleartax.in/f/compliance-report";
 const CLEARTAX_GST_LOOKUP_ENABLED = process.env.CLEARTAX_GST_LOOKUP_ENABLED !== "false";
+const CREW_COLOR_REMAP = {
+  "#ee8f8f": "#d93025",
+  "#f2b779": "#f29900",
+  "#e6cf72": "#f6bf26",
+  "#9fd67b": "#7cb342",
+  "#73cfc0": "#33b679",
+  "#79afea": "#4285f4",
+  "#9b92ef": "#7986cb",
+  "#c78eeb": "#8e24aa",
+  "#ee97bf": "#e67c73",
+  "#8fc3a0": "#0b8043",
+  "#d9b27c": "#c26401",
+  "#7fd6f5": "#039be5",
+  "#f59fc1": "#d81b60"
+};
+const GOOGLE_EVENT_COLOR_IDS = {
+  "#d93025": "11",
+  "#f29900": "6",
+  "#f6bf26": "5",
+  "#7cb342": "10",
+  "#33b679": "2",
+  "#4285f4": "9",
+  "#7986cb": "1",
+  "#8e24aa": "3",
+  "#e67c73": "4",
+  "#0b8043": "10",
+  "#039be5": "7",
+  "#c26401": "6",
+  "#d81b60": "4"
+};
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -1605,6 +1635,20 @@ function getCrewSummaryFromShow(show, store) {
     .join(", ");
 }
 
+function resolveCrewColorValue(color) {
+  if (!color) return "";
+  return CREW_COLOR_REMAP[String(color).toLowerCase()] || String(color).toLowerCase();
+}
+
+function getGoogleColorIdForShow(show, store) {
+  const primaryCrewColor = (show.assignments || [])
+    .map((assignment) => store.users.find((user) => user.id === assignment.crewId)?.color)
+    .filter(Boolean)
+    .map(resolveCrewColorValue)[0];
+  if (!primaryCrewColor) return undefined;
+  return GOOGLE_EVENT_COLOR_IDS[primaryCrewColor] || undefined;
+}
+
 function hasGoogleSyncedFieldChanges(previousShow, nextShow, store) {
   if (!previousShow) {
     return shouldSyncShowWithGoogle(nextShow);
@@ -2051,12 +2095,14 @@ async function pushPixelbugShowsToGoogle(req, currentStore) {
       continue;
     }
     try {
+      const googleColorId = getGoogleColorIdForShow(show, nextStore);
       const body = {
         summary: show.showName,
         location: show.location || undefined,
         description: buildGoogleDescription(show, nextStore) || undefined,
         start: { date: startDate },
-        end: { date: endDateExclusive }
+        end: { date: endDateExclusive },
+        colorId: googleColorId
       };
 
       const syncedEvent = show.googleEventId

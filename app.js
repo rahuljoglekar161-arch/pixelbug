@@ -441,6 +441,69 @@ function buildShowsSheetXml(shows) {
 </worksheet>`;
 }
 
+function buildCrewPayoutsSheetXml(rows) {
+  const headers = [
+    "Show Date",
+    "Show Name",
+    "Client",
+    "Crew",
+    "Light Designer",
+    "Location",
+    "Operator Amount",
+    "Status",
+    "Notes"
+  ];
+  const worksheetRows = [];
+  worksheetRows.push(`<row r="1">${headers.map((header, index) => makeWorksheetCell(`${excelColumnName(index + 1)}1`, header, "inlineStr", 1)).join("")}</row>`);
+
+  rows.forEach((row, index) => {
+    const rowNumber = index + 2;
+    const values = [
+      row.showDateLabel,
+      row.showName,
+      row.clientLabel,
+      row.crewName,
+      row.lightDesigner,
+      row.location,
+      row.operatorAmount,
+      row.statusLabel,
+      row.notes
+    ];
+    worksheetRows.push(`<row r="${rowNumber}">${values.map((value, valueIndex) => {
+      const isNumeric = valueIndex === 6;
+      const styleId = !isNumeric && String(value || "").includes("\n") ? 2 : null;
+      return makeWorksheetCell(`${excelColumnName(valueIndex + 1)}${rowNumber}`, value, isNumeric ? "n" : "inlineStr", styleId);
+    }).join("")}</row>`);
+  });
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews>
+    <sheetView workbookViewId="0"/>
+  </sheetViews>
+  <sheetFormatPr defaultRowHeight="18"/>
+  <cols>
+    <col min="1" max="1" width="15" customWidth="1"/>
+    <col min="2" max="2" width="24" customWidth="1"/>
+    <col min="3" max="3" width="24" customWidth="1"/>
+    <col min="4" max="4" width="20" customWidth="1"/>
+    <col min="5" max="5" width="20" customWidth="1"/>
+    <col min="6" max="6" width="22" customWidth="1"/>
+    <col min="7" max="7" width="15" customWidth="1"/>
+    <col min="8" max="8" width="14" customWidth="1"/>
+    <col min="9" max="9" width="24" customWidth="1"/>
+  </cols>
+  <sheetData>
+    ${worksheetRows.join("")}
+  </sheetData>
+</worksheet>`;
+}
+
+function exportCrewPayoutsExcel(rows, exportKey = "all") {
+  if (!rows.length) return;
+  downloadSingleSheetWorkbook("Crew Payouts", buildCrewPayoutsSheetXml(rows), `pixelbug-${safeFileNamePart(exportKey)}-crew-payouts.xlsx`);
+}
+
 function buildInvoicesSheetXml(invoices, columns = getInvoiceExportColumns()) {
   const exportColumns = columns.length ? columns : getInvoiceExportColumns();
   const rows = [];
@@ -966,6 +1029,221 @@ function exportClientInvoiceExcel(exportKey, rows) {
   downloadSingleSheetWorkbook("Client Invoices", buildClientInvoiceExportSheetXml(rows), `pixelbug-${safeFileNamePart(exportKey)}-client-invoices.xlsx`);
 }
 
+function getClientLedgerEntries(clientId) {
+  if (!clientId) return [];
+  const relatedInvoices = (state.invoices || [])
+    .filter((invoice) => (invoice.clientId || getClientByName(invoice.clientName)?.id || "") === clientId);
+  const entries = relatedInvoices.flatMap((invoice) => {
+    const linkedShows = getLinkedInvoiceShows(invoice);
+    const invoiceParticulars = linkedShows.length
+      ? linkedShows.map((show) => show.showName).filter(Boolean).join(", ")
+      : (String(invoice.notes || "").trim() || "Invoice issued");
+    const invoiceEntry = {
+      date: invoice.issueDate || "",
+      type: "Invoice",
+      reference: invoice.invoiceNumber || "",
+      particulars: invoiceParticulars,
+      debit: Number(invoice.totalAmount || 0),
+      credit: 0
+    };
+    const paymentEntries = Array.isArray(invoice.paymentEntries) ? invoice.paymentEntries : [];
+    const payments = paymentEntries.map((payment) => ({
+      date: payment.paymentDate || invoice.issueDate || "",
+      type: "Payment",
+      reference: invoice.invoiceNumber || "",
+      particulars: String(payment.note || "").trim() || "Payment received",
+      debit: 0,
+      credit: Number(payment.amount || 0)
+    }));
+    return [invoiceEntry, ...payments];
+  });
+
+  const typeOrder = { Invoice: 0, Payment: 1 };
+  entries.sort((a, b) => {
+    const dateCompare = String(a.date || "").localeCompare(String(b.date || ""));
+    if (dateCompare !== 0) return dateCompare;
+    const typeCompare = (typeOrder[a.type] ?? 9) - (typeOrder[b.type] ?? 9);
+    if (typeCompare !== 0) return typeCompare;
+    return String(a.reference || "").localeCompare(String(b.reference || ""));
+  });
+
+  let runningBalance = 0;
+  return entries.map((entry) => {
+    runningBalance += Number(entry.debit || 0) - Number(entry.credit || 0);
+    return {
+      ...entry,
+      balance: runningBalance
+    };
+  });
+}
+
+function buildClientLedgerSheetXml(client, entries) {
+  const headers = [
+    "Date",
+    "Type",
+    "Reference",
+    "Particulars",
+    "Debit",
+    "Credit",
+    "Balance"
+  ];
+  const rows = [];
+  rows.push(`<row r="1">${headers.map((header, index) => makeWorksheetCell(`${excelColumnName(index + 1)}1`, header, "inlineStr", 1)).join("")}</row>`);
+  entries.forEach((entry, index) => {
+    const rowNumber = index + 2;
+    const values = [
+      formatInvoiceDate(entry.date),
+      entry.type,
+      entry.reference,
+      entry.particulars,
+      entry.debit,
+      entry.credit,
+      entry.balance
+    ];
+    rows.push(`<row r="${rowNumber}">${values.map((value, valueIndex) => {
+      const isNumeric = valueIndex >= 4;
+      return makeWorksheetCell(`${excelColumnName(valueIndex + 1)}${rowNumber}`, value, isNumeric ? "n" : "inlineStr", isNumeric ? null : 2);
+    }).join("")}</row>`);
+  });
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews><sheetView workbookViewId="0"/></sheetViews>
+  <sheetFormatPr defaultRowHeight="15"/>
+  <cols>
+    <col min="1" max="1" width="14" customWidth="1"/>
+    <col min="2" max="3" width="18" customWidth="1"/>
+    <col min="4" max="4" width="42" customWidth="1"/>
+    <col min="5" max="7" width="16" customWidth="1"/>
+  </cols>
+  <sheetData>
+    ${rows.join("")}
+  </sheetData>
+</worksheet>`;
+}
+
+function exportClientLedgerExcel(client) {
+  if (!client) return;
+  const entries = getClientLedgerEntries(client.id);
+  if (!entries.length) return;
+  downloadSingleSheetWorkbook(
+    "Client Ledger",
+    buildClientLedgerSheetXml(client, entries),
+    `pixelbug-${safeFileNamePart(getClientDisplayName(client))}-ledger.xlsx`
+  );
+}
+
+function getClientLedgerMarkup(client) {
+  const entries = getClientLedgerEntries(client.id);
+  const relatedInvoices = (state.invoices || []).filter((invoice) => (invoice.clientId || getClientByName(invoice.clientName)?.id || "") === client.id);
+  const totalBilled = relatedInvoices.reduce((sum, invoice) => sum + Number(invoice.totalAmount || 0), 0);
+  const totalCollected = relatedInvoices.reduce((sum, invoice) => sum + Number(invoice.amountPaid || 0), 0);
+  const totalOutstanding = relatedInvoices.reduce((sum, invoice) => sum + Number(invoice.balanceDue || 0), 0);
+  return `
+    <div class="client-ledger-print-page">
+      <header class="client-ledger-print-header">
+        <div>
+          <div class="client-ledger-print-title">Client Ledger</div>
+          <div class="client-ledger-print-subtitle">${escapeHtml(getClientDisplayName(client))}</div>
+        </div>
+        <div class="client-ledger-print-meta">
+          <div>${client.state ? escapeHtml(client.state) : "State not added"}</div>
+          <div>${client.gstin ? `GSTIN: ${escapeHtml(client.gstin)}` : "GSTIN not added"}</div>
+        </div>
+      </header>
+      <section class="client-ledger-print-summary">
+        <div><span>Total Billed</span><strong>${escapeHtml(formatCurrency(totalBilled))}</strong></div>
+        <div><span>Collected</span><strong>${escapeHtml(formatCurrency(totalCollected))}</strong></div>
+        <div><span>Outstanding</span><strong>${escapeHtml(formatCurrency(totalOutstanding))}</strong></div>
+      </section>
+      <section class="client-ledger-print-details">
+        <div><strong>Contact</strong> ${escapeHtml(client.contactName || "No contact")}${client.contactEmail ? ` · ${escapeHtml(client.contactEmail)}` : ""}${client.contactPhone ? ` · ${escapeHtml(client.contactPhone)}` : ""}</div>
+        <div><strong>Billing Address</strong> ${escapeHtml(client.billingAddress || "No billing address saved yet.")}</div>
+      </section>
+      <table class="client-ledger-print-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Reference</th>
+            <th>Particulars</th>
+            <th>Debit</th>
+            <th>Credit</th>
+            <th>Balance</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${entries.length ? entries.map((entry) => `
+            <tr>
+              <td>${escapeHtml(formatInvoiceDate(entry.date))}</td>
+              <td>${escapeHtml(entry.type)}</td>
+              <td>${escapeHtml(entry.reference || "-")}</td>
+              <td>${escapeHtml(entry.particulars || "-")}</td>
+              <td>${entry.debit ? escapeHtml(formatCurrency(entry.debit)) : "-"}</td>
+              <td>${entry.credit ? escapeHtml(formatCurrency(entry.credit)) : "-"}</td>
+              <td>${escapeHtml(formatCurrency(entry.balance))}</td>
+            </tr>
+          `).join("") : `<tr><td colspan="7">No ledger transactions yet.</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function getClientLedgerPrintStyles() {
+  return `
+    @page { size: A4; margin: 12mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #17212b; font-family: "IBM Plex Sans", sans-serif; background: #fff; }
+    .client-ledger-print-page { width: 100%; font-size: 11px; }
+    .client-ledger-print-header { display: flex; justify-content: space-between; gap: 16px; align-items: start; border-bottom: 2px solid #d8e0ea; padding-bottom: 10px; margin-bottom: 12px; }
+    .client-ledger-print-title { font-family: "Space Grotesk", sans-serif; font-size: 24px; font-weight: 700; }
+    .client-ledger-print-subtitle { margin-top: 2px; font-size: 14px; font-weight: 600; }
+    .client-ledger-print-meta { text-align: right; color: #667789; font-size: 10px; line-height: 1.4; }
+    .client-ledger-print-summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+    .client-ledger-print-summary div { padding: 10px; border: 1px solid #dfe6ef; border-radius: 12px; background: #fbfcfe; }
+    .client-ledger-print-summary span { display: block; color: #667789; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; }
+    .client-ledger-print-summary strong { display: block; margin-top: 4px; font-size: 15px; }
+    .client-ledger-print-details { margin-bottom: 12px; color: #4a5b6d; line-height: 1.5; }
+    .client-ledger-print-details div { margin-bottom: 4px; }
+    .client-ledger-print-table { width: 100%; border-collapse: collapse; table-layout: auto; }
+    .client-ledger-print-table th, .client-ledger-print-table td { padding: 7px 8px; border-bottom: 1px solid #dfe6ef; text-align: left; vertical-align: top; }
+    .client-ledger-print-table th { background: #f8fafc; color: #5c6b7a; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+  `;
+}
+
+function printClientLedger(clientId) {
+  const client = getClientById(clientId);
+  if (!client) return;
+  const ledgerWindow = window.open("", "_blank");
+  if (!ledgerWindow) {
+    showToast("Unable to open print window.");
+    return;
+  }
+  const printTitle = `${escapeHtml(getClientDisplayName(client))} Ledger`;
+  ledgerWindow.document.open();
+  ledgerWindow.document.write(`<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>${printTitle}</title>
+    <style>${getClientLedgerPrintStyles()}</style>
+  </head>
+  <body>
+    ${getClientLedgerMarkup(client)}
+    <script>
+      window.addEventListener("load", () => {
+        window.setTimeout(() => {
+          window.focus();
+          window.print();
+        }, 250);
+      });
+    <\/script>
+  </body>
+</html>`);
+  ledgerWindow.document.close();
+}
+
 function exportInvoicesExcel(exportKey, invoices, columns = getInvoiceExportColumns(), options = {}) {
   if (!exportKey || !invoices.length) return;
   const monthKeys = [...new Set(invoices.map(getInvoiceMonthKey))].sort();
@@ -1008,12 +1286,15 @@ function seedState() {
     ui: {
       editingShowId: null,
       newShowDate: "",
+      showDraftTemplate: null,
       showSubtab: "list",
+      showTimelineMode: "active",
       editingInvoiceId: null,
       activeSidebarTab: "calendarPanel",
       activeShowMonth: null,
       selectedShowYear: "all",
       showSortMode: "date",
+      showSearchQuery: "",
       showsPage: 1,
       showsPageSize: 10,
       selectedCrewFilter: "all",
@@ -1031,17 +1312,47 @@ function seedState() {
       invoiceSortMode: "issueDate",
       invoiceRegisterPage: 1,
       invoiceRegisterPageSize: 10,
+      paymentReconSearchQuery: "",
+      paymentReconYear: "all",
+      paymentReconMonth: "all",
+      paymentReconClient: "all",
+      paymentReconPage: 1,
+      paymentReconPageSize: 10,
+      payoutSearchQuery: "",
+      payoutYear: "all",
+      payoutMonth: "all",
+      payoutCrew: "all",
+      payoutClient: "all",
+      payoutPage: 1,
+      payoutPageSize: 10,
+      documentShowsYear: "all",
+      documentShowsMonth: "all",
+      documentInvoicesYear: "all",
+      documentInvoicesMonth: "all",
+      documentInvoicesClient: "all",
+      documentClientFinancialYear: "all",
+      documentClientFinancialMonth: "all",
+      documentClientFinancialClient: "all",
+      documentLedgerClient: "all",
+      documentClientsGstFilter: "all",
+      documentPayoutYear: "all",
+      documentPayoutMonth: "all",
+      documentPayoutCrew: "all",
+      documentPayoutClient: "all",
       invoiceDraftShowIds: [],
+      invoiceDraftTemplate: null,
       invoiceSubtab: "create",
       markPaymentInvoiceId: null,
       clientsPage: 1,
       clientsPageSize: 10,
       clientsSubtab: "list",
+      selectedClientDetailId: null,
       clientSearchQuery: "",
       clientGstFilter: "all",
       clientExportYear: "all",
       clientExportMonth: "all",
       clientExportClientId: "all",
+      dirtyForm: null,
       invoicePrintCopies: 1,
       invoiceLineDefaults: {
         description: "",
@@ -1339,6 +1650,29 @@ function ensureUiState() {
       invoiceClientFilter: "all",
       invoiceSortMode: "issueDate",
       invoiceDraftShowIds: [],
+      paymentReconSearchQuery: "",
+      paymentReconYear: "all",
+      paymentReconMonth: "all",
+      paymentReconClient: "all",
+      payoutSearchQuery: "",
+      payoutYear: "all",
+      payoutMonth: "all",
+      payoutCrew: "all",
+      payoutClient: "all",
+      documentShowsYear: "all",
+      documentShowsMonth: "all",
+      documentInvoicesYear: "all",
+      documentInvoicesMonth: "all",
+      documentInvoicesClient: "all",
+      documentClientFinancialYear: "all",
+      documentClientFinancialMonth: "all",
+      documentClientFinancialClient: "all",
+      documentLedgerClient: "all",
+      documentClientsGstFilter: "all",
+      documentPayoutYear: "all",
+      documentPayoutMonth: "all",
+      documentPayoutCrew: "all",
+      documentPayoutClient: "all",
       expandedCalendarWeeks: {},
       selectedCalendarShowId: null,
       calendarReturnMode: "month",
@@ -1360,8 +1694,16 @@ function ensureUiState() {
     state.ui.newShowDate = "";
   }
 
+  if (!Object.prototype.hasOwnProperty.call(state.ui, "showDraftTemplate")) {
+    state.ui.showDraftTemplate = null;
+  }
+
   if (!state.ui.showSubtab) {
     state.ui.showSubtab = "list";
+  }
+
+  if (!state.ui.showTimelineMode) {
+    state.ui.showTimelineMode = "active";
   }
 
   if (!state.ui.showReturnTab) {
@@ -1374,6 +1716,10 @@ function ensureUiState() {
 
   if (!state.ui.showSortMode) {
     state.ui.showSortMode = "date";
+  }
+
+  if (typeof state.ui.showSearchQuery !== "string") {
+    state.ui.showSearchQuery = "";
   }
 
   if (!Number.isFinite(Number(state.ui.showsPage)) || Number(state.ui.showsPage) < 1) {
@@ -1453,6 +1799,77 @@ function ensureUiState() {
     state.ui.invoiceDraftShowIds = [];
   }
 
+  if (typeof state.ui.paymentReconSearchQuery !== "string") {
+    state.ui.paymentReconSearchQuery = "";
+  }
+
+  if (!state.ui.paymentReconYear) {
+    state.ui.paymentReconYear = "all";
+  }
+
+  if (!state.ui.paymentReconMonth) {
+    state.ui.paymentReconMonth = "all";
+  }
+
+  if (!state.ui.paymentReconClient) {
+    state.ui.paymentReconClient = "all";
+  }
+
+  if (!Number.isFinite(Number(state.ui.paymentReconPage)) || Number(state.ui.paymentReconPage) < 1) {
+    state.ui.paymentReconPage = 1;
+  }
+
+  if (!Number.isFinite(Number(state.ui.paymentReconPageSize)) || Number(state.ui.paymentReconPageSize) < 1) {
+    state.ui.paymentReconPageSize = 10;
+  }
+
+  if (typeof state.ui.payoutSearchQuery !== "string") {
+    state.ui.payoutSearchQuery = "";
+  }
+
+  if (!state.ui.payoutYear) {
+    state.ui.payoutYear = "all";
+  }
+
+  if (!state.ui.payoutMonth) {
+    state.ui.payoutMonth = "all";
+  }
+
+  if (!state.ui.payoutCrew) {
+    state.ui.payoutCrew = "all";
+  }
+
+  if (!state.ui.payoutClient) {
+    state.ui.payoutClient = "all";
+  }
+
+  if (!Number.isFinite(Number(state.ui.payoutPage)) || Number(state.ui.payoutPage) < 1) {
+    state.ui.payoutPage = 1;
+  }
+
+  if (!Number.isFinite(Number(state.ui.payoutPageSize)) || Number(state.ui.payoutPageSize) < 1) {
+    state.ui.payoutPageSize = 10;
+  }
+
+  if (!state.ui.documentShowsYear) state.ui.documentShowsYear = "all";
+  if (!state.ui.documentShowsMonth) state.ui.documentShowsMonth = "all";
+  if (!state.ui.documentInvoicesYear) state.ui.documentInvoicesYear = "all";
+  if (!state.ui.documentInvoicesMonth) state.ui.documentInvoicesMonth = "all";
+  if (!state.ui.documentInvoicesClient) state.ui.documentInvoicesClient = "all";
+  if (!state.ui.documentClientFinancialYear) state.ui.documentClientFinancialYear = "all";
+  if (!state.ui.documentClientFinancialMonth) state.ui.documentClientFinancialMonth = "all";
+  if (!state.ui.documentClientFinancialClient) state.ui.documentClientFinancialClient = "all";
+  if (!state.ui.documentLedgerClient) state.ui.documentLedgerClient = "all";
+  if (!state.ui.documentClientsGstFilter) state.ui.documentClientsGstFilter = "all";
+  if (!state.ui.documentPayoutYear) state.ui.documentPayoutYear = "all";
+  if (!state.ui.documentPayoutMonth) state.ui.documentPayoutMonth = "all";
+  if (!state.ui.documentPayoutCrew) state.ui.documentPayoutCrew = "all";
+  if (!state.ui.documentPayoutClient) state.ui.documentPayoutClient = "all";
+
+  if (!state.ui.invoiceDraftTemplate || typeof state.ui.invoiceDraftTemplate !== "object") {
+    state.ui.invoiceDraftTemplate = null;
+  }
+
   if (!state.ui.invoiceSubtab) {
     state.ui.invoiceSubtab = "create";
   }
@@ -1471,6 +1888,9 @@ function ensureUiState() {
   if (!state.ui.clientsSubtab) {
     state.ui.clientsSubtab = "list";
   }
+  if (!Object.prototype.hasOwnProperty.call(state.ui, "selectedClientDetailId")) {
+    state.ui.selectedClientDetailId = null;
+  }
   if (typeof state.ui.clientSearchQuery !== "string") {
     state.ui.clientSearchQuery = "";
   }
@@ -1486,6 +1906,11 @@ function ensureUiState() {
   if (!state.ui.clientExportClientId) {
     state.ui.clientExportClientId = "all";
   }
+
+  if (!Object.prototype.hasOwnProperty.call(state.ui, "dirtyForm")) {
+    state.ui.dirtyForm = null;
+  }
+
   const normalizedInvoicePrintCopies = Number(state.ui.invoicePrintCopies || 1);
   state.ui.invoicePrintCopies = [1, 2, 3, 4, 5].includes(normalizedInvoicePrintCopies) ? normalizedInvoicePrintCopies : 1;
 
@@ -1532,6 +1957,7 @@ function resetEditingState() {
   ensureUiState();
   state.ui.editingShowId = null;
   state.ui.newShowDate = "";
+  state.ui.showDraftTemplate = null;
 }
 
 function getShowReturnTab() {
@@ -1558,10 +1984,63 @@ function restoreShowReturnContext() {
   });
 }
 
+function getDirtyFormLabel(formKey = state.ui?.dirtyForm) {
+  if (formKey === "show") return "show form";
+  if (formKey === "client") return "client form";
+  if (formKey === "invoice") return "invoice form";
+  return "form";
+}
+
+function setDirtyForm(formKey) {
+  ensureUiState();
+  if (state.ui.dirtyForm === formKey) return;
+  state.ui.dirtyForm = formKey;
+  saveState(state);
+}
+
+function clearDirtyForm(formKey = null) {
+  ensureUiState();
+  if (formKey && state.ui.dirtyForm !== formKey) return;
+  if (!state.ui.dirtyForm) return;
+  state.ui.dirtyForm = null;
+  saveState(state);
+}
+
+function hasDirtyForm(formKey = null) {
+  ensureUiState();
+  if (!state.ui.dirtyForm) return false;
+  return formKey ? state.ui.dirtyForm === formKey : true;
+}
+
+function confirmDiscardDirtyForm(targetLabel = "continue") {
+  if (!hasDirtyForm()) return true;
+  return window.confirm(`You have unsaved changes in the ${getDirtyFormLabel()}. Do you want to discard them and ${targetLabel}?`);
+}
+
+function wireDirtyFormTracking(form, formKey) {
+  if (!form) return;
+  if (form.dataset.dirtyTrackingWired === "true") return;
+  form.dataset.dirtyTrackingWired = "true";
+  const markDirty = (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (!target.closest("input, textarea, select")) return;
+    setDirtyForm(formKey);
+  };
+  form.addEventListener("input", markDirty);
+  form.addEventListener("change", markDirty);
+}
+
+function getDirtyTabLabel(baseLabel, formKey) {
+  if (!hasDirtyForm(formKey)) return baseLabel;
+  return `${baseLabel} <span class="dirty-tab-badge" aria-label="Unsaved changes">Pending</span>`;
+}
+
 function resetInvoiceEditingState() {
   ensureUiState();
   state.ui.editingInvoiceId = null;
   state.ui.invoiceDraftShowIds = [];
+  state.ui.invoiceDraftTemplate = null;
 }
 
 async function copyText(text) {
@@ -1595,8 +2074,9 @@ function getSidebarTabs(user) {
     return [
       { id: "calendarPanel", label: "Calendar", meta: "Month, week, day" },
       { id: "showsPanel", label: "Shows", meta: "Create and view shows" },
-      { id: "clientsPanel", label: "Clients", meta: "Client master and billing info" },
       { id: "invoicesPanel", label: "Invoices", meta: "Create and track billing" },
+      { id: "clientsPanel", label: "Clients", meta: "Client master and billing info" },
+      { id: "documentsPanel", label: "Document Center", meta: "Exports and ledgers" },
       { id: "googleEntriesPanel", label: "Google Calendar", meta: "Imported and synced shows" },
       { id: "crewAdminPanel", label: "Crew Management", meta: "Add or remove crew" }
     ];
@@ -1606,8 +2086,9 @@ function getSidebarTabs(user) {
     return [
       { id: "calendarPanel", label: "Calendar", meta: "Month, week, day" },
       { id: "showsPanel", label: "Shows", meta: "Create and view shows" },
+      { id: "invoicesPanel", label: "Invoices", meta: "Billing and collections" },
       { id: "clientsPanel", label: "Clients", meta: "Client master and billing info" },
-      { id: "invoicesPanel", label: "Invoices", meta: "Billing and collections" }
+      { id: "documentsPanel", label: "Document Center", meta: "Exports and ledgers" }
     ];
   }
 
@@ -1704,6 +2185,40 @@ function getInvoiceLinkedShowNames(invoice) {
     .flatMap((item) => parseInvoiceShowIds(item.showId)
       .map((showId) => state.shows.find((show) => show.id === showId)?.showName))
     .filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+function getInvoiceClientLabel(invoice) {
+  const client = getClientById(invoice?.clientId) || getClientByName(invoice?.clientName);
+  return client ? getClientDisplayName(client) : String(invoice?.clientName || "Client TBD").trim() || "Client TBD";
+}
+
+function buildInvoiceDraftTemplateFromInvoice(invoice) {
+  if (!invoice) return null;
+  return {
+    invoiceNumber: makeDefaultInvoiceNumber(),
+    clientId: invoice.clientId || "",
+    clientName: invoice.clientName || "",
+    issueDate: dateKey(new Date()),
+    dueDate: "",
+    status: "draft",
+    amountPaid: 0,
+    notes: invoice.notes || "",
+    details: {
+      ...normalizeInvoiceDetails(invoice.details),
+      paymentTerms: normalizeInvoiceDetails(invoice.details).paymentTerms || "Net 15"
+    },
+    lineItems: (invoice.lineItems || []).map((item) => ({
+      id: uid("line"),
+      showId: item.showId || "",
+      description: item.description || "",
+      sac: item.sac || item.hsnSac || "",
+      customDetails: item.customDetails || item.custom_details || "",
+      discount: item.discount || "",
+      quantity: Number(item.quantity || 1),
+      unitRate: Number(item.unitRate || 0),
+      amount: Number(item.amount || 0)
+    }))
+  };
 }
 
 function getInvoicePaymentBucket(invoice) {
@@ -2059,6 +2574,130 @@ function getInvoiceLightDesignerOptions(invoices = state.invoices) {
     .sort((a, b) => a.localeCompare(b));
 }
 
+function getCrewPayoutRows(shows = state.shows) {
+  return [...shows]
+    .flatMap((show) => (show.assignments || []).map((assignment, index) => {
+      const crewName = getAssignmentCrewName(assignment);
+      const operatorAmount = Math.round(Number(assignment.operatorAmount || 0) * 100) / 100;
+      if (!crewName || operatorAmount <= 0) return null;
+      return {
+        id: `${show.id}:${assignment.crewId || "manual"}:${index}`,
+        showId: show.id,
+        showName: show.showName || "Untitled Show",
+        showDate: getShowStartDate(show),
+        showDateLabel: formatDateRange(getShowStartDate(show), getShowEndDate(show)),
+        clientLabel: getClientDisplayValue(show.clientId, show.client),
+        clientId: show.clientId || getClientByName(show.client)?.id || "",
+        crewId: assignment.crewId || "",
+        crewName,
+        lightDesigner: getUserById(assignment.lightDesignerId)?.name || "",
+        location: show.location || show.venue || "",
+        operatorAmount,
+        status: show.showStatus || "confirmed",
+        statusLabel: show.showStatus === "tentative" ? "Tentative" : "Confirmed",
+        notes: String(assignment.notes || "").trim()
+      };
+    }))
+    .filter(Boolean)
+    .sort((a, b) =>
+      String(b.showDate || "").localeCompare(String(a.showDate || ""))
+      || String(a.showName || "").localeCompare(String(b.showName || ""))
+      || String(a.crewName || "").localeCompare(String(b.crewName || ""))
+    );
+}
+
+function getCrewPayoutYearOptions(rows = getCrewPayoutRows()) {
+  return [...new Set(rows.map((row) => String(row.showDate || "").slice(0, 4)).filter(Boolean))]
+    .sort((a, b) => b.localeCompare(a));
+}
+
+function getCrewPayoutMonthOptions(rows = getCrewPayoutRows(), selectedYear = "all") {
+  return [...new Set(rows
+    .filter((row) => selectedYear === "all" || String(row.showDate || "").slice(0, 4) === selectedYear)
+    .map((row) => String(row.showDate || "").slice(0, 7))
+    .filter(Boolean))]
+    .sort((a, b) => b.localeCompare(a));
+}
+
+function filterCrewPayoutRows(rows = getCrewPayoutRows()) {
+  const query = String(state.ui.payoutSearchQuery || "").trim().toLowerCase();
+  const year = state.ui.payoutYear || "all";
+  const month = state.ui.payoutMonth || "all";
+  const crew = state.ui.payoutCrew || "all";
+  const client = state.ui.payoutClient || "all";
+  return rows.filter((row) => {
+    const rowYear = String(row.showDate || "").slice(0, 4);
+    const rowMonth = String(row.showDate || "").slice(0, 7);
+    const haystack = [
+      row.showName,
+      row.clientLabel,
+      row.crewName,
+      row.lightDesigner,
+      row.location,
+      row.notes,
+      row.statusLabel
+    ].join(" ").toLowerCase();
+    const matchesQuery = !query || haystack.includes(query);
+    const matchesYear = year === "all" || rowYear === year;
+    const matchesMonth = month === "all" || rowMonth === month;
+    const matchesCrew = crew === "all" || row.crewName === crew;
+    const matchesClient = client === "all" || row.clientLabel === client;
+    return matchesQuery && matchesYear && matchesMonth && matchesCrew && matchesClient;
+  });
+}
+
+function getFilteredClientsList() {
+  const clients = getSortedClients();
+  const clientSearchQuery = String(state.ui.clientSearchQuery || "").trim().toLowerCase();
+  const clientGstFilter = state.ui.clientGstFilter || "all";
+  return clients.filter((client) => {
+    const matchesSearch = !clientSearchQuery || [
+      getClientDisplayName(client),
+      client.name,
+      client.state,
+      client.gstin,
+      client.contactName,
+      client.contactEmail,
+      client.contactPhone,
+      client.billingAddress,
+      client.notes
+    ].some((value) => String(value || "").toLowerCase().includes(clientSearchQuery));
+    if (!matchesSearch) return false;
+    if (clientGstFilter === "missing") {
+      return !String(client.gstin || "").trim();
+    }
+    if (clientGstFilter === "available") {
+      return Boolean(String(client.gstin || "").trim());
+    }
+    return true;
+  });
+}
+
+function getFilteredShowsForDocuments(user = getCurrentUser()) {
+  const shows = filterShowsBySelectedCrew(visibleShowsForUser(user));
+  const showSearchQuery = String(state.ui.showSearchQuery || "").trim().toLowerCase();
+  const todayKey = dateKey(new Date());
+  const filteredShows = shows.filter((show) => {
+    const showMonthKey = getShowStartDate(show).slice(0, 7);
+    const yearMatch = state.ui.selectedShowYear === "all" || showMonthKey.startsWith(state.ui.selectedShowYear);
+    const monthMatch = state.ui.activeShowMonth === "all" || showMonthKey === state.ui.activeShowMonth;
+    const searchableValues = [
+      show.showName,
+      show.client,
+      show.location,
+      show.venue,
+      ...show.assignments.map((assignment) => getAssignmentCrewName(assignment))
+    ];
+    const searchMatch = !showSearchQuery || searchableValues.some((value) => String(value || "").toLowerCase().includes(showSearchQuery));
+    return yearMatch && monthMatch && searchMatch;
+  });
+  const currentShows = filteredShows.filter((show) => getShowStartDate(show) <= todayKey && getShowEndDate(show) >= todayKey);
+  const upcomingShows = filteredShows.filter((show) => getShowStartDate(show) > todayKey);
+  const pastShows = filteredShows.filter((show) => getShowEndDate(show) < todayKey);
+  const timelineMode = state.ui.showTimelineMode || "active";
+  return sortShows(timelineMode === "past" ? pastShows : [...currentShows, ...upcomingShows], state.ui.showSortMode);
+}
+
 function filterInvoices(invoices = state.invoices) {
   const query = String(state.ui.invoiceSearchQuery || "").trim().toLowerCase();
   const statusFilter = state.ui.invoiceStatusFilter || "all";
@@ -2115,6 +2754,67 @@ function getInvoicePaymentHistoryMarkup(invoice) {
       `).join("")}
     </div>
   `;
+}
+
+function getInvoiceReconciliationRows(invoices = state.invoices) {
+  return invoices
+    .flatMap((invoice) => (Array.isArray(invoice.paymentEntries) ? invoice.paymentEntries : []).map((payment) => ({
+      id: payment.id || uid("payment"),
+      invoiceId: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      clientLabel: getInvoiceClientLabel(invoice),
+      paymentDate: payment.paymentDate || "",
+      amount: Number(payment.amount || 0),
+      note: String(payment.note || "").trim(),
+      amountPaid: Number(invoice.amountPaid || 0),
+      balanceDue: Number(invoice.balanceDue || 0),
+      invoiceStatus: getInvoiceStatusLabel(invoice),
+      invoiceRawStatus: invoice.status || "draft",
+      lightDesigner: getInvoiceLightDesignerLabel(invoice),
+      showNames: getInvoiceLinkedShowNames(invoice).join(", ")
+    })))
+    .sort((a, b) =>
+      String(b.paymentDate || "").localeCompare(String(a.paymentDate || ""))
+      || String(b.invoiceNumber || "").localeCompare(String(a.invoiceNumber || ""))
+    );
+}
+
+function filterInvoiceReconciliationRows(rows = getInvoiceReconciliationRows()) {
+  const query = String(state.ui.paymentReconSearchQuery || "").trim().toLowerCase();
+  const year = state.ui.paymentReconYear || "all";
+  const month = state.ui.paymentReconMonth || "all";
+  const client = state.ui.paymentReconClient || "all";
+  return rows.filter((row) => {
+    const paymentYear = String(row.paymentDate || "").slice(0, 4);
+    const paymentMonth = String(row.paymentDate || "").slice(0, 7);
+    const haystack = [
+      row.invoiceNumber,
+      row.clientLabel,
+      row.paymentDate,
+      row.note,
+      row.lightDesigner,
+      row.showNames,
+      row.invoiceStatus
+    ].join(" ").toLowerCase();
+    const matchesQuery = !query || haystack.includes(query);
+    const matchesYear = year === "all" || paymentYear === year;
+    const matchesMonth = month === "all" || paymentMonth === month;
+    const matchesClient = client === "all" || row.clientLabel === client;
+    return matchesQuery && matchesYear && matchesMonth && matchesClient;
+  });
+}
+
+function getPaymentReconciliationYearOptions(rows = getInvoiceReconciliationRows()) {
+  return [...new Set(rows.map((row) => String(row.paymentDate || "").slice(0, 4)).filter(Boolean))]
+    .sort((a, b) => b.localeCompare(a));
+}
+
+function getPaymentReconciliationMonthOptions(rows = getInvoiceReconciliationRows(), selectedYear = "all") {
+  return [...new Set(rows
+    .filter((row) => selectedYear === "all" || String(row.paymentDate || "").slice(0, 4) === selectedYear)
+    .map((row) => String(row.paymentDate || "").slice(0, 7))
+    .filter(Boolean))]
+    .sort((a, b) => b.localeCompare(a));
 }
 
 function makeDefaultInvoiceNumber() {
@@ -2407,6 +3107,10 @@ function renderSidebarTabs() {
     node.innerHTML = markup;
     node.querySelectorAll("[data-target-panel]").forEach((button) => {
       button.addEventListener("click", () => {
+        if (button.dataset.targetPanel !== state.ui.activeSidebarTab && !confirmDiscardDirtyForm("switch tabs")) {
+          return;
+        }
+        clearDirtyForm();
         state.ui.activeSidebarTab = button.dataset.targetPanel;
         if (button.dataset.targetPanel === "calendarPanel") {
           state.view.mode = "month";
@@ -2825,6 +3529,12 @@ function renderDashboard() {
   if (state.ui.activeSidebarTab === "invoicesPanel" && canAccessInvoices(user)) {
     singleView.innerHTML = `<section class="panel" id="invoicesPanel"></section>`;
     renderInvoicesPanel();
+    return;
+  }
+
+  if (state.ui.activeSidebarTab === "documentsPanel" && canAccessInvoices(user)) {
+    singleView.innerHTML = `<section class="panel" id="documentsPanel"></section>`;
+    renderDocumentCenterPanel();
     return;
   }
 
@@ -3429,6 +4139,8 @@ function renderLegend(user) {
 
 function renderShowsList(user, shows, sourceShows = shows) {
   const panel = document.getElementById("showsListPanel") || document.getElementById("showsPanel");
+  const showSearchQuery = String(state.ui.showSearchQuery || "").trim().toLowerCase();
+  const todayKey = dateKey(new Date());
   const groupedShows = shows.reduce((groups, show) => {
     const key = getShowStartDate(show).slice(0, 7);
     if (!groups[key]) {
@@ -3473,16 +4185,33 @@ function renderShowsList(user, shows, sourceShows = shows) {
     const showMonthKey = getShowStartDate(show).slice(0, 7);
     const yearMatch = state.ui.selectedShowYear === "all" || showMonthKey.startsWith(state.ui.selectedShowYear);
     const monthMatch = state.ui.activeShowMonth === "all" || showMonthKey === state.ui.activeShowMonth;
-    return yearMatch && monthMatch;
+    const searchableValues = [
+      show.showName,
+      show.client,
+      show.location,
+      show.venue,
+      ...show.assignments.map((assignment) => getAssignmentCrewName(assignment))
+    ];
+    const searchMatch = !showSearchQuery || searchableValues.some((value) => String(value || "").toLowerCase().includes(showSearchQuery));
+    return yearMatch && monthMatch && searchMatch;
   });
-  const activeMonthShows = sortShows(filteredShows, state.ui.showSortMode);
+  const currentShows = filteredShows.filter((show) => getShowStartDate(show) <= todayKey && getShowEndDate(show) >= todayKey);
+  const upcomingShows = filteredShows.filter((show) => getShowStartDate(show) > todayKey);
+  const pastShows = filteredShows.filter((show) => getShowEndDate(show) < todayKey);
+  const timelineMode = state.ui.showTimelineMode || "active";
+  const visibleShows = timelineMode === "past"
+    ? sortShows(pastShows, state.ui.showSortMode)
+    : sortShows([...currentShows, ...upcomingShows], state.ui.showSortMode);
   const activeMonthLabel = state.ui.activeShowMonth !== "all"
     ? monthGroupLabel(`${state.ui.activeShowMonth}-01`)
     : state.ui.selectedShowYear !== "all"
       ? `All Months in ${state.ui.selectedShowYear}`
       : "All Months";
   const selectedDraftShowIds = new Set(state.ui.invoiceDraftShowIds || []);
-  const showPagination = getPaginationSlice(activeMonthShows, "showsPage", "showsPageSize");
+  const showPagination = getPaginationSlice(visibleShows, "showsPage", "showsPageSize");
+  const pagedCurrentShows = showPagination.items.filter((show) => getShowStartDate(show) <= todayKey && getShowEndDate(show) >= todayKey);
+  const pagedUpcomingShows = showPagination.items.filter((show) => getShowStartDate(show) > todayKey);
+  const pagedPastShows = showPagination.items.filter((show) => getShowEndDate(show) < todayKey);
 
   panel.innerHTML = `
     <div class="stack">
@@ -3491,6 +4220,13 @@ function renderShowsList(user, shows, sourceShows = shows) {
       </div>
       ${sourceShows.length ? `
         <div class="shows-toolbar">
+          <div class="shows-toolbar-top">
+            <label class="sort-control invoice-search-control">
+              <span>Search</span>
+              <input type="search" id="showSearchInput" placeholder="Show, client, location, crew" value="${escapeHtml(state.ui.showSearchQuery || "")}" autocomplete="off">
+            </label>
+            <button type="button" class="secondary search-submit-button" id="applyShowSearchButton">Search</button>
+          </div>
           <div class="shows-toolbar-top">
             ${renderCrewFilterControl("showsCrewFilter", { includeUnassigned: true })}
             <label class="sort-control">
@@ -3515,7 +4251,6 @@ function renderShowsList(user, shows, sourceShows = shows) {
                 <option value="client" ${state.ui.showSortMode === "client" ? "selected" : ""}>Client</option>
               </select>
             </label>
-            ${(isAdmin(user) || isAccounts(user)) ? '<button type="button" class="secondary" id="exportMonthButton">Export Excel</button>' : ""}
           </div>
           ${isAdmin(user) ? `
             <div class="shows-selection-toolbar">
@@ -3525,13 +4260,38 @@ function renderShowsList(user, shows, sourceShows = shows) {
           ` : ""}
         </div>
         <section class="month-group">
-          <header class="month-group-header">
-            <h4>${activeMonthLabel}</h4>
-            <span class="pill">${activeMonthShows.length} ${activeMonthShows.length === 1 ? "show" : "shows"}</span>
-          </header>
-          <div class="show-list">
-            ${showPagination.items.length ? showPagination.items.map((show) => renderShowCard(show, user, selectedDraftShowIds.has(show.id))).join("") : "<p>No shows available for the selected crew in this month.</p>"}
+          <div class="invoice-subtabs" role="tablist" aria-label="Show timeline">
+            <button type="button" class="${timelineMode === "active" ? "is-active" : ""}" data-show-timeline="active">Current & Upcoming</button>
+            <button type="button" class="${timelineMode === "past" ? "is-active" : ""}" data-show-timeline="past">Past Shows</button>
           </div>
+          <header class="month-group-header">
+            <h4>${timelineMode === "past" ? `Past Shows · ${activeMonthLabel}` : `Current & Upcoming · ${activeMonthLabel}`}</h4>
+            <span class="pill">${visibleShows.length} ${visibleShows.length === 1 ? "show" : "shows"}</span>
+          </header>
+          ${timelineMode === "past" ? `
+            <div class="show-list">
+              ${pagedPastShows.length ? pagedPastShows.map((show) => renderShowCard(show, user, selectedDraftShowIds.has(show.id))).join("") : "<p>No past shows match the current filters.</p>"}
+            </div>
+          ` : `
+            <div class="stack tight">
+              <div class="month-group-header">
+                <h4>Current Shows</h4>
+                <span class="pill">${currentShows.length}</span>
+              </div>
+              <div class="show-list">
+                ${pagedCurrentShows.length ? pagedCurrentShows.map((show) => renderShowCard(show, user, selectedDraftShowIds.has(show.id))).join("") : "<p>No current shows match the current filters.</p>"}
+              </div>
+            </div>
+            <div class="stack tight">
+              <div class="month-group-header">
+                <h4>Upcoming Shows</h4>
+                <span class="pill">${upcomingShows.length}</span>
+              </div>
+              <div class="show-list">
+                ${pagedUpcomingShows.length ? pagedUpcomingShows.map((show) => renderShowCard(show, user, selectedDraftShowIds.has(show.id))).join("") : "<p>No upcoming shows match the current filters.</p>"}
+              </div>
+            </div>
+          `}
           ${renderPaginationControls("shows", showPagination, "shows")}
         </section>
       ` : "<p>No shows available in your current view.</p>"}
@@ -3541,6 +4301,28 @@ function renderShowsList(user, shows, sourceShows = shows) {
   enhanceCustomSelects(panel);
 
   const yearFilterSelect = document.getElementById("showYearFilter");
+  panel.querySelectorAll("[data-show-timeline]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ui.showTimelineMode = button.dataset.showTimeline || "active";
+      state.ui.showsPage = 1;
+      saveState(state);
+      renderShowsList(user, shows, sourceShows);
+    });
+  });
+  const showSearchInput = document.getElementById("showSearchInput");
+  const applyShowSearch = () => {
+    state.ui.showSearchQuery = showSearchInput?.value || "";
+    state.ui.showsPage = 1;
+    saveState(state);
+    renderShowsList(user, shows, sourceShows);
+  };
+  showSearchInput?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    applyShowSearch();
+  });
+  document.getElementById("applyShowSearchButton")?.addEventListener("click", applyShowSearch);
+
   if (yearFilterSelect) {
     yearFilterSelect.addEventListener("change", () => {
       state.ui.selectedShowYear = yearFilterSelect.value;
@@ -3582,19 +4364,6 @@ function renderShowsList(user, shows, sourceShows = shows) {
   }
 
   wirePaginationControls(panel, "shows", "showsPage", "showsPageSize", () => renderShowsList(user, shows, sourceShows));
-
-  const exportButton = document.getElementById("exportMonthButton");
-  if (exportButton && (isAdmin(user) || isAccounts(user))) {
-    exportButton.addEventListener("click", () => {
-      const exportKey = state.ui.activeShowMonth !== "all"
-        ? state.ui.activeShowMonth
-        : state.ui.selectedShowYear !== "all"
-          ? state.ui.selectedShowYear
-          : "all-shows";
-      exportShowsMonthExcel(exportKey, activeMonthShows);
-      showToast(`Exported ${activeMonthLabel} for Excel.`);
-    });
-  }
 
   const createInvoiceButton = document.getElementById("createInvoiceFromShowsButton");
   const clearInvoiceSelectionButton = document.getElementById("clearInvoiceShowSelectionButton");
@@ -3654,6 +4423,12 @@ function renderShowsList(user, shows, sourceShows = shows) {
       button.addEventListener("click", () => fillShowForm(button.dataset.editShow));
     });
   }
+
+  if (isAdmin(user)) {
+    panel.querySelectorAll("[data-duplicate-show]").forEach((button) => {
+      button.addEventListener("click", () => startShowDraftFromExistingShow(button.dataset.duplicateShow));
+    });
+  }
 }
 
 function renderShowsPanel(user, shows, sourceShows = shows) {
@@ -3676,7 +4451,7 @@ function renderShowsPanel(user, shows, sourceShows = shows) {
         </div>
       </div>
       <div class="invoice-subtabs" role="tablist" aria-label="Show sections">
-        <button type="button" class="${activeShowSubtab === "create" ? "is-active" : ""}" data-show-subtab="create">Create Show</button>
+        <button type="button" class="${activeShowSubtab === "create" ? "is-active" : ""}" data-show-subtab="create">${getDirtyTabLabel("Create Show", "show")}</button>
         <button type="button" class="${activeShowSubtab === "list" ? "is-active" : ""}" data-show-subtab="list">All Shows</button>
       </div>
       <section id="showFormPanel" class="${activeShowSubtab === "create" ? "" : "hidden"}"></section>
@@ -3689,6 +4464,10 @@ function renderShowsPanel(user, shows, sourceShows = shows) {
 
   panel.querySelectorAll("[data-show-subtab]").forEach((button) => {
     button.addEventListener("click", () => {
+      if ((button.dataset.showSubtab || "list") !== activeShowSubtab && !confirmDiscardDirtyForm("switch show sections")) {
+        return;
+      }
+      clearDirtyForm();
       state.ui.showSubtab = button.dataset.showSubtab || "list";
       if (state.ui.showSubtab === "list") {
         resetEditingState();
@@ -3751,6 +4530,7 @@ function renderShowCard(show, user, selectedForInvoice = false) {
               <input type="checkbox" data-select-show-for-invoice data-show-id="${show.id}" ${selectedForInvoice ? "checked" : ""}>
               <span>Bill</span>
             </label>
+            <button class="ghost small" data-duplicate-show="${show.id}">Duplicate</button>
             <button class="secondary small" data-edit-show="${show.id}">Edit</button>
           </div>
         ` : ""}
@@ -3950,7 +4730,7 @@ function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
               ${companyProfile.email ? `<div class="invoice-print-company-line">${escapeHtml(companyProfile.email)}</div>` : ""}
               ${companyProfile.website ? `<div class="invoice-print-company-line">${escapeHtml(companyProfile.website)}</div>` : ""}
             </div>
-            <div>
+            <div class="invoice-print-copy-block">
               <div class="invoice-print-document-title">Tax Invoice</div>
               <div class="invoice-print-copy-label">${escapeHtml(copyLabel)}</div>
             </div>
@@ -4024,7 +4804,7 @@ function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
         <div><span>SGST (9%)</span><strong>${gstBreakup.sgstAmount ? escapeHtml(formatCurrency(gstBreakup.sgstAmount)) : "-"}</strong></div>
         <div><span>CGST (9%)</span><strong>${gstBreakup.cgstAmount ? escapeHtml(formatCurrency(gstBreakup.cgstAmount)) : "-"}</strong></div>
         <div><span>IGST (18%)</span><strong>${gstBreakup.igstAmount ? escapeHtml(formatCurrency(gstBreakup.igstAmount)) : "-"}</strong></div>
-        <div><span>Total</span><strong>${escapeHtml(formatCurrency(gstBreakup.totalAmount))}</strong></div>
+        <div class="invoice-print-total-row"><span>Total</span><strong>${escapeHtml(formatCurrency(gstBreakup.totalAmount))}</strong></div>
         <div><span>Amount Paid</span><strong>${escapeHtml(formatCurrency(invoiceAmountPaid))}</strong></div>
         <div class="invoice-print-balance"><span>Balance Due</span><strong>${escapeHtml(formatCurrency(invoiceBalanceDue))}</strong></div>
         <div class="invoice-print-balance-rule"></div>
@@ -4094,15 +4874,16 @@ function getInvoicePrintStyles() {
     * { box-sizing: border-box; }
     body { margin: 0; background: #eef2f7; color: #17212b; font-family: "IBM Plex Sans", sans-serif; }
     .invoice-print-page { width: 210mm; min-height: 297mm; margin: 0 auto; background: #fff; padding: 10mm; font-size: 11px; box-shadow: none; }
-    .invoice-print-header { display: block; margin-bottom: 14px; border-bottom: 2px solid #d8e0ea; padding-bottom: 12px; }
+    .invoice-print-header { display: block; margin-bottom: 16px; border-bottom: 2px solid #d8e0ea; padding-bottom: 12px; }
     .invoice-print-brand-block { flex: 1 1 auto; }
     .invoice-print-brand-row { display: flex; align-items: flex-start; gap: 12px; }
     .invoice-print-logo { width: 70px; height: 70px; object-fit: contain; border-radius: 12px; }
     .invoice-print-brand-copy { flex: 1 1 auto; }
     .invoice-print-brand-title { margin: 0 0 5px; font-family: "Space Grotesk", sans-serif; font-size: 24px; font-weight: 700; line-height: 1.05; }
-    .invoice-print-company-line { margin: 0 0 2px; color: #4a5b6d; font-size: 10px; line-height: 1.25; }
-    .invoice-print-document-title { margin-left: auto; font-family: "Space Grotesk", sans-serif; font-size: 24px; font-weight: 700; line-height: 1.05; text-align: right; white-space: nowrap; }
-    .invoice-print-copy-label { margin-top: 6px; color: #5c6b7a; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; text-align: right; }
+    .invoice-print-company-line { margin: 0 0 2px; color: #4a5b6d; font-size: 10px; line-height: 1.24; }
+    .invoice-print-copy-block { margin-left: auto; text-align: right; }
+    .invoice-print-document-title { font-family: "Space Grotesk", sans-serif; font-size: 24px; font-weight: 700; line-height: 1.05; text-align: right; white-space: nowrap; }
+    .invoice-print-copy-label { margin-top: 5px; color: #5c6b7a; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; text-align: right; }
     .invoice-print-subtle { color: #667789; font-size: 10px; line-height: 1.3; }
     .invoice-print-meta { min-width: 260px; display: grid; gap: 12px; padding: 18px; border: 1px solid #dfe6ef; border-radius: 18px; background: #f8fafc; }
     .invoice-print-meta div { display: flex; justify-content: space-between; gap: 18px; }
@@ -4110,14 +4891,14 @@ function getInvoicePrintStyles() {
     .invoice-print-section { margin-bottom: 12px; }
     .invoice-print-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .invoice-print-summary-grid { align-items: start; }
-    .invoice-print-card { padding: 10px; border: 1px solid #dfe6ef; border-radius: 10px; background: #fbfcfe; min-height: 100%; }
+    .invoice-print-card { padding: 11px; border: 1px solid #dfe6ef; border-radius: 10px; background: #fbfcfe; min-height: 100%; }
     .invoice-print-grid h2 { margin: 0 0 5px; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #5c6b7a; }
-    .invoice-print-grid p { margin: 0 0 5px; line-height: 1.3; }
+    .invoice-print-grid p { margin: 0 0 4px; line-height: 1.3; }
     .invoice-print-empty-space { min-height: 18px; }
     .invoice-print-billto-rule, .invoice-print-notes-rule { margin: 2px 0 9px; border-top: 2px solid #17212b; }
     .invoice-print-billto { margin-bottom: 8px; }
     .invoice-print-billto h2 { margin: 0 0 4px; color: #5c6b7a; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
-    .invoice-print-billto p { margin: 0 0 3px; line-height: 1.25; }
+    .invoice-print-billto p { margin: 0 0 3px; line-height: 1.28; }
     .invoice-print-billto-divider { margin: 6px 0 5px; border-top: 1px solid #dfe6ef; }
     .invoice-print-detail-list { display: grid; gap: 5px; }
     .invoice-print-detail-list div { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid #dfe6ef; padding-bottom: 4px; }
@@ -4125,14 +4906,17 @@ function getInvoicePrintStyles() {
     .invoice-print-table { width: 100%; border-collapse: collapse; table-layout: auto; border: 0; }
     .invoice-print-table th, .invoice-print-table td { padding: 7px 8px; border: 0; border-bottom: 1px solid #dfe6ef; text-align: left; vertical-align: top; }
     .invoice-print-table th { color: #5c6b7a; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; background: #f8fafc; }
+    .invoice-print-hsn-summary { margin-top: 6px; padding-top: 2px; }
     .invoice-print-hsn-summary h2 { margin: 0 0 6px; color: #5c6b7a; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
     .invoice-print-hsn-summary-table { width: 100%; border-collapse: collapse; table-layout: auto; }
-    .invoice-print-hsn-summary-table th, .invoice-print-hsn-summary-table td { padding: 6px 8px; border-bottom: 1px solid #dfe6ef; text-align: left; vertical-align: top; }
+    .invoice-print-hsn-summary-table th, .invoice-print-hsn-summary-table td { padding: 5px 8px; border-bottom: 1px solid #dfe6ef; text-align: left; vertical-align: top; }
     .invoice-print-hsn-summary-table th { color: #5c6b7a; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; background: #f8fafc; }
-    .invoice-print-totals { margin-left: 0; display: grid; grid-template-columns: 1fr minmax(250px, 300px); column-gap: 14px; row-gap: 0; }
+    .invoice-print-totals { margin-left: 0; display: grid; grid-template-columns: 1fr minmax(250px, 300px); column-gap: 12px; row-gap: 0; }
     .invoice-print-totals > div:not(.invoice-print-amount-words) { grid-column: 2; }
     .invoice-print-totals > div:not(.invoice-print-amount-words):not(.invoice-print-signature) { display: flex; justify-content: space-between; gap: 12px; }
     .invoice-print-totals > div:not(.invoice-print-amount-words):not(.invoice-print-signature):not(.invoice-print-balance-rule) { padding: 5px 7px; border: 0; border-bottom: 1px solid #dfe6ef; }
+    .invoice-print-total-row { font-size: 11px; font-weight: 700; }
+    .invoice-print-total-row strong { font-size: 12px; }
     .invoice-print-totals > div:not(.invoice-print-amount-words):not(.invoice-print-signature) > span { color: #667789; font-size: 10px; }
     .invoice-print-amount-words { grid-column: 1; grid-row: 1 / span 8; padding-right: 10px; }
     .invoice-print-amount-line { padding: 6px 0 7px; border-top: 1px solid #d8e0ea; border-bottom: 1px solid #d8e0ea; }
@@ -4145,12 +4929,12 @@ function getInvoicePrintStyles() {
     .invoice-print-bank-block strong { color: #17212b; font-weight: 700; }
     .invoice-print-balance { border-top: 2px solid #dfe6ef; border-bottom: 1px solid #dfe6ef; padding-top: 7px; font-size: 13px; }
     .invoice-print-balance-rule { grid-column: 2; height: 0; margin-top: 3px; border-top: 2px solid #17212b; }
-    .invoice-print-signature { grid-column: 2; display: block; margin-top: 6px; text-align: center; }
-    .invoice-print-signature-space { height: 58px; margin: 5px 0 5px; border-bottom: 1px solid #17212b; display: flex; align-items: end; justify-content: center; overflow: hidden; }
+    .invoice-print-signature { grid-column: 2; display: block; margin-top: 7px; text-align: center; }
+    .invoice-print-signature-space { height: 58px; margin: 4px 0 5px; border-bottom: 1px solid #17212b; display: flex; align-items: end; justify-content: center; overflow: hidden; }
     .invoice-print-signature-image { max-height: 52px; width: auto; max-width: 180px; object-fit: contain; }
     .invoice-print-signature strong { display: block; margin-bottom: 3px; color: #17212b; font-size: 10px; white-space: nowrap; }
     .invoice-print-signature span { color: #17212b; font-size: 10px; font-weight: 700; }
-    .invoice-print-footer { margin-top: 12px; border-top: 1px solid #dfe6ef; padding-top: 8px; color: #667789; font-size: 9px; line-height: 1.3; }
+    .invoice-print-footer { margin-top: 16px; border-top: 1px solid #dfe6ef; padding-top: 9px; color: #667789; font-size: 9px; line-height: 1.3; }
     .invoice-print-thank-you { margin-bottom: 4px; color: #17212b; font-weight: 700; }
     .invoice-print-payment-note { font-size: 9px; line-height: 1.3; }
     .invoice-print-page-number { display: none; }
@@ -4251,11 +5035,68 @@ function renderInvoicesPanel() {
   }
   const filteredInvoices = filterInvoices(invoices);
   const invoicePagination = getPaginationSlice(filteredInvoices, "invoiceRegisterPage", "invoiceRegisterPageSize");
+  const todayKey = dateKey(new Date());
+  const nextSevenKey = dateKey(addDays(new Date(), 7));
+  const registerInvoices = filteredInvoices;
+  const overdueInvoices = registerInvoices
+    .filter((invoice) => Number(invoice.balanceDue || 0) > 0 && invoice.dueDate && invoice.dueDate < todayKey && invoice.status !== "cancelled")
+    .sort((a, b) => String(a.dueDate || "").localeCompare(String(b.dueDate || "")));
+  const dueSoonInvoices = registerInvoices
+    .filter((invoice) => Number(invoice.balanceDue || 0) > 0 && invoice.dueDate && invoice.dueDate >= todayKey && invoice.dueDate <= nextSevenKey && invoice.status !== "cancelled")
+    .sort((a, b) => String(a.dueDate || "").localeCompare(String(b.dueDate || "")));
+  const partialInvoices = registerInvoices
+    .filter((invoice) => getInvoicePaymentBucket(invoice) === "partiallyPaid")
+    .sort((a, b) => Number(b.balanceDue || 0) - Number(a.balanceDue || 0));
+  const recentCollections = registerInvoices
+    .flatMap((invoice) => (Array.isArray(invoice.paymentEntries) ? invoice.paymentEntries : []).map((payment) => ({
+      ...payment,
+      invoiceNumber: invoice.invoiceNumber,
+      clientName: getInvoiceClientLabel(invoice),
+      invoiceId: invoice.id
+    })))
+    .sort((a, b) => String(b.paymentDate || "").localeCompare(String(a.paymentDate || "")))
+    .slice(0, 5);
+  const topClientOutstanding = [...registerInvoices.reduce((map, invoice) => {
+    const clientLabel = getInvoiceClientLabel(invoice);
+    const current = map.get(clientLabel) || { clientLabel, outstanding: 0, invoices: 0 };
+    current.outstanding += Number(invoice.balanceDue || 0);
+    current.invoices += 1;
+    map.set(clientLabel, current);
+    return map;
+  }, new Map()).values()]
+    .filter((item) => item.outstanding > 0)
+    .sort((a, b) => b.outstanding - a.outstanding)
+    .slice(0, 5);
   const availableShows = [...state.shows].sort((a, b) => getShowStartDate(b).localeCompare(getShowStartDate(a)));
   const editingInvoice = state.ui.editingInvoiceId
     ? invoices.find((invoice) => invoice.id === state.ui.editingInvoiceId)
     : null;
   const activeInvoiceSubtab = editingInvoice ? "create" : state.ui.invoiceSubtab || "create";
+  const paymentRows = getInvoiceReconciliationRows(invoices);
+  const paymentReconYearOptions = getPaymentReconciliationYearOptions(paymentRows);
+  if (!["all", ...paymentReconYearOptions].includes(state.ui.paymentReconYear)) {
+    state.ui.paymentReconYear = "all";
+  }
+  const paymentReconMonthKeys = getPaymentReconciliationMonthOptions(paymentRows, state.ui.paymentReconYear || "all");
+  if (state.ui.paymentReconMonth !== "all" && !paymentReconMonthKeys.includes(state.ui.paymentReconMonth)) {
+    state.ui.paymentReconMonth = "all";
+  }
+  const paymentReconClientOptions = ["all", ...new Set(paymentRows.map((row) => row.clientLabel).filter(Boolean))].sort((a, b) => {
+    if (a === "all") return -1;
+    if (b === "all") return 1;
+    return a.localeCompare(b);
+  });
+  if (!paymentReconClientOptions.includes(state.ui.paymentReconClient)) {
+    state.ui.paymentReconClient = "all";
+  }
+  const filteredPaymentRows = filterInvoiceReconciliationRows(paymentRows);
+  const paymentReconPagination = getPaginationSlice(filteredPaymentRows, "paymentReconPage", "paymentReconPageSize");
+  const paymentReconSummary = {
+    totalCollected: filteredPaymentRows.reduce((sum, row) => sum + Number(row.amount || 0), 0),
+    totalPayments: filteredPaymentRows.length,
+    clientsCovered: new Set(filteredPaymentRows.map((row) => row.clientLabel).filter(Boolean)).size,
+    invoicesCovered: new Set(filteredPaymentRows.map((row) => row.invoiceId).filter(Boolean)).size
+  };
   const draftShows = (state.ui.invoiceDraftShowIds || [])
     .map((showId) => state.shows.find((show) => show.id === showId))
     .filter(Boolean);
@@ -4303,8 +5144,9 @@ function renderInvoicesPanel() {
         </div>
       </div>
       <div class="invoice-subtabs" role="tablist" aria-label="Invoice sections">
-        <button type="button" class="${activeInvoiceSubtab === "create" ? "is-active" : ""}" data-invoice-subtab="create">Create Invoice</button>
+        <button type="button" class="${activeInvoiceSubtab === "create" ? "is-active" : ""}" data-invoice-subtab="create">${getDirtyTabLabel("Create Invoice", "invoice")}</button>
         <button type="button" class="${activeInvoiceSubtab === "register" ? "is-active" : ""}" data-invoice-subtab="register">Invoice Register</button>
+        <button type="button" class="${activeInvoiceSubtab === "payments" ? "is-active" : ""}" data-invoice-subtab="payments">Payments</button>
       </div>
       <div class="stack ${activeInvoiceSubtab === "create" ? "" : "hidden"}" data-invoice-section="create">
         <div class="form-header">
@@ -4317,9 +5159,9 @@ function renderInvoicesPanel() {
             <button type="button" class="secondary small" id="newInvoiceButton">New Invoice</button>
           </div>
         </div>
-        <form id="invoiceForm" class="stack tight" autocomplete="off">
+        <form id="invoiceForm" class="stack tight editor-form" autocomplete="off">
           <input type="hidden" name="invoiceId">
-          <div class="form-grid">
+          <div class="form-grid editor-section">
             <label class="field"><span>Invoice Number</span><input type="text" name="invoiceNumber" required autocomplete="off" data-form-type="other"></label>
             <label class="field">
               <span>Client</span>
@@ -4350,8 +5192,8 @@ function renderInvoicesPanel() {
             </label>
             <label class="field"><span>Amount Paid</span><input type="number" name="amountPaid" min="0" step="0.01" autocomplete="off"></label>
           </div>
-          <label class="field"><span>Notes</span><input type="text" name="notes" autocomplete="off"></label>
-          <div class="stack tight">
+          <label class="field editor-section"><span>Notes</span><input type="text" name="notes" autocomplete="off"></label>
+          <div class="stack tight editor-section">
             <div class="form-header">
               <div>
                 <h4>Particulars</h4>
@@ -4369,7 +5211,7 @@ function renderInvoicesPanel() {
             <div class="meta">Total: <strong id="invoiceTotalPreview">${formatCurrency(0)}</strong></div>
             <div class="meta">Balance Due: <strong id="invoiceBalancePreview">${formatCurrency(0)}</strong></div>
           </div>
-          <div class="toolbar">
+          <div class="toolbar editor-actions">
             <button type="submit">${editingInvoice ? "Update Invoice" : "Save Invoice"}</button>
             <button type="button" class="ghost" id="cancelInvoiceEdit">${editingInvoice ? "Cancel Edit" : "Clear"}</button>
             ${editingInvoice ? '<button type="button" class="danger" id="deleteInvoiceButton">Delete Invoice</button>' : ""}
@@ -4385,12 +5227,87 @@ function renderInvoicesPanel() {
           </div>
           <span class="pill">${filteredInvoices.length} ${filteredInvoices.length === 1 ? "result" : "results"}</span>
         </div>
+        <div class="client-detail-grid invoice-collections-grid">
+          <section class="assignment-card">
+            <strong>Overdue</strong>
+            <div class="stack tight client-detail-list">
+              ${overdueInvoices.length ? overdueInvoices.slice(0, 5).map((invoice) => `
+                <div class="client-detail-row">
+                  <div>
+                    <strong>${escapeHtml(invoice.invoiceNumber)}</strong>
+                    <div class="meta">${escapeHtml(getInvoiceClientLabel(invoice))} · Due ${escapeHtml(formatInvoiceDate(invoice.dueDate))}</div>
+                  </div>
+                  <strong>${formatCurrency(invoice.balanceDue || 0)}</strong>
+                </div>
+              `).join("") : '<p class="meta">No overdue invoices in this view.</p>'}
+            </div>
+          </section>
+          <section class="assignment-card">
+            <strong>Due In 7 Days</strong>
+            <div class="stack tight client-detail-list">
+              ${dueSoonInvoices.length ? dueSoonInvoices.slice(0, 5).map((invoice) => `
+                <div class="client-detail-row">
+                  <div>
+                    <strong>${escapeHtml(invoice.invoiceNumber)}</strong>
+                    <div class="meta">${escapeHtml(getInvoiceClientLabel(invoice))} · Due ${escapeHtml(formatInvoiceDate(invoice.dueDate))}</div>
+                  </div>
+                  <strong>${formatCurrency(invoice.balanceDue || 0)}</strong>
+                </div>
+              `).join("") : '<p class="meta">Nothing due in the next 7 days.</p>'}
+            </div>
+          </section>
+          <section class="assignment-card">
+            <strong>Partially Paid</strong>
+            <div class="stack tight client-detail-list">
+              ${partialInvoices.length ? partialInvoices.slice(0, 5).map((invoice) => `
+                <div class="client-detail-row">
+                  <div>
+                    <strong>${escapeHtml(invoice.invoiceNumber)}</strong>
+                    <div class="meta">${escapeHtml(getInvoiceClientLabel(invoice))} · Paid ${formatCurrency(invoice.amountPaid || 0)}</div>
+                  </div>
+                  <strong>${formatCurrency(invoice.balanceDue || 0)}</strong>
+                </div>
+              `).join("") : '<p class="meta">No partially paid invoices in this view.</p>'}
+            </div>
+          </section>
+          <section class="assignment-card">
+            <strong>Recent Collections</strong>
+            <div class="stack tight client-detail-list">
+              ${recentCollections.length ? recentCollections.map((payment) => `
+                <div class="client-detail-row">
+                  <div>
+                    <strong>${escapeHtml(formatInvoiceDate(payment.paymentDate))}</strong>
+                    <div class="meta">${escapeHtml(payment.clientName)} · ${escapeHtml(payment.invoiceNumber)}</div>
+                  </div>
+                  <strong>${formatCurrency(payment.amount || 0)}</strong>
+                </div>
+              `).join("") : '<p class="meta">No recent collections in this view.</p>'}
+            </div>
+          </section>
+          <section class="assignment-card">
+            <strong>Top Outstanding Clients</strong>
+            <div class="stack tight client-detail-list">
+              ${topClientOutstanding.length ? topClientOutstanding.map((entry) => `
+                <div class="client-detail-row">
+                  <div>
+                    <strong>${escapeHtml(entry.clientLabel)}</strong>
+                    <div class="meta">${entry.invoices} ${entry.invoices === 1 ? "invoice" : "invoices"} in this view</div>
+                  </div>
+                  <strong>${formatCurrency(entry.outstanding)}</strong>
+                </div>
+              `).join("") : '<p class="meta">No outstanding client balances in this view.</p>'}
+            </div>
+          </section>
+        </div>
         <div class="shows-toolbar invoice-toolbar">
           <div class="shows-toolbar-top">
             <label class="sort-control invoice-search-control">
               <span>Search</span>
               <input type="search" id="invoiceSearchInput" placeholder="Invoice, client, show, line item" value="${escapeHtml(state.ui.invoiceSearchQuery || "")}" autocomplete="off">
             </label>
+            <button type="button" class="secondary search-submit-button" id="applyInvoiceSearchButton">Search</button>
+          </div>
+          <div class="shows-toolbar-top">
             <label class="sort-control">
               <span>Status</span>
               <select id="invoiceStatusFilter">
@@ -4446,7 +5363,6 @@ function renderInvoicesPanel() {
                 <option value="lightDesigner" ${state.ui.invoiceSortMode === "lightDesigner" ? "selected" : ""}>Light Designer</option>
               </select>
             </label>
-            <button type="button" class="secondary" id="exportInvoicesButton" ${filteredInvoices.length ? "" : "disabled"}>Export Excel</button>
           </div>
         </div>
         <div class="approval-list">
@@ -4462,6 +5378,7 @@ function renderInvoicesPanel() {
                 <div class="toolbar">
                   <span class="pill invoice-status-pill invoice-status-${getInvoiceStatusTone(invoice)}">${getInvoiceStatusLabel(invoice)}</span>
                   <button type="button" class="secondary small" data-mark-payment="${invoice.id}">Mark Payment</button>
+                  <button type="button" class="ghost small" data-duplicate-invoice="${invoice.id}">Duplicate</button>
                   <button type="button" class="ghost small" data-preview-invoice="${invoice.id}">Preview</button>
                   <button type="button" class="secondary small" data-edit-invoice="${invoice.id}">Edit</button>
                 </div>
@@ -4489,6 +5406,104 @@ function renderInvoicesPanel() {
           `).join("") : invoices.length ? "<p>No invoices match the current filters.</p>" : "<p>No invoices yet. Create the first invoice above.</p>"}
         </div>
         ${renderPaginationControls("invoice-register", invoicePagination, "invoices")}
+      </div>
+      <div class="stack ${activeInvoiceSubtab === "payments" ? "" : "hidden"}" data-invoice-section="payments">
+        <div class="form-header">
+          <div>
+            <h4>Payment Reconciliation</h4>
+            <p class="muted-note">Track all received payments across invoices in one place.</p>
+          </div>
+          <span class="pill">${filteredPaymentRows.length} ${filteredPaymentRows.length === 1 ? "payment" : "payments"}</span>
+        </div>
+        <div class="summary-grid">
+          <div class="summary-card">
+            <span class="summary-kicker">Collected</span>
+            <strong>${formatCurrency(paymentReconSummary.totalCollected)}</strong>
+            <span class="summary-foot">Total receipts in this view.</span>
+          </div>
+          <div class="summary-card">
+            <span class="summary-kicker">Payments</span>
+            <strong>${paymentReconSummary.totalPayments}</strong>
+            <span class="summary-foot">Recorded payment entries.</span>
+          </div>
+          <div class="summary-card">
+            <span class="summary-kicker">Clients</span>
+            <strong>${paymentReconSummary.clientsCovered}</strong>
+            <span class="summary-foot">Clients covered by these receipts.</span>
+          </div>
+          <div class="summary-card">
+            <span class="summary-kicker">Invoices</span>
+            <strong>${paymentReconSummary.invoicesCovered}</strong>
+            <span class="summary-foot">Invoices touched by these receipts.</span>
+          </div>
+        </div>
+        <div class="shows-toolbar invoice-toolbar">
+          <div class="shows-toolbar-top">
+            <label class="sort-control invoice-search-control">
+              <span>Search</span>
+              <input type="search" id="paymentReconSearchInput" placeholder="Invoice, client, note, show" value="${escapeHtml(state.ui.paymentReconSearchQuery || "")}" autocomplete="off">
+            </label>
+            <button type="button" class="secondary search-submit-button" id="applyPaymentReconSearchButton">Search</button>
+          </div>
+          <div class="shows-toolbar-top">
+            <label class="sort-control">
+              <span>Client</span>
+              <select id="paymentReconClientFilter">
+                ${paymentReconClientOptions.map((option) => `<option value="${option}" ${state.ui.paymentReconClient === option ? "selected" : ""}>${option === "all" ? "All Clients" : escapeHtml(option)}</option>`).join("")}
+              </select>
+            </label>
+            <label class="sort-control">
+              <span>Year</span>
+              <select id="paymentReconYearFilter">
+                <option value="all" ${state.ui.paymentReconYear === "all" ? "selected" : ""}>All Years</option>
+                ${paymentReconYearOptions.map((year) => `<option value="${year}" ${state.ui.paymentReconYear === year ? "selected" : ""}>${year}</option>`).join("")}
+              </select>
+            </label>
+            <label class="sort-control">
+              <span>Month</span>
+              <select id="paymentReconMonthFilter">
+                <option value="all" ${state.ui.paymentReconMonth === "all" ? "selected" : ""}>All Months</option>
+                ${paymentReconMonthKeys.map((monthKey) => `<option value="${monthKey}" ${state.ui.paymentReconMonth === monthKey ? "selected" : ""}>${monthGroupLabel(`${monthKey}-01`).split(" ")[0]}</option>`).join("")}
+              </select>
+            </label>
+          </div>
+        </div>
+        <div class="client-ledger-table-wrap">
+          <table class="client-ledger-table">
+            <thead>
+              <tr>
+                <th>Payment Date</th>
+                <th>Invoice</th>
+                <th>Client</th>
+                <th>Amount</th>
+                <th>Note</th>
+                <th>Status</th>
+                <th>Balance</th>
+                <th>Light Designer</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${paymentReconPagination.items.length ? paymentReconPagination.items.map((row) => `
+                <tr>
+                  <td>${escapeHtml(formatInvoiceDate(row.paymentDate))}</td>
+                  <td>
+                    <strong>${escapeHtml(row.invoiceNumber)}</strong>
+                    ${row.showNames ? `<div class="meta">${escapeHtml(row.showNames)}</div>` : ""}
+                  </td>
+                  <td>${escapeHtml(row.clientLabel)}</td>
+                  <td><strong>${formatCurrency(row.amount)}</strong></td>
+                  <td>${escapeHtml(row.note || "-")}</td>
+                  <td><span class="pill invoice-status-pill invoice-status-${getInvoiceStatusTone({ status: row.invoiceRawStatus, amountPaid: row.amountPaid, balanceDue: row.balanceDue })}">${escapeHtml(row.invoiceStatus)}</span></td>
+                  <td>${formatCurrency(row.balanceDue)}</td>
+                  <td>${escapeHtml(row.lightDesigner || "-")}</td>
+                  <td><button type="button" class="secondary small" data-open-payment-invoice="${row.invoiceId}">Open Invoice</button></td>
+                </tr>
+              `).join("") : `<tr><td colspan="9">No payments match the current filters.</td></tr>`}
+            </tbody>
+          </table>
+        </div>
+        ${renderPaginationControls("invoice-payments", paymentReconPagination, "payments")}
       </div>
     </div>
   `;
@@ -4595,6 +5610,7 @@ function renderInvoicesPanel() {
         picker.querySelectorAll("[data-show-picker-checkbox]").forEach((checkbox) => {
           checkbox.checked = false;
         });
+        setDirtyForm("invoice");
         syncInvoiceShowPicker(picker);
         const row = picker.closest("[data-invoice-line-item]");
         row?.querySelector('input[name="lineDescription"]')?.focus();
@@ -4635,6 +5651,7 @@ function renderInvoicesPanel() {
             duplicateWarning.classList.toggle("hidden", !duplicates.length);
             duplicateWarning.querySelector("strong").textContent = duplicates.length ? `Already on ${[...new Set(duplicates.map((invoice) => invoice.invoiceNumber))].join(", ")}` : "";
           }
+          setDirtyForm("invoice");
           updateTotalsPreview();
         });
       });
@@ -4742,6 +5759,7 @@ function renderInvoicesPanel() {
       const confirmed = window.confirm("Remove this invoice line item?");
       if (!confirmed) return;
       row.remove();
+      setDirtyForm("invoice");
       updateTotalsPreview();
     });
     updateTotalsPreview();
@@ -4755,7 +5773,7 @@ function renderInvoicesPanel() {
       const proceed = window.confirm(
         `"${show.showName}" is already linked to invoice ${duplicateInvoice.invoiceNumber}. Do you still want to add it here?`
       );
-      if (!proceed) return;
+    if (!proceed) return;
     }
     addLineItemRow({
       showId: show.id,
@@ -4770,10 +5788,13 @@ function renderInvoicesPanel() {
       form.elements.namedItem("clientId").value = show.clientId;
       syncCustomSelect(form.elements.namedItem("clientId"));
     }
+    setDirtyForm("invoice");
     updateTotalsPreview();
   }
 
   document.getElementById("newInvoiceButton")?.addEventListener("click", () => {
+    if (!confirmDiscardDirtyForm("start a new invoice")) return;
+    clearDirtyForm("invoice");
     resetInvoiceEditingState();
     state.ui.invoiceSubtab = "create";
     saveState(state);
@@ -4781,24 +5802,27 @@ function renderInvoicesPanel() {
   });
 
   document.getElementById("cancelInvoiceEdit")?.addEventListener("click", () => {
+    if (!confirmDiscardDirtyForm("leave this invoice form")) return;
+    clearDirtyForm("invoice");
     resetInvoiceEditingState();
     state.ui.invoiceSubtab = "create";
     saveState(state);
     renderDashboard();
   });
 
-  document.getElementById("invoiceSearchInput")?.addEventListener("input", (event) => {
-    state.ui.invoiceSearchQuery = event.currentTarget.value;
+  const invoiceSearchInput = document.getElementById("invoiceSearchInput");
+  const applyInvoiceSearch = () => {
+    state.ui.invoiceSearchQuery = invoiceSearchInput?.value || "";
     state.ui.invoiceRegisterPage = 1;
     saveState(state);
-    const cursorPosition = event.currentTarget.selectionStart;
     renderInvoicesPanel();
-    const searchInput = document.getElementById("invoiceSearchInput");
-    searchInput?.focus();
-    if (searchInput && cursorPosition !== null) {
-      searchInput.setSelectionRange(cursorPosition, cursorPosition);
-    }
+  };
+  invoiceSearchInput?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    applyInvoiceSearch();
   });
+  document.getElementById("applyInvoiceSearchButton")?.addEventListener("click", applyInvoiceSearch);
 
   document.getElementById("invoiceStatusFilter")?.addEventListener("change", (event) => {
     state.ui.invoiceStatusFilter = event.currentTarget.value;
@@ -4850,30 +5874,51 @@ function renderInvoicesPanel() {
     renderDashboard();
   });
 
-  document.getElementById("exportInvoicesButton")?.addEventListener("click", () => {
-    const exportKey = state.ui.invoiceExportMonth !== "all"
-      ? state.ui.invoiceExportMonth
-      : state.ui.invoiceExportYear !== "all"
-        ? state.ui.invoiceExportYear
-        : "all";
-    const exportLabel = [
-      exportKey,
-      state.ui.invoiceLightDesignerFilter !== "all" ? safeFileNamePart(state.ui.invoiceLightDesignerFilter) : ""
-    ].filter(Boolean).join("-");
-    const exportInvoices = filterInvoices(sortInvoices(state.invoices || []));
-    if (!exportInvoices.length) {
-      showToast("No invoices to export for the selected filters.");
-      return;
-    }
-    exportInvoicesExcel(exportLabel, exportInvoices, getInvoiceExportColumns(), {
-      splitByMonth: state.ui.invoiceExportMonth === "all"
-    });
+  const paymentReconSearchInput = document.getElementById("paymentReconSearchInput");
+  const applyPaymentReconSearch = () => {
+    state.ui.paymentReconSearchQuery = paymentReconSearchInput?.value || "";
+    state.ui.paymentReconPage = 1;
+    saveState(state);
+    renderInvoicesPanel();
+  };
+  paymentReconSearchInput?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    applyPaymentReconSearch();
+  });
+  document.getElementById("applyPaymentReconSearchButton")?.addEventListener("click", applyPaymentReconSearch);
+
+  document.getElementById("paymentReconClientFilter")?.addEventListener("change", (event) => {
+    state.ui.paymentReconClient = event.currentTarget.value;
+    state.ui.paymentReconPage = 1;
+    saveState(state);
+    renderDashboard();
+  });
+
+  document.getElementById("paymentReconYearFilter")?.addEventListener("change", (event) => {
+    state.ui.paymentReconYear = event.currentTarget.value;
+    state.ui.paymentReconMonth = "all";
+    state.ui.paymentReconPage = 1;
+    saveState(state);
+    renderDashboard();
+  });
+
+  document.getElementById("paymentReconMonthFilter")?.addEventListener("change", (event) => {
+    state.ui.paymentReconMonth = event.currentTarget.value;
+    state.ui.paymentReconPage = 1;
+    saveState(state);
+    renderDashboard();
   });
 
   wirePaginationControls(panel, "invoice-register", "invoiceRegisterPage", "invoiceRegisterPageSize", () => renderInvoicesPanel());
+  wirePaginationControls(panel, "invoice-payments", "paymentReconPage", "paymentReconPageSize", () => renderInvoicesPanel());
 
   panel.querySelectorAll("[data-invoice-subtab]").forEach((button) => {
     button.addEventListener("click", () => {
+      if ((button.dataset.invoiceSubtab || "create") !== activeInvoiceSubtab && !confirmDiscardDirtyForm("switch invoice sections")) {
+        return;
+      }
+      clearDirtyForm();
       state.ui.invoiceSubtab = button.dataset.invoiceSubtab || "create";
       if (state.ui.invoiceSubtab === "create") {
         state.ui.markPaymentInvoiceId = null;
@@ -4883,12 +5928,17 @@ function renderInvoicesPanel() {
     });
   });
 
-  document.getElementById("addInvoiceLineItem")?.addEventListener("click", () => addLineItemRow());
+  document.getElementById("addInvoiceLineItem")?.addEventListener("click", () => {
+    addLineItemRow();
+    setDirtyForm("invoice");
+  });
   form.elements.namedItem("amountPaid").addEventListener("input", updateTotalsPreview);
+  wireDirtyFormTracking(form, "invoice");
 
   const draftClientNames = [...new Set(draftShows.map((show) => String(show.client || "").trim()).filter(Boolean))];
   const draftClientIds = [...new Set(draftShows.map((show) => String(show.clientId || getClientByName(show.client)?.id || "").trim()).filter(Boolean))];
-  const draftInvoice = !editingInvoice && draftShows.length ? {
+  const templateInvoice = !editingInvoice && state.ui.invoiceDraftTemplate ? state.ui.invoiceDraftTemplate : null;
+  const draftInvoice = !editingInvoice && !templateInvoice && draftShows.length ? {
     invoiceNumber: makeDefaultInvoiceNumber(),
     clientId: draftClientIds.length === 1 ? draftClientIds[0] : "",
     clientName: draftClientNames.length === 1 ? draftClientNames[0] : "",
@@ -4909,7 +5959,7 @@ function renderInvoicesPanel() {
       amount: Number(show.amountShow || 0)
     }))
   } : null;
-  const initialInvoice = editingInvoice || draftInvoice || {
+  const initialInvoice = editingInvoice || templateInvoice || draftInvoice || {
     invoiceNumber: makeDefaultInvoiceNumber(),
     clientId: "",
     clientName: "",
@@ -5019,6 +6069,7 @@ function renderInvoicesPanel() {
         })
       });
       applyServerState(payload);
+      clearDirtyForm("invoice");
       resetInvoiceEditingState();
       state.ui.invoiceSubtab = "register";
       saveState(state);
@@ -5050,11 +6101,30 @@ function renderInvoicesPanel() {
 
   panel.querySelectorAll("[data-edit-invoice]").forEach((button) => {
     button.addEventListener("click", () => {
+      if (!confirmDiscardDirtyForm("open another invoice")) return;
+      clearDirtyForm();
       state.ui.editingInvoiceId = button.dataset.editInvoice;
+      state.ui.invoiceDraftTemplate = null;
       state.ui.invoiceSubtab = "create";
       state.ui.markPaymentInvoiceId = null;
       saveState(state);
       renderDashboard();
+    });
+  });
+
+  panel.querySelectorAll("[data-duplicate-invoice]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!confirmDiscardDirtyForm("duplicate this invoice")) return;
+      const invoice = invoices.find((item) => item.id === button.dataset.duplicateInvoice);
+      if (!invoice) return;
+      clearDirtyForm();
+      resetInvoiceEditingState();
+      state.ui.invoiceDraftTemplate = buildInvoiceDraftTemplateFromInvoice(invoice);
+      state.ui.invoiceSubtab = "create";
+      state.ui.markPaymentInvoiceId = null;
+      saveState(state);
+      renderDashboard();
+      showToast("Invoice duplicated into a new draft.");
     });
   });
 
@@ -5110,6 +6180,19 @@ function renderInvoicesPanel() {
   panel.querySelectorAll("[data-preview-invoice]").forEach((button) => {
     button.addEventListener("click", () => {
       openInvoicePrintPreview(button.dataset.previewInvoice);
+    });
+  });
+
+  panel.querySelectorAll("[data-open-payment-invoice]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!confirmDiscardDirtyForm("open this invoice")) return;
+      clearDirtyForm();
+      state.ui.editingInvoiceId = button.dataset.openPaymentInvoice;
+      state.ui.invoiceDraftTemplate = null;
+      state.ui.invoiceSubtab = "create";
+      state.ui.markPaymentInvoiceId = null;
+      saveState(state);
+      renderDashboard();
     });
   });
 
@@ -5282,8 +6365,10 @@ function renderGoogleEntriesPanel(user) {
         </div>
       ` : ""}
       <div class="show-groups">
-        ${googlePagination.items.length ? googlePagination.items.map((show) => `
-          <article class="show-card">
+        ${googlePagination.items.length ? googlePagination.items.map((show) => {
+          const { color } = getShowDisplayMeta(show, user);
+          return `
+          <article class="show-card google-linked-show-card" style="--google-entry-color:${escapeHtml(color || "#264653")}">
             <header>
               <div>
                 <h4>${show.showName}</h4>
@@ -5314,7 +6399,8 @@ function renderGoogleEntriesPanel(user) {
               </div>
             </div>
           </article>
-        `).join("") : `<p>${selectedGoogleEntriesView.empty}</p>`}
+        `;
+        }).join("") : `<p>${selectedGoogleEntriesView.empty}</p>`}
         </div>
         ${renderPaginationControls("google-entries", googlePagination, "entries")}
     </div>
@@ -5419,19 +6505,605 @@ function renderGoogleEntriesPanel(user) {
   });
 }
 
+function renderPayoutsPanel() {
+  const panel = document.getElementById("payoutsPanel");
+  const payoutRows = getCrewPayoutRows();
+  const payoutYearOptions = getCrewPayoutYearOptions(payoutRows);
+  if (!["all", ...payoutYearOptions].includes(state.ui.payoutYear)) {
+    state.ui.payoutYear = "all";
+  }
+  const payoutMonthKeys = getCrewPayoutMonthOptions(payoutRows, state.ui.payoutYear || "all");
+  if (state.ui.payoutMonth !== "all" && !payoutMonthKeys.includes(state.ui.payoutMonth)) {
+    state.ui.payoutMonth = "all";
+  }
+  const payoutCrewOptions = ["all", ...new Set(payoutRows.map((row) => row.crewName).filter(Boolean))].sort((a, b) => {
+    if (a === "all") return -1;
+    if (b === "all") return 1;
+    return a.localeCompare(b);
+  });
+  if (!payoutCrewOptions.includes(state.ui.payoutCrew)) {
+    state.ui.payoutCrew = "all";
+  }
+  const payoutClientOptions = ["all", ...new Set(payoutRows.map((row) => row.clientLabel).filter(Boolean))].sort((a, b) => {
+    if (a === "all") return -1;
+    if (b === "all") return 1;
+    return a.localeCompare(b);
+  });
+  if (!payoutClientOptions.includes(state.ui.payoutClient)) {
+    state.ui.payoutClient = "all";
+  }
+
+  const filteredRows = filterCrewPayoutRows(payoutRows);
+  const payoutPagination = getPaginationSlice(filteredRows, "payoutPage", "payoutPageSize");
+  const summary = {
+    totalPayout: filteredRows.reduce((sum, row) => sum + Number(row.operatorAmount || 0), 0),
+    assignments: filteredRows.length,
+    shows: new Set(filteredRows.map((row) => row.showId).filter(Boolean)).size,
+    crew: new Set(filteredRows.map((row) => row.crewName).filter(Boolean)).size
+  };
+
+  panel.innerHTML = `
+    <div class="stack">
+      <div class="form-header">
+        <div>
+          <h3>Crew Payouts</h3>
+          <p class="muted-note">Track operator payouts from show assignments and export month-wise payout sheets.</p>
+        </div>
+        <div class="toolbar">
+          <span class="pill">${summary.assignments} ${summary.assignments === 1 ? "assignment" : "assignments"}</span>
+        </div>
+      </div>
+      <div class="summary-grid">
+        <div class="summary-card">
+          <span class="summary-kicker">Total Payout</span>
+          <strong>${formatCurrency(summary.totalPayout)}</strong>
+          <span class="summary-foot">Operator payouts in this view.</span>
+        </div>
+        <div class="summary-card">
+          <span class="summary-kicker">Assignments</span>
+          <strong>${summary.assignments}</strong>
+          <span class="summary-foot">Payable crew rows.</span>
+        </div>
+        <div class="summary-card">
+          <span class="summary-kicker">Shows</span>
+          <strong>${summary.shows}</strong>
+          <span class="summary-foot">Shows covered by these payouts.</span>
+        </div>
+        <div class="summary-card">
+          <span class="summary-kicker">Crew</span>
+          <strong>${summary.crew}</strong>
+          <span class="summary-foot">Crew members in this view.</span>
+        </div>
+      </div>
+      <div class="shows-toolbar">
+        <div class="shows-toolbar-top">
+          <label class="sort-control invoice-search-control">
+            <span>Search</span>
+            <input type="search" id="payoutSearchInput" placeholder="Show, client, crew, location" value="${escapeHtml(state.ui.payoutSearchQuery || "")}" autocomplete="off">
+          </label>
+          <label class="sort-control">
+            <span>Crew</span>
+            <select id="payoutCrewFilter">
+              ${payoutCrewOptions.map((option) => `<option value="${option}" ${state.ui.payoutCrew === option ? "selected" : ""}>${option === "all" ? "All Crew" : escapeHtml(option)}</option>`).join("")}
+            </select>
+          </label>
+          <label class="sort-control">
+            <span>Client</span>
+            <select id="payoutClientFilter">
+              ${payoutClientOptions.map((option) => `<option value="${option}" ${state.ui.payoutClient === option ? "selected" : ""}>${option === "all" ? "All Clients" : escapeHtml(option)}</option>`).join("")}
+            </select>
+          </label>
+        </div>
+        <div class="shows-toolbar-top invoice-toolbar-secondary">
+          <label class="sort-control">
+            <span>Year</span>
+            <select id="payoutYearFilter">
+              <option value="all" ${state.ui.payoutYear === "all" ? "selected" : ""}>All Years</option>
+              ${payoutYearOptions.map((year) => `<option value="${year}" ${state.ui.payoutYear === year ? "selected" : ""}>${year}</option>`).join("")}
+            </select>
+          </label>
+          <label class="sort-control">
+            <span>Month</span>
+            <select id="payoutMonthFilter">
+              <option value="all" ${state.ui.payoutMonth === "all" ? "selected" : ""}>All Months</option>
+              ${payoutMonthKeys.map((monthKey) => `<option value="${monthKey}" ${state.ui.payoutMonth === monthKey ? "selected" : ""}>${monthGroupLabel(`${monthKey}-01`).split(" ")[0]}</option>`).join("")}
+            </select>
+          </label>
+          <button type="button" class="secondary" id="exportPayoutsButton" ${filteredRows.length ? "" : "disabled"}>Export Excel</button>
+        </div>
+      </div>
+      <div class="client-ledger-table-wrap">
+        <table class="client-ledger-table">
+          <thead>
+            <tr>
+              <th>Show Date</th>
+              <th>Show</th>
+              <th>Client</th>
+              <th>Crew</th>
+              <th>Light Designer</th>
+              <th>Location</th>
+              <th>Amount</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${payoutPagination.items.length ? payoutPagination.items.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.showDateLabel)}</td>
+                <td><strong>${escapeHtml(row.showName)}</strong>${row.notes ? `<div class="meta">${escapeHtml(row.notes)}</div>` : ""}</td>
+                <td>${escapeHtml(row.clientLabel || "-")}</td>
+                <td>${escapeHtml(row.crewName)}</td>
+                <td>${escapeHtml(row.lightDesigner || "-")}</td>
+                <td>${escapeHtml(row.location || "-")}</td>
+                <td><strong>${formatCurrency(row.operatorAmount)}</strong></td>
+                <td><span class="pill ${row.status === "tentative" ? "pill-warning" : ""}">${escapeHtml(row.statusLabel)}</span></td>
+              </tr>
+            `).join("") : `<tr><td colspan="8">No payout rows match the current filters.</td></tr>`}
+          </tbody>
+        </table>
+      </div>
+      ${renderPaginationControls("payouts", payoutPagination, "payout rows")}
+    </div>
+  `;
+
+  document.getElementById("payoutSearchInput")?.addEventListener("input", (event) => {
+    state.ui.payoutSearchQuery = event.currentTarget.value;
+    state.ui.payoutPage = 1;
+    saveState(state);
+    const cursorPosition = event.currentTarget.selectionStart;
+    renderPayoutsPanel();
+    const searchInput = document.getElementById("payoutSearchInput");
+    searchInput?.focus();
+    if (searchInput && cursorPosition !== null) {
+      searchInput.setSelectionRange(cursorPosition, cursorPosition);
+    }
+  });
+
+  document.getElementById("payoutCrewFilter")?.addEventListener("change", (event) => {
+    state.ui.payoutCrew = event.currentTarget.value;
+    state.ui.payoutPage = 1;
+    saveState(state);
+    renderDashboard();
+  });
+
+  document.getElementById("payoutClientFilter")?.addEventListener("change", (event) => {
+    state.ui.payoutClient = event.currentTarget.value;
+    state.ui.payoutPage = 1;
+    saveState(state);
+    renderDashboard();
+  });
+
+  document.getElementById("payoutYearFilter")?.addEventListener("change", (event) => {
+    state.ui.payoutYear = event.currentTarget.value;
+    state.ui.payoutMonth = "all";
+    state.ui.payoutPage = 1;
+    saveState(state);
+    renderDashboard();
+  });
+
+  document.getElementById("payoutMonthFilter")?.addEventListener("change", (event) => {
+    state.ui.payoutMonth = event.currentTarget.value;
+    state.ui.payoutPage = 1;
+    saveState(state);
+    renderDashboard();
+  });
+
+  document.getElementById("exportPayoutsButton")?.addEventListener("click", () => {
+    if (!filteredRows.length) {
+      showToast("No payout rows to export.");
+      return;
+    }
+    const exportKey = [
+      state.ui.payoutYear !== "all" ? state.ui.payoutYear : "all",
+      state.ui.payoutMonth !== "all" ? state.ui.payoutMonth : "",
+      state.ui.payoutCrew !== "all" ? safeFileNamePart(state.ui.payoutCrew) : "",
+      state.ui.payoutClient !== "all" ? safeFileNamePart(state.ui.payoutClient) : ""
+    ].filter(Boolean).join("-");
+    exportCrewPayoutsExcel(filteredRows, exportKey);
+    showToast("Crew payout export ready.");
+  });
+
+  wirePaginationControls(panel, "payouts", "payoutPage", "payoutPageSize", () => renderPayoutsPanel());
+}
+
+function renderDocumentCenterPanel() {
+  const panel = document.getElementById("documentsPanel");
+  const user = getCurrentUser();
+  const documentShowsBase = visibleShowsForUser(user);
+  const documentShowYearOptions = [...new Set(documentShowsBase.map((show) => String(getShowStartDate(show) || "").slice(0, 4)).filter(Boolean))].sort((a, b) => b.localeCompare(a));
+  if (!["all", ...documentShowYearOptions].includes(state.ui.documentShowsYear)) {
+    state.ui.documentShowsYear = "all";
+  }
+  const documentShowMonthKeys = [...new Set(documentShowsBase
+    .filter((show) => state.ui.documentShowsYear === "all" || String(getShowStartDate(show) || "").slice(0, 4) === state.ui.documentShowsYear)
+    .map((show) => String(getShowStartDate(show) || "").slice(0, 7))
+    .filter(Boolean))].sort((a, b) => b.localeCompare(a));
+  if (state.ui.documentShowsMonth !== "all" && !documentShowMonthKeys.includes(state.ui.documentShowsMonth)) {
+    state.ui.documentShowsMonth = "all";
+  }
+  const filteredShows = sortShows(documentShowsBase.filter((show) => {
+    const showYear = String(getShowStartDate(show) || "").slice(0, 4);
+    const showMonth = String(getShowStartDate(show) || "").slice(0, 7);
+    const matchesYear = state.ui.documentShowsYear === "all" || showYear === state.ui.documentShowsYear;
+    const matchesMonth = state.ui.documentShowsMonth === "all" || showMonth === state.ui.documentShowsMonth;
+    return matchesYear && matchesMonth;
+  }), "date");
+
+  const allInvoicesSorted = sortInvoices(state.invoices || []);
+  const documentInvoiceYearOptions = getInvoiceYearOptions(allInvoicesSorted);
+  if (!["all", ...documentInvoiceYearOptions].includes(state.ui.documentInvoicesYear)) {
+    state.ui.documentInvoicesYear = "all";
+  }
+  const documentInvoiceMonthKeys = getInvoiceMonthOptions(allInvoicesSorted, state.ui.documentInvoicesYear || "all");
+  if (state.ui.documentInvoicesMonth !== "all" && !documentInvoiceMonthKeys.includes(state.ui.documentInvoicesMonth)) {
+    state.ui.documentInvoicesMonth = "all";
+  }
+  const documentInvoiceClientOptions = ["all", ...getInvoiceClientOptions(allInvoicesSorted)];
+  if (!documentInvoiceClientOptions.includes(state.ui.documentInvoicesClient)) {
+    state.ui.documentInvoicesClient = "all";
+  }
+  const filteredInvoices = allInvoicesSorted.filter((invoice) => {
+    const year = String(invoice.issueDate || "").slice(0, 4);
+    const month = String(invoice.issueDate || "").slice(0, 7);
+    const client = String(invoice.clientName || "").trim();
+    const matchesYear = state.ui.documentInvoicesYear === "all" || year === state.ui.documentInvoicesYear;
+    const matchesMonth = state.ui.documentInvoicesMonth === "all" || month === state.ui.documentInvoicesMonth;
+    const matchesClient = state.ui.documentInvoicesClient === "all" || client === state.ui.documentInvoicesClient;
+    return matchesYear && matchesMonth && matchesClient;
+  });
+
+  const allClients = getSortedClients();
+  const filteredClients = allClients.filter((client) => {
+    if (state.ui.documentClientsGstFilter === "missing") {
+      return !String(client.gstin || "").trim();
+    }
+    if (state.ui.documentClientsGstFilter === "available") {
+      return Boolean(String(client.gstin || "").trim());
+    }
+    return true;
+  });
+
+  const documentClientFinancialYearOptions = getClientInvoiceYearOptions();
+  if (!["all", ...documentClientFinancialYearOptions].includes(state.ui.documentClientFinancialYear)) {
+    state.ui.documentClientFinancialYear = "all";
+  }
+  const documentClientFinancialMonthKeys = getClientInvoiceMonthOptions(state.ui.documentClientFinancialYear || "all");
+  if (state.ui.documentClientFinancialMonth !== "all" && !documentClientFinancialMonthKeys.includes(state.ui.documentClientFinancialMonth)) {
+    state.ui.documentClientFinancialMonth = "all";
+  }
+  const documentClientFinancialClientOptions = [{ value: "all", label: "All Clients" }, ...allClients.map((client) => ({ value: client.id, label: getClientDisplayName(client) }))];
+  if (!documentClientFinancialClientOptions.some((option) => option.value === state.ui.documentClientFinancialClient)) {
+    state.ui.documentClientFinancialClient = "all";
+  }
+  const documentLedgerClientOptions = [{ value: "all", label: "Select client" }, ...allClients.map((client) => ({ value: client.id, label: getClientDisplayName(client) }))];
+  if (!documentLedgerClientOptions.some((option) => option.value === state.ui.documentLedgerClient)) {
+    state.ui.documentLedgerClient = "all";
+  }
+  const selectedClientIds = state.ui.documentClientFinancialClient !== "all"
+    ? [state.ui.documentClientFinancialClient]
+    : allClients.map((client) => client.id);
+  const clientFinancialRows = getClientExportRows(selectedClientIds, state.ui.documentClientFinancialYear || "all", state.ui.documentClientFinancialMonth || "all");
+  const selectedLedgerClient = state.ui.documentLedgerClient !== "all" ? getClientById(state.ui.documentLedgerClient) : null;
+  const selectedLedgerEntries = selectedLedgerClient ? getClientLedgerEntries(selectedLedgerClient.id) : [];
+
+  const allPayoutRows = getCrewPayoutRows();
+  const documentPayoutYearOptions = getCrewPayoutYearOptions(allPayoutRows);
+  if (!["all", ...documentPayoutYearOptions].includes(state.ui.documentPayoutYear)) {
+    state.ui.documentPayoutYear = "all";
+  }
+  const documentPayoutMonthKeys = getCrewPayoutMonthOptions(allPayoutRows, state.ui.documentPayoutYear || "all");
+  if (state.ui.documentPayoutMonth !== "all" && !documentPayoutMonthKeys.includes(state.ui.documentPayoutMonth)) {
+    state.ui.documentPayoutMonth = "all";
+  }
+  const documentPayoutCrewOptions = ["all", ...new Set(allPayoutRows.map((row) => row.crewName).filter(Boolean))].sort((a, b) => {
+    if (a === "all") return -1;
+    if (b === "all") return 1;
+    return a.localeCompare(b);
+  });
+  if (!documentPayoutCrewOptions.includes(state.ui.documentPayoutCrew)) {
+    state.ui.documentPayoutCrew = "all";
+  }
+  const documentPayoutClientOptions = ["all", ...new Set(allPayoutRows.map((row) => row.clientLabel).filter(Boolean))].sort((a, b) => {
+    if (a === "all") return -1;
+    if (b === "all") return 1;
+    return a.localeCompare(b);
+  });
+  if (!documentPayoutClientOptions.includes(state.ui.documentPayoutClient)) {
+    state.ui.documentPayoutClient = "all";
+  }
+  const filteredPayoutRows = allPayoutRows.filter((row) => {
+    const year = String(row.showDate || "").slice(0, 4);
+    const month = String(row.showDate || "").slice(0, 7);
+    const matchesYear = state.ui.documentPayoutYear === "all" || year === state.ui.documentPayoutYear;
+    const matchesMonth = state.ui.documentPayoutMonth === "all" || month === state.ui.documentPayoutMonth;
+    const matchesCrew = state.ui.documentPayoutCrew === "all" || row.crewName === state.ui.documentPayoutCrew;
+    const matchesClient = state.ui.documentPayoutClient === "all" || row.clientLabel === state.ui.documentPayoutClient;
+    return matchesYear && matchesMonth && matchesCrew && matchesClient;
+  });
+
+  panel.innerHTML = `
+    <div class="stack">
+      <div class="form-header">
+        <div>
+          <h3>Document Center</h3>
+          <p class="muted-note">Generate the main exports and ledgers from one place using the filters you already set in the app.</p>
+        </div>
+      </div>
+      <div class="client-detail-grid document-center-grid">
+        <section class="assignment-card">
+          <strong>Shows Export</strong>
+          <p class="meta">Choose the show period here and export directly.</p>
+          <div class="shows-toolbar-top">
+            <label class="sort-control">
+              <span>Year</span>
+              <select id="documentShowsYear">
+                <option value="all" ${state.ui.documentShowsYear === "all" ? "selected" : ""}>All Years</option>
+                ${documentShowYearOptions.map((year) => `<option value="${year}" ${state.ui.documentShowsYear === year ? "selected" : ""}>${year}</option>`).join("")}
+              </select>
+            </label>
+            <label class="sort-control">
+              <span>Month</span>
+              <select id="documentShowsMonth">
+                <option value="all" ${state.ui.documentShowsMonth === "all" ? "selected" : ""}>All Months</option>
+                ${documentShowMonthKeys.map((monthKey) => `<option value="${monthKey}" ${state.ui.documentShowsMonth === monthKey ? "selected" : ""}>${monthGroupLabel(`${monthKey}-01`).split(" ")[0]}</option>`).join("")}
+              </select>
+            </label>
+          </div>
+          <div class="toolbar">
+            <span class="pill">${filteredShows.length} rows</span>
+            <button type="button" class="secondary" id="documentExportShows" ${filteredShows.length ? "" : "disabled"}>Export Shows</button>
+          </div>
+        </section>
+        <section class="assignment-card">
+          <strong>Invoice Register Export</strong>
+          <p class="meta">Filter invoice export here without leaving the document hub.</p>
+          <div class="shows-toolbar-top">
+            <label class="sort-control">
+              <span>Year</span>
+              <select id="documentInvoicesYear">
+                <option value="all" ${state.ui.documentInvoicesYear === "all" ? "selected" : ""}>All Years</option>
+                ${documentInvoiceYearOptions.map((year) => `<option value="${year}" ${state.ui.documentInvoicesYear === year ? "selected" : ""}>${year}</option>`).join("")}
+              </select>
+            </label>
+            <label class="sort-control">
+              <span>Month</span>
+              <select id="documentInvoicesMonth">
+                <option value="all" ${state.ui.documentInvoicesMonth === "all" ? "selected" : ""}>All Months</option>
+                ${documentInvoiceMonthKeys.map((monthKey) => `<option value="${monthKey}" ${state.ui.documentInvoicesMonth === monthKey ? "selected" : ""}>${monthGroupLabel(`${monthKey}-01`).split(" ")[0]}</option>`).join("")}
+              </select>
+            </label>
+            <label class="sort-control">
+              <span>Client</span>
+              <select id="documentInvoicesClient">
+                ${documentInvoiceClientOptions.map((option) => `<option value="${option}" ${state.ui.documentInvoicesClient === option ? "selected" : ""}>${option === "all" ? "All Clients" : escapeHtml(option)}</option>`).join("")}
+              </select>
+            </label>
+          </div>
+          <div class="toolbar">
+            <span class="pill">${filteredInvoices.length} rows</span>
+            <button type="button" class="secondary" id="documentExportInvoices" ${filteredInvoices.length ? "" : "disabled"}>Export Invoices</button>
+          </div>
+        </section>
+        <section class="assignment-card">
+          <strong>Client Financial Export</strong>
+          <p class="meta">Pick the exact client finance slice you want to export.</p>
+          <div class="shows-toolbar-top">
+            <label class="sort-control">
+              <span>Year</span>
+              <select id="documentClientFinancialYear">
+                <option value="all" ${state.ui.documentClientFinancialYear === "all" ? "selected" : ""}>All Years</option>
+                ${documentClientFinancialYearOptions.map((year) => `<option value="${year}" ${state.ui.documentClientFinancialYear === year ? "selected" : ""}>${year}</option>`).join("")}
+              </select>
+            </label>
+            <label class="sort-control">
+              <span>Month</span>
+              <select id="documentClientFinancialMonth">
+                <option value="all" ${state.ui.documentClientFinancialMonth === "all" ? "selected" : ""}>All Months</option>
+                ${documentClientFinancialMonthKeys.map((monthKey) => `<option value="${monthKey}" ${state.ui.documentClientFinancialMonth === monthKey ? "selected" : ""}>${monthGroupLabel(`${monthKey}-01`).split(" ")[0]}</option>`).join("")}
+              </select>
+            </label>
+            <label class="sort-control">
+              <span>Client</span>
+              <select id="documentClientFinancialClient">
+                ${documentClientFinancialClientOptions.map((option) => `<option value="${option.value}" ${state.ui.documentClientFinancialClient === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
+              </select>
+            </label>
+          </div>
+          <div class="toolbar">
+            <span class="pill">${clientFinancialRows.length} rows</span>
+            <button type="button" class="secondary" id="documentExportClientFinancials" ${clientFinancialRows.length ? "" : "disabled"}>Export Client Financials</button>
+          </div>
+        </section>
+        <section class="assignment-card">
+          <strong>Client Ledger</strong>
+          <p class="meta">Pick a client and export or print the running ledger directly from here.</p>
+          <div class="shows-toolbar-top">
+            <label class="sort-control">
+              <span>Client</span>
+              <select id="documentLedgerClient">
+                ${documentLedgerClientOptions.map((option) => `<option value="${option.value}" ${state.ui.documentLedgerClient === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
+              </select>
+            </label>
+          </div>
+          <div class="toolbar">
+            <span class="pill">${selectedLedgerClient ? `${selectedLedgerEntries.length} entries` : "Pick a client"}</span>
+            <button type="button" class="secondary" id="documentExportClientLedger" ${(selectedLedgerClient && selectedLedgerEntries.length) ? "" : "disabled"}>Export Ledger</button>
+            <button type="button" class="ghost" id="documentPrintClientLedger" ${(selectedLedgerClient && selectedLedgerEntries.length) ? "" : "disabled"}>Print Ledger</button>
+          </div>
+        </section>
+        <section class="assignment-card">
+          <strong>Client Master Export</strong>
+          <p class="meta">Control GST completeness directly from here.</p>
+          <div class="shows-toolbar-top">
+            <label class="sort-control">
+              <span>GST Details</span>
+              <select id="documentClientsGstFilter">
+                <option value="all" ${state.ui.documentClientsGstFilter === "all" ? "selected" : ""}>All Clients</option>
+                <option value="missing" ${state.ui.documentClientsGstFilter === "missing" ? "selected" : ""}>Empty GST Details</option>
+                <option value="available" ${state.ui.documentClientsGstFilter === "available" ? "selected" : ""}>With GST Details</option>
+              </select>
+            </label>
+          </div>
+          <div class="toolbar">
+            <span class="pill">${filteredClients.length} rows</span>
+            <button type="button" class="secondary" id="documentExportClients" ${filteredClients.length ? "" : "disabled"}>Export Clients</button>
+          </div>
+        </section>
+        <section class="assignment-card">
+          <strong>Crew Payout Export</strong>
+          <p class="meta">Choose the payout period, crew, and client directly here.</p>
+          <div class="shows-toolbar-top">
+            <label class="sort-control">
+              <span>Year</span>
+              <select id="documentPayoutYear">
+                <option value="all" ${state.ui.documentPayoutYear === "all" ? "selected" : ""}>All Years</option>
+                ${documentPayoutYearOptions.map((year) => `<option value="${year}" ${state.ui.documentPayoutYear === year ? "selected" : ""}>${year}</option>`).join("")}
+              </select>
+            </label>
+            <label class="sort-control">
+              <span>Month</span>
+              <select id="documentPayoutMonth">
+                <option value="all" ${state.ui.documentPayoutMonth === "all" ? "selected" : ""}>All Months</option>
+                ${documentPayoutMonthKeys.map((monthKey) => `<option value="${monthKey}" ${state.ui.documentPayoutMonth === monthKey ? "selected" : ""}>${monthGroupLabel(`${monthKey}-01`).split(" ")[0]}</option>`).join("")}
+              </select>
+            </label>
+            <label class="sort-control">
+              <span>Crew</span>
+              <select id="documentPayoutCrew">
+                ${documentPayoutCrewOptions.map((option) => `<option value="${option}" ${state.ui.documentPayoutCrew === option ? "selected" : ""}>${option === "all" ? "All Crew" : escapeHtml(option)}</option>`).join("")}
+              </select>
+            </label>
+            <label class="sort-control">
+              <span>Client</span>
+              <select id="documentPayoutClient">
+                ${documentPayoutClientOptions.map((option) => `<option value="${option}" ${state.ui.documentPayoutClient === option ? "selected" : ""}>${option === "all" ? "All Clients" : escapeHtml(option)}</option>`).join("")}
+              </select>
+            </label>
+          </div>
+          <div class="toolbar">
+            <span class="pill">${filteredPayoutRows.length} rows</span>
+            <button type="button" class="secondary" id="documentExportPayouts" ${filteredPayoutRows.length ? "" : "disabled"}>Export Payouts</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("documentExportShows")?.addEventListener("click", () => {
+    if (!filteredShows.length) {
+      showToast("No shows to export.");
+      return;
+    }
+    const exportKey = state.ui.documentShowsMonth !== "all"
+      ? state.ui.documentShowsMonth
+      : state.ui.documentShowsYear !== "all"
+        ? state.ui.documentShowsYear
+        : "all-shows";
+    downloadSingleSheetWorkbook(exportKey, buildShowsSheetXml(filteredShows), `pixelbug-${safeFileNamePart(exportKey)}-shows.xlsx`);
+    showToast("Shows export ready.");
+  });
+
+  document.getElementById("documentExportInvoices")?.addEventListener("click", () => {
+    if (!filteredInvoices.length) {
+      showToast("No invoices to export.");
+      return;
+    }
+    const exportKey = state.ui.documentInvoicesMonth !== "all"
+      ? state.ui.documentInvoicesMonth
+      : state.ui.documentInvoicesYear !== "all"
+        ? state.ui.documentInvoicesYear
+        : "all";
+    exportInvoicesExcel(exportKey, filteredInvoices, getInvoiceExportColumns(), {
+      splitByMonth: state.ui.documentInvoicesMonth === "all"
+    });
+    showToast("Invoice export ready.");
+  });
+
+  document.getElementById("documentExportClientFinancials")?.addEventListener("click", () => {
+    if (!clientFinancialRows.length) {
+      showToast("No client financial rows to export.");
+      return;
+    }
+    const exportKeyParts = [
+      state.ui.documentClientFinancialYear !== "all" ? state.ui.documentClientFinancialYear : "",
+      state.ui.documentClientFinancialMonth !== "all" ? state.ui.documentClientFinancialMonth : "",
+      state.ui.documentClientFinancialClient !== "all" ? safeFileNamePart(getClientDisplayValue(state.ui.documentClientFinancialClient)) : ""
+    ].filter(Boolean);
+    const exportKey = exportKeyParts.join("-") || "all";
+    downloadSingleSheetWorkbook("Client Invoices", buildClientInvoiceExportSheetXml(clientFinancialRows), `pixelbug-${safeFileNamePart(exportKey)}-client-invoices.xlsx`);
+    showToast("Client financial export ready.");
+  });
+
+  document.getElementById("documentExportClientLedger")?.addEventListener("click", () => {
+    if (!selectedLedgerClient || !selectedLedgerEntries.length) {
+      showToast("Select a client with ledger entries first.");
+      return;
+    }
+    exportClientLedgerExcel(selectedLedgerClient);
+    showToast("Client ledger export ready.");
+  });
+
+  document.getElementById("documentPrintClientLedger")?.addEventListener("click", () => {
+    if (!selectedLedgerClient || !selectedLedgerEntries.length) {
+      showToast("Select a client with ledger entries first.");
+      return;
+    }
+    printClientLedger(selectedLedgerClient.id);
+  });
+
+  document.getElementById("documentExportClients")?.addEventListener("click", () => {
+    if (!filteredClients.length) {
+      showToast("No clients to export.");
+      return;
+    }
+    downloadSingleSheetWorkbook("Clients", buildClientsSheetXml(filteredClients), "pixelbug-clients.xlsx");
+    showToast("Client master export ready.");
+  });
+
+  document.getElementById("documentExportPayouts")?.addEventListener("click", () => {
+    if (!filteredPayoutRows.length) {
+      showToast("No payout rows to export.");
+      return;
+    }
+    const exportKey = [
+      state.ui.documentPayoutYear !== "all" ? state.ui.documentPayoutYear : "all",
+      state.ui.documentPayoutMonth !== "all" ? state.ui.documentPayoutMonth : "",
+      state.ui.documentPayoutCrew !== "all" ? safeFileNamePart(state.ui.documentPayoutCrew) : "",
+      state.ui.documentPayoutClient !== "all" ? safeFileNamePart(state.ui.documentPayoutClient) : ""
+    ].filter(Boolean).join("-");
+    exportCrewPayoutsExcel(filteredPayoutRows, exportKey);
+    showToast("Crew payout export ready.");
+  });
+
+  [
+    "documentShowsYear",
+    "documentShowsMonth",
+    "documentInvoicesYear",
+    "documentInvoicesMonth",
+    "documentInvoicesClient",
+    "documentClientFinancialYear",
+    "documentClientFinancialMonth",
+    "documentClientFinancialClient",
+    "documentLedgerClient",
+    "documentClientsGstFilter",
+    "documentPayoutYear",
+    "documentPayoutMonth",
+    "documentPayoutCrew",
+    "documentPayoutClient"
+  ].forEach((fieldId) => {
+    document.getElementById(fieldId)?.addEventListener("change", (event) => {
+      state.ui[fieldId] = event.currentTarget.value;
+      saveState(state);
+      renderDocumentCenterPanel();
+    });
+  });
+}
+
 function renderClientsPanel() {
   const panel = document.getElementById("clientsPanel");
   const clients = getSortedClients();
   const clientSearchQuery = String(state.ui.clientSearchQuery || "").trim().toLowerCase();
   const clientGstFilter = state.ui.clientGstFilter || "all";
-  const clientExportYearOptions = getClientInvoiceYearOptions();
-  if (!["all", ...clientExportYearOptions].includes(state.ui.clientExportYear)) {
-    state.ui.clientExportYear = "all";
-  }
-  const clientExportMonthKeys = getClientInvoiceMonthOptions(state.ui.clientExportYear || "all");
-  if (!["all", ...clientExportMonthKeys].includes(state.ui.clientExportMonth)) {
-    state.ui.clientExportMonth = "all";
-  }
   const filteredClients = clients.filter((client) => {
     const matchesSearch = !clientSearchQuery || [
       getClientDisplayName(client),
@@ -5455,12 +7127,8 @@ function renderClientsPanel() {
   });
   const clientPagination = getPaginationSlice(filteredClients, "clientsPage", "clientsPageSize");
   const activeClientsSubtab = state.ui.clientsSubtab || "list";
-  const clientExportOptions = [
-    { value: "all", label: "All Clients" },
-    ...filteredClients.map((client) => ({ value: client.id, label: getClientDisplayName(client) }))
-  ];
-  if (!clientExportOptions.some((option) => option.value === state.ui.clientExportClientId)) {
-    state.ui.clientExportClientId = "all";
+  if (state.ui.selectedClientDetailId && !clients.some((client) => client.id === state.ui.selectedClientDetailId)) {
+    state.ui.selectedClientDetailId = null;
   }
   const showsByClientId = new Map();
   const invoicesByClientId = new Map();
@@ -5474,6 +7142,23 @@ function renderClientsPanel() {
     if (!key) return;
     invoicesByClientId.set(key, (invoicesByClientId.get(key) || 0) + 1);
   });
+  const selectedClientDetail = state.ui.selectedClientDetailId ? getClientById(state.ui.selectedClientDetailId) : null;
+  const selectedClientShows = selectedClientDetail
+    ? sortShows(state.shows.filter((show) => (show.clientId || getClientByName(show.client)?.id || "") === selectedClientDetail.id), "date")
+    : [];
+  const selectedClientInvoices = selectedClientDetail
+    ? sortInvoices((state.invoices || []).filter((invoice) => (invoice.clientId || getClientByName(invoice.clientName)?.id || "") === selectedClientDetail.id))
+    : [];
+  const selectedClientPayments = selectedClientInvoices.flatMap((invoice) =>
+    (Array.isArray(invoice.paymentEntries) ? invoice.paymentEntries : []).map((payment) => ({
+      ...payment,
+      invoiceNumber: invoice.invoiceNumber
+    }))
+  ).sort((a, b) => String(b.paymentDate || "").localeCompare(String(a.paymentDate || "")));
+  const selectedClientLedgerEntries = selectedClientDetail ? getClientLedgerEntries(selectedClientDetail.id) : [];
+  const clientOutstanding = selectedClientInvoices.reduce((sum, invoice) => sum + Number(invoice.balanceDue || 0), 0);
+  const clientPaid = selectedClientInvoices.reduce((sum, invoice) => sum + Number(invoice.amountPaid || 0), 0);
+  const clientBilled = selectedClientInvoices.reduce((sum, invoice) => sum + Number(invoice.totalAmount || 0), 0);
 
   panel.innerHTML = `
     <div class="stack">
@@ -5486,7 +7171,7 @@ function renderClientsPanel() {
       </div>
       <div class="clients-subtab-row">
         <div class="invoice-subtabs" role="tablist" aria-label="Client sections">
-          <button type="button" class="${activeClientsSubtab === "create" ? "is-active" : ""}" data-clients-subtab="create">Create Clients</button>
+          <button type="button" class="${activeClientsSubtab === "create" ? "is-active" : ""}" data-clients-subtab="create">${getDirtyTabLabel("Create Clients", "client")}</button>
           <button type="button" class="${activeClientsSubtab === "list" ? "is-active" : ""}" data-clients-subtab="list">Clients</button>
         </div>
       </div>
@@ -5501,6 +7186,9 @@ function renderClientsPanel() {
               value="${escapeHtml(state.ui.clientSearchQuery || "")}"
             >
           </label>
+          <button type="button" class="secondary search-submit-button" id="applyClientSearchButton">Search</button>
+        </div>
+        <div class="shows-toolbar-top clients-search-toolbar">
           <label class="sort-control">
             <span>GST Details</span>
             <select id="clientGstFilter">
@@ -5510,35 +7198,132 @@ function renderClientsPanel() {
             </select>
           </label>
         </div>
-        <div class="shows-toolbar-top clients-export-toolbar">
-          <div class="clients-export-controls">
-            <label class="sort-control">
-              <span>Year</span>
-              <select id="clientExportYearFilter">
-                <option value="all" ${state.ui.clientExportYear === "all" ? "selected" : ""}>All Years</option>
-                ${clientExportYearOptions.map((year) => `<option value="${year}" ${state.ui.clientExportYear === year ? "selected" : ""}>${year}</option>`).join("")}
-              </select>
-            </label>
-            <label class="sort-control">
-              <span>Month</span>
-              <select id="clientExportMonthFilter">
-                <option value="all" ${state.ui.clientExportMonth === "all" ? "selected" : ""}>All Months</option>
-                ${clientExportMonthKeys.map((monthKey) => `<option value="${monthKey}" ${state.ui.clientExportMonth === monthKey ? "selected" : ""}>${monthGroupLabel(`${monthKey}-01`).split(" ")[0]}</option>`).join("")}
-              </select>
-            </label>
-            <label class="sort-control">
-              <span>Client</span>
-              <select id="clientExportClientFilter">
-                ${clientExportOptions.map((option) => `<option value="${option.value}" ${state.ui.clientExportClientId === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
-              </select>
-            </label>
-          </div>
-          <button type="button" class="secondary" id="exportClientsButton">Export Excel</button>
-        </div>
+        ${selectedClientDetail ? `
+          <section class="detail-card client-detail-panel">
+            <header>
+              <div>
+                <h4>${escapeHtml(getClientDisplayName(selectedClientDetail))}</h4>
+                <div class="meta">${selectedClientDetail.contactName || "No contact"}${selectedClientDetail.contactEmail ? ` · ${escapeHtml(selectedClientDetail.contactEmail)}` : ""}${selectedClientDetail.contactPhone ? ` · ${escapeHtml(selectedClientDetail.contactPhone)}` : ""}</div>
+                <div class="meta">${selectedClientDetail.state || "State not added yet"}${selectedClientDetail.gstin ? ` · GSTIN: ${escapeHtml(selectedClientDetail.gstin)}` : ""}</div>
+              </div>
+              <div class="toolbar">
+                <button type="button" class="ghost small" data-close-client-detail="true">Close</button>
+              </div>
+            </header>
+            <div class="summary-grid client-detail-summary">
+              <div class="summary-card">
+                <span class="summary-kicker">Outstanding</span>
+                <strong>${formatCurrency(clientOutstanding)}</strong>
+                <span class="summary-foot">Open balance across this client’s invoices.</span>
+              </div>
+              <div class="summary-card">
+                <span class="summary-kicker">Collected</span>
+                <strong>${formatCurrency(clientPaid)}</strong>
+                <span class="summary-foot">Payments received from this client.</span>
+              </div>
+              <div class="summary-card">
+                <span class="summary-kicker">Billed</span>
+                <strong>${formatCurrency(clientBilled)}</strong>
+                <span class="summary-foot">Total value of all client invoices.</span>
+              </div>
+              <div class="summary-card">
+                <span class="summary-kicker">Relationship</span>
+                <strong>${selectedClientShows.length} shows</strong>
+                <span class="summary-foot">${selectedClientInvoices.length} invoices · ${selectedClientPayments.length} payments</span>
+              </div>
+            </div>
+            <div class="client-detail-grid">
+              <section class="assignment-card">
+                <strong>Recent Invoices</strong>
+                <div class="stack tight client-detail-list">
+                  ${selectedClientInvoices.length ? selectedClientInvoices.slice(0, 5).map((invoice) => `
+                    <div class="client-detail-row">
+                      <div>
+                        <strong>${escapeHtml(invoice.invoiceNumber)}</strong>
+                        <div class="meta">${escapeHtml(getInvoiceStatusLabel(invoice))} · ${escapeHtml(formatInvoiceDate(invoice.issueDate))}</div>
+                      </div>
+                      <strong>${formatCurrency(invoice.totalAmount || 0)}</strong>
+                    </div>
+                  `).join("") : '<p class="meta">No invoices yet.</p>'}
+                </div>
+              </section>
+              <section class="assignment-card">
+                <strong>Payment History</strong>
+                <div class="stack tight client-detail-list">
+                  ${selectedClientPayments.length ? selectedClientPayments.slice(0, 6).map((payment) => `
+                    <div class="client-detail-row">
+                      <div>
+                        <strong>${escapeHtml(formatInvoiceDate(payment.paymentDate))}</strong>
+                        <div class="meta">${escapeHtml(payment.invoiceNumber || "")}${payment.note ? ` · ${escapeHtml(payment.note)}` : ""}</div>
+                      </div>
+                      <strong>${formatCurrency(payment.amount || 0)}</strong>
+                    </div>
+                  `).join("") : '<p class="meta">No payments recorded yet.</p>'}
+                </div>
+              </section>
+              <section class="assignment-card">
+                <strong>Linked Shows</strong>
+                <div class="stack tight client-detail-list">
+                  ${selectedClientShows.length ? selectedClientShows.slice(0, 6).map((show) => `
+                    <div class="client-detail-row">
+                      <div>
+                        <strong>${escapeHtml(show.showName)}</strong>
+                        <div class="meta">${escapeHtml(formatDateRange(getShowStartDate(show), getShowEndDate(show)))}${show.location ? ` · ${escapeHtml(show.location)}` : ""}</div>
+                      </div>
+                    </div>
+                  `).join("") : '<p class="meta">No linked shows yet.</p>'}
+                </div>
+              </section>
+              <section class="assignment-card">
+                <strong>Billing Info</strong>
+                <div class="stack tight client-detail-list">
+                  <div class="meta">${escapeHtml(selectedClientDetail.billingAddress || "No billing address saved yet.")}</div>
+                  ${selectedClientDetail.notes ? `<div class="meta">${escapeHtml(selectedClientDetail.notes)}</div>` : ""}
+                </div>
+              </section>
+            </div>
+            <section class="assignment-card client-ledger-section">
+              <header>
+                <div>
+                  <strong>Ledger</strong>
+                  <div class="meta">Invoices and payments in running balance order.</div>
+                </div>
+              </header>
+              <div class="client-ledger-table-wrap">
+                <table class="client-ledger-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Type</th>
+                      <th>Reference</th>
+                      <th>Particulars</th>
+                      <th>Debit</th>
+                      <th>Credit</th>
+                      <th>Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${selectedClientLedgerEntries.length ? selectedClientLedgerEntries.map((entry) => `
+                      <tr>
+                        <td>${escapeHtml(formatInvoiceDate(entry.date))}</td>
+                        <td>${escapeHtml(entry.type)}</td>
+                        <td>${escapeHtml(entry.reference || "-")}</td>
+                        <td>${escapeHtml(entry.particulars || "-")}</td>
+                        <td>${entry.debit ? escapeHtml(formatCurrency(entry.debit)) : "-"}</td>
+                        <td>${entry.credit ? escapeHtml(formatCurrency(entry.credit)) : "-"}</td>
+                        <td>${escapeHtml(formatCurrency(entry.balance))}</td>
+                      </tr>
+                    `).join("") : `<tr><td colspan="7">No ledger transactions yet.</td></tr>`}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </section>
+        ` : ""}
       ` : ""}
-      <form id="clientForm" class="stack tight ${activeClientsSubtab === "create" ? "" : "hidden"}" autocomplete="off">
+      <form id="clientForm" class="stack tight editor-form ${activeClientsSubtab === "create" ? "" : "hidden"}" autocomplete="off">
         <input type="hidden" name="clientId">
-        <div class="form-grid">
+        <div class="form-grid editor-section">
           <label class="field"><span>Client Name</span><input type="text" name="clientName" required autocomplete="off" data-form-type="other"></label>
           <label class="field">
             <span>State</span>
@@ -5560,9 +7345,9 @@ function renderClientsPanel() {
           <label class="field"><span>Contact Email</span><input type="email" name="contactEmail" autocomplete="off"></label>
           <label class="field"><span>Contact Phone</span><input type="text" name="contactPhone" autocomplete="off"></label>
         </div>
-        <label class="field"><span>Billing Address</span><textarea name="billingAddress" rows="3"></textarea></label>
-        <label class="field"><span>Notes</span><textarea name="clientNotes" rows="2"></textarea></label>
-        <div class="toolbar">
+        <label class="field editor-section"><span>Billing Address</span><textarea name="billingAddress" rows="3"></textarea></label>
+        <label class="field editor-section"><span>Notes</span><textarea name="clientNotes" rows="2"></textarea></label>
+        <div class="toolbar editor-actions">
           <button type="submit">Save Client</button>
           <button type="button" class="ghost" id="resetClientForm">Clear</button>
         </div>
@@ -5582,6 +7367,7 @@ function renderClientsPanel() {
                 <div class="toolbar">
                   <span class="pill">${showsByClientId.get(client.id) || 0} shows</span>
                   <span class="pill">${invoicesByClientId.get(client.id) || 0} invoices</span>
+                  <button type="button" class="ghost small" data-view-client="${client.id}">View</button>
                   <button type="button" class="secondary small" data-edit-client="${client.id}">Edit</button>
                   <button type="button" class="ghost small" data-delete-client="${client.id}">Delete</button>
                 </div>
@@ -5605,10 +7391,6 @@ function renderClientsPanel() {
   const message = document.getElementById("clientFormMessage");
   const searchInput = document.getElementById("clientSearchInput");
   const gstFilterSelect = document.getElementById("clientGstFilter");
-  const clientExportYearFilter = document.getElementById("clientExportYearFilter");
-  const clientExportMonthFilter = document.getElementById("clientExportMonthFilter");
-  const clientExportClientFilter = document.getElementById("clientExportClientFilter");
-  const exportClientsButton = document.getElementById("exportClientsButton");
 
   const clearClientForm = () => {
     form.reset();
@@ -5618,6 +7400,8 @@ function renderClientsPanel() {
   };
 
   document.getElementById("resetClientForm")?.addEventListener("click", () => {
+    if (!confirmDiscardDirtyForm("clear this client form")) return;
+    clearDirtyForm("client");
     clearClientForm();
   });
 
@@ -5658,6 +7442,7 @@ function renderClientsPanel() {
       if (result.contactPhone) {
         form.elements.namedItem("contactPhone").value = result.contactPhone;
       }
+      setDirtyForm("client");
       message.textContent = result.message || (result.configured ? "GST details fetched. Please review before saving." : "State filled from GSTIN.");
     } catch (error) {
       const stateFromGstin = getStateFromGstin(gstin);
@@ -5665,16 +7450,23 @@ function renderClientsPanel() {
         form.elements.namedItem("clientState").value = stateFromGstin;
         syncCustomSelect(form.elements.namedItem("clientState"));
       }
+      setDirtyForm("client");
       message.textContent = error.message;
     }
   });
 
-  searchInput?.addEventListener("input", (event) => {
-    state.ui.clientSearchQuery = event.currentTarget.value;
+  const applyClientSearch = () => {
+    state.ui.clientSearchQuery = searchInput?.value || "";
     state.ui.clientsPage = 1;
     saveState(state);
     renderClientsPanel();
+  };
+  searchInput?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    applyClientSearch();
   });
+  document.getElementById("applyClientSearchButton")?.addEventListener("click", applyClientSearch);
 
   gstFilterSelect?.addEventListener("change", (event) => {
     state.ui.clientGstFilter = event.currentTarget.value;
@@ -5683,46 +7475,12 @@ function renderClientsPanel() {
     renderClientsPanel();
   });
 
-  clientExportYearFilter?.addEventListener("change", (event) => {
-    state.ui.clientExportYear = event.currentTarget.value;
-    state.ui.clientExportMonth = "all";
-    saveState(state);
-    renderClientsPanel();
-  });
-
-  clientExportMonthFilter?.addEventListener("change", (event) => {
-    state.ui.clientExportMonth = event.currentTarget.value;
-    saveState(state);
-    renderClientsPanel();
-  });
-
-  clientExportClientFilter?.addEventListener("change", (event) => {
-    state.ui.clientExportClientId = event.currentTarget.value;
-    saveState(state);
-  });
-
-  exportClientsButton?.addEventListener("click", () => {
-    const selectedClientIds = state.ui.clientExportClientId === "all"
-      ? filteredClients.map((client) => client.id)
-      : [state.ui.clientExportClientId];
-    const rows = getClientExportRows(selectedClientIds, state.ui.clientExportYear || "all", state.ui.clientExportMonth || "all");
-    if (!rows.length) {
-      showToast("No client invoice records found for the selected filters.");
-      return;
-    }
-    const exportKey = [
-      state.ui.clientExportClientId !== "all"
-        ? safeFileNamePart(clientExportOptions.find((option) => option.value === state.ui.clientExportClientId)?.label || "client")
-        : "all-clients",
-      state.ui.clientExportYear !== "all" ? state.ui.clientExportYear : "",
-      state.ui.clientExportMonth !== "all" ? state.ui.clientExportMonth : ""
-    ].filter(Boolean).join("-");
-    exportClientInvoiceExcel(exportKey, rows);
-    showToast("Client invoice export ready.");
-  });
-
   panel.querySelectorAll("[data-clients-subtab]").forEach((button) => {
     button.addEventListener("click", () => {
+      if ((button.dataset.clientsSubtab || "list") !== activeClientsSubtab && !confirmDiscardDirtyForm("switch client sections")) {
+        return;
+      }
+      clearDirtyForm();
       state.ui.clientsSubtab = button.dataset.clientsSubtab || "list";
       if (state.ui.clientsSubtab === "create") {
         clearClientForm();
@@ -5757,6 +7515,7 @@ function renderClientsPanel() {
         body: JSON.stringify(normalized)
       });
       applyServerState(payload);
+      clearDirtyForm("client");
       state.ui.clientsSubtab = isEditingClient ? "list" : "create";
       saveState(state);
       renderDashboard();
@@ -5783,10 +7542,28 @@ function renderClientsPanel() {
   });
 
   panel.addEventListener("click", async (event) => {
+    const closeDetailButton = event.target.closest("[data-close-client-detail]");
+    if (closeDetailButton) {
+      state.ui.selectedClientDetailId = null;
+      saveState(state);
+      renderClientsPanel();
+      return;
+    }
+
+    const viewButton = event.target.closest("[data-view-client]");
+    if (viewButton) {
+      state.ui.selectedClientDetailId = viewButton.dataset.viewClient;
+      saveState(state);
+      renderClientsPanel();
+      return;
+    }
+
     const editButton = event.target.closest("[data-edit-client]");
     if (editButton) {
+      if (!confirmDiscardDirtyForm("open another client")) return;
       const client = getClientById(editButton.dataset.editClient);
       if (!client) return;
+      clearDirtyForm();
       form.elements.namedItem("clientId").value = client.id;
       form.elements.namedItem("clientName").value = client.name;
       form.elements.namedItem("clientState").value = client.state || "";
@@ -5840,6 +7617,7 @@ function renderClientsPanel() {
       }
     }
   });
+  wireDirtyFormTracking(form, "client");
 }
 
 function renderShowForm() {
@@ -5851,33 +7629,40 @@ function renderShowForm() {
   const editingShow = state.ui.editingShowId
     ? state.shows.find((show) => show.id === state.ui.editingShowId)
     : null;
+  const draftShow = !editingShow && state.ui.showDraftTemplate && typeof state.ui.showDraftTemplate === "object"
+    ? state.ui.showDraftTemplate
+    : null;
   const isEditing = Boolean(editingShow);
   const defaultShowDate = !isEditing && state.ui.newShowDate ? state.ui.newShowDate : "";
-  const showDateFromValue = isEditing ? getShowStartDate(editingShow) : defaultShowDate;
-  const showDateToValue = isEditing ? getShowEndDate(editingShow) : defaultShowDate;
-  const selectedClientId = isEditing ? (editingShow.clientId || getClientByName(editingShow.client)?.id || "") : "";
-  const selectedShowStatus = isEditing && editingShow.showStatus === "tentative" ? "tentative" : "confirmed";
+  const showDateFromValue = isEditing ? getShowStartDate(editingShow) : (draftShow?.showDateFrom || defaultShowDate);
+  const showDateToValue = isEditing ? getShowEndDate(editingShow) : (draftShow?.showDateTo || defaultShowDate);
+  const selectedClientId = isEditing
+    ? (editingShow.clientId || getClientByName(editingShow.client)?.id || "")
+    : (draftShow?.clientId || "");
+  const selectedShowStatus = isEditing
+    ? (editingShow.showStatus === "tentative" ? "tentative" : "confirmed")
+    : (draftShow?.showStatus === "tentative" ? "tentative" : "confirmed");
   const selectedLightDesignerId = isEditing
     ? (editingShow.assignments || []).find((assignment) => assignment.lightDesignerId)?.lightDesignerId || ""
-    : "";
+    : (draftShow?.showLightDesignerId || "");
 
   panel.innerHTML = `
     <div class="stack">
       <div>
         <div class="form-header">
           <div>
-            <h3>${isEditing ? `Editing: ${editingShow.showName}` : "Create New Show"}</h3>
+            <h3>${isEditing ? `Editing: ${editingShow.showName}` : draftShow ? `Duplicate Draft: ${draftShow.showName}` : "Create New Show"}</h3>
             <p class="muted-note">Only admins can edit show amount and operator amounts.</p>
           </div>
           ${isEditing ? '<span class="pill edit-pill">Edit Mode</span>' : ""}
         </div>
       </div>
-      <form id="showForm" class="stack tight" autocomplete="off">
+      <form id="showForm" class="stack tight editor-form" autocomplete="off">
         <input type="hidden" name="showId" value="${escapeHtml(isEditing ? editingShow.id : "")}">
-        <div class="form-grid">
+        <div class="form-grid editor-section">
           <label class="field"><span>Show Date From</span><input type="date" name="showDateFrom" value="${escapeHtml(showDateFromValue)}" required autocomplete="off"></label>
           <label class="field"><span>Show Date To</span><input type="date" name="showDateTo" value="${escapeHtml(showDateToValue)}" required autocomplete="off"></label>
-          <label class="field"><span>Show Name</span><input type="text" name="showName" value="${escapeHtml(isEditing ? editingShow.showName : "")}" required autocomplete="off" data-form-type="other"></label>
+          <label class="field"><span>Show Name</span><input type="text" name="showName" value="${escapeHtml(isEditing ? editingShow.showName : (draftShow?.showName || ""))}" required autocomplete="off" data-form-type="other"></label>
           <label class="field">
             <span>Client</span>
             <select name="clientId" ${clientOptions.length ? "required" : ""} data-searchable="true" data-search-placeholder="Search clients">
@@ -5892,11 +7677,11 @@ function renderShowForm() {
               ${adminOptions.map((adminUser) => `<option value="${adminUser.id}" ${selectedLightDesignerId === adminUser.id ? "selected" : ""}>${adminUser.name}</option>`).join("")}
             </select>
           </label>
-          <label class="field"><span>Location</span><input type="text" name="location" value="${escapeHtml(isEditing ? editingShow.location : "")}" autocomplete="off" data-form-type="other"></label>
-          <label class="field"><span>Amount of the Show</span><input type="number" name="amountShow" value="${escapeHtml(isEditing ? editingShow.amountShow : "")}" min="0" step="1" autocomplete="off"></label>
+          <label class="field"><span>Location</span><input type="text" name="location" value="${escapeHtml(isEditing ? editingShow.location : (draftShow?.location || ""))}" autocomplete="off" data-form-type="other"></label>
+          <label class="field"><span>Amount of the Show</span><input type="number" name="amountShow" value="${escapeHtml(isEditing ? editingShow.amountShow : (draftShow?.amountShow ?? ""))}" min="0" step="1" autocomplete="off"></label>
         </div>
         ${clientOptions.length ? "" : '<p class="muted-note">Add clients in the Clients tab before creating shows.</p>'}
-        <div class="field">
+        <div class="field editor-section">
           <span>Show Status</span>
           <div class="status-toggle" role="radiogroup" aria-label="Show Status">
             <label class="status-option">
@@ -5909,12 +7694,12 @@ function renderShowForm() {
             </label>
           </div>
         </div>
-        <div class="stack tight">
+        <div class="stack tight editor-section">
           <strong>Assign Crew Members</strong>
           <div id="assignmentEditor" class="stack tight"></div>
           <button type="button" class="secondary" id="addAssignmentRow">Add Crew Assignment</button>
         </div>
-        <div class="toolbar">
+        <div class="toolbar editor-actions">
           <button type="submit">${isEditing ? "Update Show" : "Save Show"}</button>
           <button type="button" class="ghost" id="resetShowForm">${isEditing ? "Cancel Edit" : "Clear"}</button>
           ${isEditing ? '<button type="button" class="danger" id="deleteShowButton">Delete Show</button>' : ""}
@@ -5970,17 +7755,27 @@ function renderShowForm() {
       const confirmed = window.confirm("Remove this crew assignment?");
       if (!confirmed) return;
       row.remove();
+      setDirtyForm("show");
     });
   }
 
-  if (isEditing && editingShow.assignments.length) {
-    editingShow.assignments.forEach((assignment) => addAssignmentRow(assignment));
+  const initialAssignments = isEditing
+    ? (editingShow.assignments || [])
+    : (draftShow?.assignments || []);
+
+  if (initialAssignments.length) {
+    initialAssignments.forEach((assignment) => addAssignmentRow(assignment));
   } else {
     addAssignmentRow();
   }
 
-  document.getElementById("addAssignmentRow").addEventListener("click", () => addAssignmentRow());
+  document.getElementById("addAssignmentRow").addEventListener("click", () => {
+    addAssignmentRow();
+    setDirtyForm("show");
+  });
   document.getElementById("resetShowForm").addEventListener("click", () => {
+    if (!confirmDiscardDirtyForm("leave this show form")) return;
+    clearDirtyForm("show");
     const returnTab = getShowReturnTab();
     resetEditingState();
     state.ui.activeSidebarTab = returnTab;
@@ -5996,6 +7791,7 @@ function renderShowForm() {
       if (!confirmDelete) return;
       state.shows = state.shows.filter((show) => show.id !== editingShow.id);
       const returnTab = getShowReturnTab();
+      clearDirtyForm("show");
       resetEditingState();
       try {
         await syncAdminState();
@@ -6102,6 +7898,7 @@ function renderShowForm() {
       state.shows.push(payload);
     }
 
+    clearDirtyForm("show");
     resetEditingState();
     try {
       await syncAdminState();
@@ -6118,15 +7915,19 @@ function renderShowForm() {
       renderDashboard();
     }
   });
+  wireDirtyFormTracking(document.getElementById("showForm"), "show");
 }
 
 function fillShowForm(showId, returnTab = state.ui.activeSidebarTab || "showsPanel") {
+  if (!confirmDiscardDirtyForm("open another show")) return;
   const show = state.shows.find((item) => item.id === showId);
   if (!show) return;
   ensureUiState();
+  clearDirtyForm();
   captureShowReturnContext(returnTab);
   state.ui.editingShowId = showId;
   state.ui.newShowDate = "";
+  state.ui.showDraftTemplate = null;
   state.ui.showSubtab = "create";
   state.ui.activeSidebarTab = "showsPanel";
   saveState(state);
@@ -6180,11 +7981,49 @@ function fillShowForm(showId, returnTab = state.ui.activeSidebarTab || "showsPan
   form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function startShowDraftFromExistingShow(showId, returnTab = state.ui.activeSidebarTab || "showsPanel") {
+  if (!confirmDiscardDirtyForm("duplicate this show")) return;
+  const show = state.shows.find((item) => item.id === showId);
+  if (!show) return;
+  ensureUiState();
+  clearDirtyForm();
+  captureShowReturnContext(returnTab);
+  state.ui.editingShowId = null;
+  state.ui.newShowDate = "";
+  state.ui.showDraftTemplate = {
+    showDateFrom: getShowStartDate(show),
+    showDateTo: getShowEndDate(show),
+    showName: show.showName,
+    clientId: show.clientId || getClientByName(show.client)?.id || "",
+    location: show.location || "",
+    amountShow: show.amountShow || 0,
+    showStatus: show.showStatus === "tentative" ? "tentative" : "confirmed",
+    showLightDesignerId: (show.assignments || []).find((assignment) => assignment.lightDesignerId)?.lightDesignerId || "",
+    assignments: (show.assignments || []).map((assignment) => ({
+      crewId: assignment.crewId || "",
+      lightDesignerId: assignment.lightDesignerId || "",
+      operatorAmount: assignment.operatorAmount ?? "",
+      onwardTravelDate: assignment.onwardTravelDate || "",
+      returnTravelDate: assignment.returnTravelDate || "",
+      onwardTravelSector: assignment.onwardTravelSector || "",
+      returnTravelSector: assignment.returnTravelSector || "",
+      notes: assignment.notes || ""
+    }))
+  };
+  state.ui.showSubtab = "create";
+  state.ui.activeSidebarTab = "showsPanel";
+  saveState(state);
+  renderSidebarTabs();
+  renderDashboard();
+  showToast("Show duplicated into a new draft.");
+}
+
 function startShowDraftForDate(showDate) {
   ensureUiState();
   captureShowReturnContext("calendarPanel");
   state.ui.editingShowId = null;
   state.ui.newShowDate = showDate || dateKey(new Date());
+  state.ui.showDraftTemplate = null;
   state.ui.showSubtab = "create";
   state.ui.activeSidebarTab = "showsPanel";
   saveState(state);
@@ -6702,6 +8541,11 @@ function render() {
 }
 
 async function initApp() {
+  window.addEventListener("beforeunload", (event) => {
+    if (!hasDirtyForm()) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
   try {
     await refreshFromServer();
   } catch (error) {
