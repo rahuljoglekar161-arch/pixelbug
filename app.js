@@ -3559,15 +3559,15 @@ function renderCalendarToolbarControls() {
     <div class="calendar-toolbar-controls">
       <div class="calendar-left-group">
         <div class="view-switch">
-          <button class="ghost small calendar-nav-button ${state.view.mode === "month" ? "is-active" : ""}" data-view-mode="month">Month</button>
-          <button class="ghost small calendar-nav-button ${state.view.mode === "week" ? "is-active" : ""}" data-view-mode="week">Week</button>
-          <button class="ghost small calendar-nav-button ${state.view.mode === "day" ? "is-active" : ""}" data-view-mode="day">Day</button>
+          <button type="button" class="ghost small calendar-nav-button ${state.view.mode === "month" ? "is-active" : ""}" data-view-mode="month">Month</button>
+          <button type="button" class="ghost small calendar-nav-button ${state.view.mode === "week" ? "is-active" : ""}" data-view-mode="week">Week</button>
+          <button type="button" class="ghost small calendar-nav-button ${state.view.mode === "day" ? "is-active" : ""}" data-view-mode="day">Day</button>
         </div>
       </div>
       <div class="calendar-center-group">
-        <button class="ghost small calendar-nav-button" data-range-nav="prev">Previous</button>
-        <button class="ghost small calendar-nav-button" data-range-nav="today">Today</button>
-        <button class="ghost small calendar-nav-button" data-range-nav="next">Next</button>
+        <button type="button" class="ghost small calendar-nav-button" data-range-nav="prev">Previous</button>
+        <button type="button" class="ghost small calendar-nav-button" data-range-nav="today">Today</button>
+        <button type="button" class="ghost small calendar-nav-button" data-range-nav="next">Next</button>
       </div>
       <div class="calendar-filter-group">
         ${renderCrewFilterControl("calendarCrewFilter", { label: "Crew", allLabel: "All Crew", compact: true, includeUnassigned: true })}
@@ -4530,8 +4530,8 @@ function renderShowCard(show, user, selectedForInvoice = false) {
               <input type="checkbox" data-select-show-for-invoice data-show-id="${show.id}" ${selectedForInvoice ? "checked" : ""}>
               <span>Bill</span>
             </label>
-            <button class="ghost small" data-duplicate-show="${show.id}">Duplicate</button>
-            <button class="secondary small" data-edit-show="${show.id}">Edit</button>
+            <button type="button" class="ghost small" data-duplicate-show="${show.id}">Duplicate</button>
+            <button type="button" class="secondary small" data-edit-show="${show.id}">Edit</button>
           </div>
         ` : ""}
       </header>
@@ -8053,8 +8053,8 @@ function renderApprovalsSection() {
             </header>
             ${(user.role === "crew" || user.role === "admin") && user.color ? `<div class="meta">Requested color <span class="legend-swatch" style="background:${resolveCrewColor(user.color)}"></span>${resolveCrewColor(user.color)}</div>` : ""}
             <div class="toolbar" style="margin-top:12px;">
-              <button class="small" data-approve="${user.id}">Approve</button>
-              <button class="secondary small" data-reject="${user.id}">Reject</button>
+              <button type="button" class="small" data-approve="${user.id}">Approve</button>
+              <button type="button" class="secondary small" data-reject="${user.id}">Reject</button>
             </div>
           </article>
         `).join("") : "<p>No pending account approvals.</p>"}
