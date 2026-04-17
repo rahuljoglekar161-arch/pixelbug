@@ -2086,6 +2086,19 @@ function wireDirtyFormTracking(form, formKey) {
   });
 }
 
+function wireReactiveSearchInput(input, applySearch) {
+  if (!input || typeof applySearch !== "function") return;
+  input.addEventListener("input", (event) => {
+    const cursorPosition = event.currentTarget.selectionStart;
+    applySearch();
+    const nextInput = document.getElementById(event.currentTarget.id);
+    nextInput?.focus();
+    if (nextInput && cursorPosition !== null) {
+      nextInput.setSelectionRange(cursorPosition, cursorPosition);
+    }
+  });
+}
+
 function getDirtyTabLabel(baseLabel, formKey) {
   if (!hasDirtyForm(formKey)) return baseLabel;
   return `${baseLabel} <span class="dirty-tab-badge" aria-label="Unsaved changes">Pending</span>`;
@@ -4308,6 +4321,7 @@ function renderShowsList(user, shows, sourceShows = shows) {
     event.preventDefault();
     applyShowSearch();
   });
+  wireReactiveSearchInput(showSearchInput, applyShowSearch);
   document.getElementById("applyShowSearchButton")?.addEventListener("click", applyShowSearch);
 
   if (yearFilterSelect) {
@@ -5817,6 +5831,7 @@ function renderInvoicesPanel() {
     event.preventDefault();
     applyInvoiceSearch();
   });
+  wireReactiveSearchInput(invoiceSearchInput, applyInvoiceSearch);
   document.getElementById("applyInvoiceSearchButton")?.addEventListener("click", applyInvoiceSearch);
 
   document.getElementById("invoiceStatusFilter")?.addEventListener("change", (event) => {
@@ -5881,6 +5896,7 @@ function renderInvoicesPanel() {
     event.preventDefault();
     applyPaymentReconSearch();
   });
+  wireReactiveSearchInput(paymentReconSearchInput, applyPaymentReconSearch);
   document.getElementById("applyPaymentReconSearchButton")?.addEventListener("click", applyPaymentReconSearch);
 
   document.getElementById("paymentReconClientFilter")?.addEventListener("change", (event) => {
@@ -7461,6 +7477,7 @@ function renderClientsPanel() {
     event.preventDefault();
     applyClientSearch();
   });
+  wireReactiveSearchInput(searchInput, applyClientSearch);
   document.getElementById("applyClientSearchButton")?.addEventListener("click", applyClientSearch);
 
   gstFilterSelect?.addEventListener("change", (event) => {
