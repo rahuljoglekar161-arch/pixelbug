@@ -32,6 +32,40 @@
     background: #fff;
   }
 
+  body.invoice-printing .app-shell,
+  body.invoice-printing .toast {
+    display: none !important;
+  }
+
+  body.invoice-printing .invoice-preview-modal {
+    position: static;
+    inset: auto;
+    display: block !important;
+    padding: 0;
+    background: transparent;
+    backdrop-filter: none;
+  }
+
+  body.invoice-printing .invoice-preview-dialog {
+    width: auto;
+    max-height: none;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+  }
+
+  body.invoice-printing .invoice-preview-header {
+    display: none !important;
+  }
+
+  body.invoice-printing .invoice-preview-content {
+    overflow: visible;
+    padding: 0;
+    background: transparent;
+  }
+
   .invoice-print-page {
     width: 210mm;
     min-height: 297mm;

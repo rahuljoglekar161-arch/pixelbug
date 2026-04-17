@@ -553,9 +553,6 @@ function buildInvoicesSheetXml(invoices, columns = getInvoiceExportColumns()) {
     const lightDesignerCoreNames = [...new Set(linkedShows
       .flatMap((show) => (show.assignments || []).map((assignment) => getExportCoreName(getUserById(assignment.lightDesignerId)?.name)).filter(Boolean)))];
     const primaryCoreName = lightDesignerCoreNames[0] || getExportCoreName(getInvoiceLightDesignerLabel(invoice));
-    if (primaryCoreName) {
-      operatorTotals[primaryCoreName] = netAmount;
-    }
     const thirdPartyRows = linkedAssignments
       .map((assignment) => {
         const crewName = getAssignmentCrewName(assignment);
@@ -574,8 +571,40 @@ function buildInvoicesSheetXml(invoices, columns = getInvoiceExportColumns()) {
     const tpAmountTotal = thirdPartyRows.reduce((sum, row) => sum + row.amount, 0);
     const tpTds = formatMultilineExportAmounts(thirdPartyRows.map((row) => row.tds));
     const tpPayable = formatMultilineExportAmounts(thirdPartyRows.map((row) => row.payable));
+    const adminCrewCoreNames = [...new Set(linkedAssignments
+      .map((assignment) => getExportCoreName(getAssignmentCrewName(assignment)))
+      .filter(Boolean))];
+    const otherAdminCrewCoreNames = adminCrewCoreNames.filter((coreName) => coreName && coreName !== primaryCoreName);
+    const includesPrimaryAsCrew = primaryCoreName ? adminCrewCoreNames.includes(primaryCoreName) : false;
+    let operatorSplitAlreadyAccountsForTp = false;
+    if (primaryCoreName && includesPrimaryAsCrew && otherAdminCrewCoreNames.length === 2) {
+      const adminPool = Math.max(0, Math.round((netAmount - tpAmountTotal) * 100) / 100);
+      const primaryShare = Math.round(adminPool * 0.40 * 100) / 100;
+      const firstOtherShare = Math.round(adminPool * 0.30 * 100) / 100;
+      const secondOtherShare = Math.round((adminPool - primaryShare - firstOtherShare) * 100) / 100;
+      operatorTotals[primaryCoreName] = primaryShare;
+      operatorTotals[otherAdminCrewCoreNames[0]] = firstOtherShare;
+      operatorTotals[otherAdminCrewCoreNames[1]] = secondOtherShare;
+      operatorSplitAlreadyAccountsForTp = true;
+    } else if (primaryCoreName && otherAdminCrewCoreNames.length >= 1) {
+      const lightDesignerShare = Math.round(netAmount * 0.10 * 100) / 100;
+      const remainingAdminPool = Math.max(0, Math.round((netAmount - lightDesignerShare - tpAmountTotal) * 100) / 100);
+      operatorTotals[primaryCoreName] = lightDesignerShare;
+      if (otherAdminCrewCoreNames.length === 1) {
+        operatorTotals[otherAdminCrewCoreNames[0]] = remainingAdminPool;
+      } else {
+        const firstOtherShare = Math.round((remainingAdminPool / otherAdminCrewCoreNames.length) * 100) / 100;
+        operatorTotals[otherAdminCrewCoreNames[0]] = firstOtherShare;
+        operatorTotals[otherAdminCrewCoreNames[1]] = Math.round((remainingAdminPool - firstOtherShare) * 100) / 100;
+      }
+      operatorSplitAlreadyAccountsForTp = true;
+    } else if (primaryCoreName) {
+      operatorTotals[primaryCoreName] = netAmount;
+    }
     INVOICE_EXPORT_CORE_NAMES.forEach((coreName) => {
-      grossTotals[coreName] = Math.max(0, operatorTotals[coreName] - (coreName === primaryCoreName ? tpAmountTotal : 0));
+      grossTotals[coreName] = operatorSplitAlreadyAccountsForTp
+        ? operatorTotals[coreName]
+        : Math.max(0, operatorTotals[coreName] - (coreName === primaryCoreName ? tpAmountTotal : 0));
     });
     const values = {
       serial: index + 1,
@@ -1534,6 +1563,23 @@ async function syncAdminState() {
 let state = loadLocalUiState();
 let mediaThemeListenerAttached = false;
 let googleAutoRefreshIntervalId = null;
+let lastFormInteractionAt = 0;
+const GOOGLE_AUTO_REFRESH_INTERVAL_MS = 1000 * 60 * 5;
+const FORM_INTERACTION_PAUSE_MS = 1000 * 60 * 10;
+
+function isInteractiveFormElement(target) {
+  return target instanceof HTMLElement && Boolean(target.closest("input, textarea, select, button, form"));
+}
+
+function noteFormInteraction() {
+  lastFormInteractionAt = Date.now();
+}
+
+function shouldPauseAutoRefresh() {
+  const recentlyInteractedWithForm = Date.now() - lastFormInteractionAt < FORM_INTERACTION_PAUSE_MS;
+  const isGoogleTabOpen = state.ui?.activeSidebarTab === "googleEntriesPanel";
+  return !isGoogleTabOpen || document.hidden || hasDirtyForm() || recentlyInteractedWithForm || isInteractiveFormElement(document.activeElement);
+}
 
 function getSystemTheme() {
   if (!window.matchMedia) return "dark";
@@ -1556,14 +1602,14 @@ function setupGoogleAutoRefresh() {
     return;
   }
   googleAutoRefreshIntervalId = window.setInterval(async () => {
-    if (document.hidden) return;
+    if (shouldPauseAutoRefresh()) return;
     try {
       await refreshFromServer();
       render();
     } catch (error) {
       console.warn("Google auto-refresh failed", error);
     }
-  }, 1000 * 45);
+  }, GOOGLE_AUTO_REFRESH_INTERVAL_MS);
 }
 
 function attachThemeListener() {
@@ -2025,10 +2071,19 @@ function wireDirtyFormTracking(form, formKey) {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
     if (!target.closest("input, textarea, select")) return;
+    noteFormInteraction();
     setDirtyForm(formKey);
   };
   form.addEventListener("input", markDirty);
   form.addEventListener("change", markDirty);
+  form.addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    if (event.key !== "Enter") return;
+    if (target.matches("select, input[type=\"search\"]")) {
+      event.preventDefault();
+    }
+  });
 }
 
 function getDirtyTabLabel(baseLabel, formKey) {
@@ -2315,7 +2370,7 @@ function getFixedInvoiceCompanyProfile() {
     bankAccountType: "Current Account",
     bankBranchName: "Karvenagar, Pune",
     bankIfsc: "HDFC0001115",
-    signatureImage: "signature-sachin.jpg",
+    signatureImage: "signature-sachin.jpg?v=20260417b",
     signatureHolder: "Sachin Dunakhe, Director, PixelBug",
     footerNote: "Please include the invoice number with your payment reference."
   };
@@ -2819,8 +2874,12 @@ function getPaymentReconciliationMonthOptions(rows = getInvoiceReconciliationRow
 
 function makeDefaultInvoiceNumber() {
   const today = new Date();
-  const prefix = `INV-${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}`;
-  const existingCount = (state.invoices || []).filter((invoice) => String(invoice.invoiceNumber || "").startsWith(prefix)).length + 1;
+  const fiscalYearStart = today.getMonth() >= 3 ? today.getFullYear() : today.getFullYear() - 1;
+  const fiscalYearEndShort = String((fiscalYearStart + 1) % 100).padStart(2, "0");
+  const prefix = `INV-${fiscalYearStart}/${fiscalYearEndShort}`;
+  const existingCount = (state.invoices || [])
+    .filter((invoice) => String(invoice.invoiceNumber || "").startsWith(`${prefix}-`))
+    .length + 1;
   return `${prefix}-${String(existingCount).padStart(3, "0")}`;
 }
 
@@ -2920,91 +2979,19 @@ function syncCustomSelect(select) {
 }
 
 function enhanceCustomSelects(root = document) {
-  if (!customSelectOutsideHandlerAttached) {
-    document.addEventListener("click", (event) => {
-      if (!event.target.closest(".custom-select")) {
-        closeAllCustomSelects();
-      }
-    });
-    customSelectOutsideHandlerAttached = true;
-  }
+  root.querySelectorAll(".custom-select").forEach((wrapper) => {
+    const select = wrapper.querySelector("select");
+    if (select && wrapper.parentNode) {
+      wrapper.parentNode.insertBefore(select, wrapper);
+      select.classList.remove("native-select-hidden");
+      delete select.dataset.customSelectReady;
+    }
+    wrapper.remove();
+  });
 
   root.querySelectorAll("select").forEach((select) => {
-    if (select.dataset.customSelectReady === "true") {
-      syncCustomSelect(select);
-      return;
-    }
-
-    select.dataset.customSelectReady = "true";
-    select.classList.add("native-select-hidden");
-
-    const wrapper = document.createElement("div");
-    wrapper.className = "custom-select";
-
-    const trigger = document.createElement("button");
-    trigger.type = "button";
-    trigger.className = "custom-select-trigger";
-    trigger.setAttribute("aria-haspopup", "listbox");
-    trigger.setAttribute("aria-expanded", "false");
-
-    const menu = document.createElement("div");
-    menu.className = "custom-select-menu";
-    menu.setAttribute("role", "listbox");
-
-    if (select.dataset.searchable === "true") {
-      const search = document.createElement("input");
-      search.type = "search";
-      search.className = "custom-select-search";
-      search.placeholder = select.dataset.searchPlaceholder || "Search...";
-      search.autocomplete = "off";
-      search.addEventListener("click", (event) => event.stopPropagation());
-      search.addEventListener("keydown", (event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          event.stopPropagation();
-        }
-      });
-      search.addEventListener("input", () => {
-        const query = search.value.trim().toLowerCase();
-        wrapper.querySelectorAll(".custom-select-option").forEach((optionButton) => {
-          const matches = !query || optionButton.textContent.toLowerCase().includes(query);
-          optionButton.classList.toggle("hidden", !matches);
-        });
-      });
-      menu.appendChild(search);
-    }
-
-    [...select.options].forEach((option) => {
-      const optionButton = document.createElement("button");
-      optionButton.type = "button";
-      optionButton.className = "custom-select-option";
-      optionButton.dataset.value = option.value;
-      optionButton.textContent = option.textContent;
-      optionButton.addEventListener("click", () => {
-        select.value = option.value;
-        syncCustomSelect(select);
-        wrapper.classList.remove("open");
-        trigger.setAttribute("aria-expanded", "false");
-        select.dispatchEvent(new Event("change", { bubbles: true }));
-      });
-      menu.appendChild(optionButton);
-    });
-
-    trigger.addEventListener("click", () => {
-      const isOpen = wrapper.classList.contains("open");
-      closeAllCustomSelects(wrapper);
-      wrapper.classList.toggle("open", !isOpen);
-      trigger.setAttribute("aria-expanded", String(!isOpen));
-      if (!isOpen) {
-        wrapper.querySelector(".custom-select-search")?.focus();
-      }
-    });
-
-    select.parentNode.insertBefore(wrapper, select);
-    wrapper.appendChild(select);
-    wrapper.appendChild(trigger);
-    wrapper.appendChild(menu);
-    syncCustomSelect(select);
+    select.classList.remove("native-select-hidden");
+    delete select.dataset.customSelectReady;
   });
 }
 
@@ -4974,34 +4961,42 @@ function closeInvoicePrintPreview() {
   document.body.classList.remove("modal-open");
 }
 
-function printInvoiceById(invoiceId, copyCount = state.ui.invoicePrintCopies || 1) {
+function waitForImagesToLoad(container) {
+  if (!container) return Promise.resolve();
+  const images = [...container.querySelectorAll("img")];
+  const pendingImages = images.filter((image) => !image.complete);
+  if (!pendingImages.length) return Promise.resolve();
+  return Promise.all(pendingImages.map((image) => new Promise((resolve) => {
+    const done = () => resolve();
+    image.addEventListener("load", done, { once: true });
+    image.addEventListener("error", done, { once: true });
+  })));
+}
+
+async function printInvoiceById(invoiceId, copyCount = state.ui.invoicePrintCopies || 1) {
   const invoice = (state.invoices || []).find((item) => item.id === invoiceId);
   if (!invoice) {
     showToast("Invoice not found.");
     return;
   }
-  const printWindow = window.open("", "_blank", "width=1080,height=900");
-  if (!printWindow) {
-    showToast("Popup blocked. Allow popups to print invoices.");
-    return;
-  }
-  printWindow.document.write(`
-    <!DOCTYPE html>
-    <html lang="en">
-      <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>${escapeHtml(invoice.invoiceNumber)}</title>
-        <style>${getInvoicePrintStyles()}</style>
-      </head>
-      <body>${getInvoiceDocumentMarkup(invoice, { copyCount })}</body>
-    </html>
-  `);
-  printWindow.document.close();
-  printWindow.focus();
-  printWindow.onload = () => {
-    printWindow.print();
+  const modal = document.getElementById("invoicePreviewModal");
+  const content = document.getElementById("invoicePreviewContent");
+  if (!modal || !content) return;
+  content.innerHTML = getInvoiceDocumentMarkup(invoice, { copyCount });
+  modal.dataset.invoiceId = invoice.id;
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
+  document.body.classList.add("invoice-printing");
+
+  const cleanupAfterPrint = () => {
+    document.body.classList.remove("invoice-printing");
+    window.removeEventListener("afterprint", cleanupAfterPrint);
   };
+
+  window.addEventListener("afterprint", cleanupAfterPrint, { once: true });
+  await waitForImagesToLoad(content);
+  window.print();
 }
 
 function findInvoiceUsingShow(showId, excludeInvoiceId = "") {
@@ -7430,8 +7425,8 @@ function renderClientsPanel() {
         form.elements.namedItem("clientState").value = result.state;
         syncCustomSelect(form.elements.namedItem("clientState"));
       }
-      if (result.name) {
-        form.elements.namedItem("clientName").value = result.name;
+      if (result.tradeName || result.name) {
+        form.elements.namedItem("clientName").value = result.tradeName || result.name;
       }
       if (result.billingAddress) {
         form.elements.namedItem("billingAddress").value = result.billingAddress;
@@ -8541,6 +8536,34 @@ function render() {
 }
 
 async function initApp() {
+  document.addEventListener("submit", (event) => {
+    event.preventDefault();
+  }, true);
+  document.addEventListener("pointerdown", (event) => {
+    if (isInteractiveFormElement(event.target)) {
+      noteFormInteraction();
+    }
+  }, true);
+  document.addEventListener("keydown", (event) => {
+    if (isInteractiveFormElement(event.target)) {
+      noteFormInteraction();
+    }
+  }, true);
+  document.addEventListener("focusin", (event) => {
+    if (isInteractiveFormElement(event.target)) {
+      noteFormInteraction();
+    }
+  }, true);
+  document.addEventListener("input", (event) => {
+    if (isInteractiveFormElement(event.target)) {
+      noteFormInteraction();
+    }
+  }, true);
+  document.addEventListener("change", (event) => {
+    if (isInteractiveFormElement(event.target)) {
+      noteFormInteraction();
+    }
+  }, true);
   window.addEventListener("beforeunload", (event) => {
     if (!hasDirtyForm()) return;
     event.preventDefault();

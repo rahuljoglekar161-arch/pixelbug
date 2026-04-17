@@ -177,7 +177,7 @@ function normalizeGstinLookupPayload(gstin, payload = {}) {
   return {
     gstin,
     state: getStateFromGstin(gstin),
-    name: String(getNestedValue(source, ["lgnm", "legalName", "legal_name", "taxpayer.legalName"]) || getNestedValue(source, ["tradeNam", "tradeName", "trade_name"]) || "").trim(),
+    name: String(getNestedValue(source, ["tradeNam", "tradeName", "trade_name"]) || getNestedValue(source, ["lgnm", "legalName", "legal_name", "taxpayer.legalName"]) || "").trim(),
     billingAddress: String(getNestedValue(source, ["address", "billingAddress", "principalAddress"]) || addressParts.join(", ")).trim(),
     contactEmail: String(getNestedValue(source, ["email", "contactEmail", "contact.email"]) || "").trim(),
     contactPhone: String(getNestedValue(source, ["mobile", "phone", "contactPhone", "contact.mobile"]) || "").trim(),
