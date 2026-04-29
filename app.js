@@ -34,7 +34,62 @@ const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const SHOW_BLOCK_MINUTES = 120;
 const DAY_START_HOUR = 6;
 const DAY_END_HOUR = 24;
+const TRAVEL_MEAL_OPTIONS = ["", "Veg", "Non-Veg", "Jain", "No Preference"];
+const TRAVEL_SEAT_OPTIONS = ["", "Window", "Aisle", "Emergency Exit + Window", "Emergency Exit + Aisle", "Front Row", "No Preference"];
+const FAST_FORWARD_AIRLINES = ["indigo", "air india", "air india express", "akasa", "spicejet"];
+const AIRPORT_CITY_OPTIONS = [
+  { value: "Ahmedabad", airportCode: "AMD", aliases: ["amd"] },
+  { value: "Ahmednagar", airportCode: "PNQ", aliases: ["नगर", "ahmednagar"] },
+  { value: "Bengaluru", airportCode: "BLR", aliases: ["bangalore", "blr"] },
+  { value: "Chandigarh", airportCode: "IXC", aliases: ["ixc"] },
+  { value: "Chennai", airportCode: "MAA", aliases: ["maa"] },
+  { value: "Cochin", airportCode: "COK", aliases: ["kochi", "cok"] },
+  { value: "Coimbatore", airportCode: "CJB", aliases: ["cjb"] },
+  { value: "Delhi", airportCode: "DEL", aliases: ["new delhi", "del"] },
+  { value: "Dubai", airportCode: "DXB", aliases: ["dxb"] },
+  { value: "Goa", airportCode: "GOX", aliases: ["mopa", "gox", "dabolim", "goi"] },
+  { value: "Guwahati", airportCode: "GAU", aliases: ["gau"] },
+  { value: "Hyderabad", airportCode: "HYD", aliases: ["hyd"] },
+  { value: "Indore", airportCode: "IDR", aliases: ["idr"] },
+  { value: "Itanagar", airportCode: "HGI", aliases: ["hollongi", "hgi"] },
+  { value: "Jaipur", airportCode: "JAI", aliases: ["jai"] },
+  { value: "Jammu", airportCode: "IXJ", aliases: ["ixj"] },
+  { value: "Kolkata", airportCode: "CCU", aliases: ["calcutta", "ccu"] },
+  { value: "Lucknow", airportCode: "LKO", aliases: ["lko"] },
+  { value: "Mumbai", airportCode: "BOM", aliases: ["bom"] },
+  { value: "Mysuru", airportCode: "MYQ", aliases: ["mysore", "myq"] },
+  { value: "Nagpur", airportCode: "NAG", aliases: ["nag"] },
+  { value: "Pune", airportCode: "PNQ", aliases: ["pnq"] },
+  { value: "Raipur", airportCode: "RPR", aliases: ["rpr"] },
+  { value: "Ranchi", airportCode: "IXR", aliases: ["ixr"] },
+  { value: "Srinagar", airportCode: "SXR", aliases: ["sxr"] },
+  { value: "Surat", airportCode: "STV", aliases: ["stv"] },
+  { value: "Thiruvananthapuram", airportCode: "TRV", aliases: ["trivandrum", "trv"] },
+  { value: "Udaipur", airportCode: "UDR", aliases: ["udr"] },
+  { value: "Varanasi", airportCode: "VNS", aliases: ["vns"] }
+];
 let profileMenuOutsideHandler = null;
+
+function getLocalLocationMatches(keyword = "", max = 8) {
+  const normalized = String(keyword || "").trim().toLowerCase();
+  if (normalized.length < 2) return [];
+  return AIRPORT_CITY_OPTIONS
+    .filter((option) => {
+      const labels = [option.value, option.airportCode, ...(option.aliases || [])]
+        .map((item) => String(item || "").trim().toLowerCase());
+      return labels.some((label) => label.includes(normalized));
+    })
+    .slice(0, Math.min(Math.max(1, Number(max || 8)), 10))
+    .map((option) => ({
+      id: `local-${option.airportCode}-${option.value}`,
+      label: `${option.value}, ${option.airportCode}`,
+      cityName: option.value,
+      countryCode: option.countryCode || "",
+      countryName: option.countryName || "",
+      code: option.airportCode,
+      subType: "CITY"
+    }));
+}
 
 function uid(prefix) {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
@@ -366,6 +421,194 @@ function makeWorksheetCell(cellRef, value, type = "inlineStr", styleId = null) {
   return `<c r="${cellRef}" t="inlineStr"${styleId ? ` s="${styleId}"` : ""}><is><t>${escapeXml(value)}</t></is></c>`;
 }
 
+function parseTravelSectorParts(sector = "") {
+  const raw = String(sector || "").trim();
+  if (!raw || raw === "-") {
+    return { from: "-", to: "-" };
+  }
+  const parts = raw
+    .split(/(?:\s*-\s*|\s+to\s+|\s*>\s*|\/)/i)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length >= 2) {
+    return {
+      from: parts[0] || "-",
+      to: parts[1] || "-"
+    };
+  }
+  return {
+    from: raw,
+    to: "-"
+  };
+}
+
+function formatTravelTime(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value || "-");
+  return parsed.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+}
+
+function inferTravelVia({ flight, sector }) {
+  if (flight?.segments?.length > 1) {
+    return flight.segments.slice(0, -1).map((segment) => segment.arrivalAirport).filter(Boolean).join(" / ") || "Direct";
+  }
+  if (flight?.segments?.length === 1) return "Direct";
+  const raw = String(sector || "").trim().toLowerCase();
+  if (!raw || raw === "-") return "-";
+  if (/cab|pickup|drop|local/.test(raw)) return "Cab";
+  if (/\bvia\b/.test(raw)) {
+    return raw.split(/\bvia\b/i)[1]?.trim() || "Direct";
+  }
+  const parts = parseTravelSectorParts(sector);
+  return parts.from !== "-" && parts.to !== "-" ? "Direct" : "-";
+}
+
+function isFastForwardApplicable(airline = "") {
+  const normalized = String(airline || "").trim().toLowerCase();
+  return Boolean(normalized) && FAST_FORWARD_AIRLINES.some((label) => normalized.includes(label));
+}
+
+function getTravelAssignmentPreference(user, key) {
+  return String(user?.[key] || "").trim() || "-";
+}
+
+function getTravelDocumentRows(shows = []) {
+  const rows = [];
+  let serial = 1;
+  sortShows(shows, "date").forEach((show) => {
+    const assignments = (show.assignments || []).filter((assignment) => getAssignmentCrewName(assignment));
+    assignments.forEach((assignment) => {
+      const makeLegRow = (legLabel, travelDate, travelSector, flight, includeShowMeta) => {
+        const sectorParts = parseTravelSectorParts(travelSector || "-");
+        const airline = String(flight?.carrierName || flight?.marketingLabel || "-").trim() || "-";
+        const routeFrom = flight?.departureAirport || sectorParts.from || "-";
+        const routeTo = flight?.arrivalAirport || sectorParts.to || "-";
+        const resolvedTravelDate = flight?.departureAt ? formatDate(String(flight.departureAt).slice(0, 10)) : (travelDate ? formatDate(travelDate) : "-");
+        return {
+          serial: includeShowMeta ? serial : "",
+          showDate: includeShowMeta ? formatDate(getShowStartDate(show)) : "",
+          artist: includeShowMeta ? (show.showName || "-") : "",
+          city: includeShowMeta ? (show.location || show.venue || "-") : "",
+          crewName: includeShowMeta ? (getAssignmentCrewName(assignment) || "-") : "",
+          legLabel,
+          travelDate: resolvedTravelDate,
+          from: routeFrom,
+          to: routeTo,
+          via: getFlightViaLabel(flight, travelSector),
+          airline,
+          flightNumber: getFlightNumberLabel(flight),
+          departureTime: formatTravelTime(flight?.departureAt),
+          arrivalTime: formatTravelTime(flight?.arrivalAt),
+          seat: "Emergency Exit + Window",
+          meal: "Veg",
+          extraServices: "Fast Forward",
+          excessLuggage: "Nil",
+          extraBag: "Nil",
+          trailing: Array.from({ length: 9 }, () => "")
+        };
+      };
+
+      rows.push(makeLegRow("Onwards", assignment.onwardTravelDate, assignment.onwardTravelSector, assignment.onwardFlight, true));
+      rows.push(makeLegRow("Return", assignment.returnTravelDate, assignment.returnTravelSector, assignment.returnFlight, false));
+      serial += 1;
+    });
+  });
+
+  return rows;
+}
+
+function buildTravelMasterSheetXml(shows) {
+  const headers = [
+    "#",
+    "Show Date",
+    "Artist",
+    "City",
+    "Name of Crew Member",
+    "",
+    "Travel Date",
+    "From",
+    "To",
+    "Via",
+    "Airline",
+    "Flight No.",
+    "Dep. Time",
+    "Arr. Time",
+    "Seat",
+    "Meal",
+    "Extra Services",
+    "Excess Luggage",
+    "Extra Bag",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ];
+  const widths = [4.38, 12, 12.88, 12.13, 21.5, 7.63, 12.38, 12.25, 12.25, 9.13, 13.75, 13.88, 11.38, 10.75, 20.5, 10, 23, 16.63, 11.25, 5, 5, 5, 5, 5, 5, 5, 5, 5];
+  const worksheetRows = [];
+  const merges = [];
+  worksheetRows.push(`<row r="1">${headers.map((header, index) => makeWorksheetCell(`${excelColumnName(index + 1)}1`, header, "inlineStr", 1)).join("")}</row>`);
+
+  const rows = getTravelDocumentRows(shows);
+  rows.forEach((row, index) => {
+    const rowNumber = index + 2;
+    const values = [
+      row.serial,
+      row.showDate,
+      row.artist,
+      row.city,
+      row.crewName,
+      row.legLabel,
+      row.travelDate,
+      row.from,
+      row.to,
+      row.via,
+      row.airline,
+      row.flightNumber,
+      row.departureTime,
+      row.arrivalTime,
+      row.seat,
+      row.meal,
+      row.extraServices,
+      row.excessLuggage,
+      row.extraBag,
+      ...row.trailing
+    ];
+    worksheetRows.push(`<row r="${rowNumber}">${values.map((value, valueIndex) => {
+      const isNumeric = valueIndex === 0;
+      const styleId = typeof value === "string" && value.length > 20 ? 2 : null;
+      return makeWorksheetCell(`${excelColumnName(valueIndex + 1)}${rowNumber}`, value, isNumeric ? "n" : "inlineStr", styleId);
+    }).join("")}</row>`);
+    if (row.legLabel === "Onwards" && rows[index + 1]?.legLabel === "Return") {
+      ["A", "B", "C", "D", "E"].forEach((column) => merges.push(`${column}${rowNumber}:${column}${rowNumber + 1}`));
+    }
+  });
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews>
+    <sheetView workbookViewId="0"/>
+  </sheetViews>
+  <sheetFormatPr defaultRowHeight="18"/>
+  <cols>
+    ${widths.map((width, index) => `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`).join("")}
+  </cols>
+  <sheetData>
+    ${worksheetRows.join("")}
+  </sheetData>
+  ${merges.length ? `<mergeCells count="${merges.length}">${merges.map((ref) => `<mergeCell ref="${ref}"/>`).join("")}</mergeCells>` : ""}
+</worksheet>`;
+}
+
 function buildShowsSheetXml(shows) {
   const headers = [
     "Show Date",
@@ -502,6 +745,46 @@ function buildCrewPayoutsSheetXml(rows) {
 function exportCrewPayoutsExcel(rows, exportKey = "all") {
   if (!rows.length) return;
   downloadSingleSheetWorkbook("Crew Payouts", buildCrewPayoutsSheetXml(rows), `pixelbug-${safeFileNamePart(exportKey)}-crew-payouts.xlsx`);
+}
+
+function sortInvoicesForExport(invoices = []) {
+  return [...invoices].sort((a, b) =>
+    String(a.issueDate || "").localeCompare(String(b.issueDate || ""))
+    || String(a.invoiceNumber || "").localeCompare(String(b.invoiceNumber || ""), undefined, { numeric: true, sensitivity: "base" })
+    || String(a.createdAt || "").localeCompare(String(b.createdAt || ""))
+  );
+}
+
+function excelWidthToGooglePixels(width) {
+  return Math.max(48, Math.round((Number(width || 0) * 7) + 16));
+}
+
+function getShowsGoogleSheetWidths() {
+  return [14, 12, 24, 24, 18, 18, 22, 18].map(excelWidthToGooglePixels);
+}
+
+function getTravelMasterGoogleSheetWidths() {
+  return [4.38, 12, 12.88, 12.13, 21.5, 7.63, 12.38, 12.25, 12.25, 9.13, 13.75, 13.88, 11.38, 10.75, 20.5, 10, 23, 16.63, 11.25, 5, 5, 5, 5, 5, 5, 5, 5, 5].map(excelWidthToGooglePixels);
+}
+
+function getInvoiceGoogleSheetWidths(columns = getInvoiceExportColumns()) {
+  return (columns.length ? columns : getInvoiceExportColumns()).map((column) => excelWidthToGooglePixels(column.width || 18));
+}
+
+function getClientFinancialGoogleSheetWidths() {
+  return [24, 14, 18, 18, 24, 16, 32, 18, 14, 14, 14, 14, 18, 18, 24, 14, 14, 14, 18, 18, 28, 20, 24, 16, 24].map(excelWidthToGooglePixels);
+}
+
+function getClientsGoogleSheetWidths() {
+  return [24, 14, 18, 18, 24, 16, 32, 24, 12, 12].map(excelWidthToGooglePixels);
+}
+
+function getCrewPayoutGoogleSheetWidths() {
+  return [15, 24, 24, 20, 20, 22, 15, 14, 24].map(excelWidthToGooglePixels);
+}
+
+function getLedgerGoogleSheetWidths() {
+  return [14, 12, 18, 28, 14, 14, 14].map(excelWidthToGooglePixels);
 }
 
 function buildInvoicesSheetXml(invoices, columns = getInvoiceExportColumns()) {
@@ -1275,11 +1558,12 @@ function printClientLedger(clientId) {
 
 function exportInvoicesExcel(exportKey, invoices, columns = getInvoiceExportColumns(), options = {}) {
   if (!exportKey || !invoices.length) return;
-  const monthKeys = [...new Set(invoices.map(getInvoiceMonthKey))].sort();
+  const sortedInvoices = sortInvoicesForExport(invoices);
+  const monthKeys = [...new Set(sortedInvoices.map(getInvoiceMonthKey))].sort();
   const fileName = `pixelbug-${safeFileNamePart(exportKey)}-invoices.xlsx`;
   if (options.splitByMonth && monthKeys.length > 1) {
     const sheets = monthKeys.map((monthKey) => {
-      const monthInvoices = invoices.filter((invoice) => getInvoiceMonthKey(invoice) === monthKey);
+      const monthInvoices = sortedInvoices.filter((invoice) => getInvoiceMonthKey(invoice) === monthKey);
       return {
         name: getInvoiceMonthSheetName(monthKey),
         xml: buildInvoicesSheetXml(monthInvoices, columns)
@@ -1289,7 +1573,276 @@ function exportInvoicesExcel(exportKey, invoices, columns = getInvoiceExportColu
     return;
   }
   const sheetName = monthKeys.length === 1 ? getInvoiceMonthSheetName(monthKeys[0]) : exportKey;
-  downloadSingleSheetWorkbook(sheetName, buildInvoicesSheetXml(invoices, columns), fileName);
+  downloadSingleSheetWorkbook(sheetName, buildInvoicesSheetXml(sortedInvoices, columns), fileName);
+}
+
+function getShowsSheetRows(shows) {
+  const rows = [[
+    "Show Date",
+    "No. of days",
+    "Show Name",
+    "Client",
+    "Location",
+    "Amount of the Show",
+    "Assigned Crew",
+    "Operator Amount"
+  ]];
+  shows.forEach((show) => {
+    const assignments = show.assignments.length ? show.assignments : [{ crewId: "", operatorAmount: "" }];
+    assignments.forEach((assignment) => {
+      const startDate = getShowStartDate(show);
+      const endDate = getShowEndDate(show);
+      const numberOfDays = startDate && endDate
+        ? Math.max(1, Math.round((parseDateKey(endDate) - parseDateKey(startDate)) / (1000 * 60 * 60 * 24)) + 1)
+        : 1;
+      rows.push([
+        endDate || startDate || "",
+        numberOfDays,
+        show.showName || "",
+        show.client || "",
+        show.location || "",
+        Number(show.amountShow || 0),
+        getAssignmentCrewName(assignment),
+        Number(assignment.operatorAmount || 0)
+      ]);
+    });
+  });
+  return rows;
+}
+
+function getTravelMasterSheetRows(shows) {
+  const headers = [
+    "#", "Show Date", "Artist", "City", "Name of Crew Member", "",
+    "Travel Date", "From", "To", "Via", "Airline", "Flight No.",
+    "Dep. Time", "Arr. Time", "Seat", "Meal", "Extra Services",
+    "Excess Luggage", "Extra Bag", "", "", "", "", "", "", "", "", ""
+  ];
+  const rows = [headers];
+  getTravelDocumentRows(shows).forEach((row) => {
+    rows.push([
+      row.serial, row.showDate, row.artist, row.city, row.crewName, row.legLabel,
+      row.travelDate, row.from, row.to, row.via, row.airline, row.flightNumber,
+      row.departureTime, row.arrivalTime, row.seat, row.meal, row.extraServices,
+      row.excessLuggage, row.extraBag, ...row.trailing
+    ]);
+  });
+  return rows;
+}
+
+function getInvoiceExportSheetRows(invoices, columns = getInvoiceExportColumns()) {
+  const exportColumns = columns.length ? columns : getInvoiceExportColumns();
+  const groupRow = exportColumns.map((column, index) => {
+    const previous = exportColumns[index - 1];
+    return index === 0 || previous.group !== column.group ? (column.group || "") : "";
+  });
+  const headerRow = exportColumns.map((column) => column.label);
+  const rows = [groupRow, headerRow];
+  sortInvoicesForExport(invoices).forEach((invoice, index) => {
+    const placeOfSupply = invoice.details?.placeOfSupply || getClientById(invoice.clientId)?.state || "";
+    const calculation = getInvoiceCalculationFromValues(invoice.lineItems || [], placeOfSupply);
+    const linkedShows = getLinkedInvoiceShows(invoice);
+    const linkedAssignments = linkedShows.flatMap((show) => show.assignments || []);
+    const lineDescriptions = (invoice.lineItems || []).map((item) => String(item.description || "").trim()).filter(Boolean).join("\n");
+    const showName = getInvoiceLinkedShowNames(invoice).join("\n") || lineDescriptions;
+    const showDate = [...new Set(linkedShows.map((show) => formatDateRange(getShowStartDate(show), getShowEndDate(show))).filter((dateLabel) => dateLabel && dateLabel !== "-"))].join("\n");
+    const showLocations = [...new Set(linkedShows.map((show) => String(show.location || show.venue || "").trim()).filter(Boolean))].join("\n");
+    const basicAmount = calculation.taxableAmount;
+    const gstAmount = calculation.taxAmount;
+    const invoiceAmount = calculation.totalAmount;
+    const tdsAmount = Math.round(basicAmount * 0.10 * 100) / 100;
+    const receivableAmount = Math.round((invoiceAmount - tdsAmount) * 100) / 100;
+    const pixelbugShare = Math.round(basicAmount * 0.10 * 100) / 100;
+    const netAmount = Math.round((basicAmount - pixelbugShare) * 100) / 100;
+    const operatorTotals = { Rahul: 0, Amey: 0, Sachin: 0 };
+    const grossTotals = { Rahul: 0, Amey: 0, Sachin: 0 };
+    const lightDesignerCoreNames = [...new Set(linkedShows
+      .flatMap((show) => (show.assignments || []).map((assignment) => getExportCoreName(getUserById(assignment.lightDesignerId)?.name)).filter(Boolean)))];
+    const primaryCoreName = lightDesignerCoreNames[0] || getExportCoreName(getInvoiceLightDesignerLabel(invoice));
+    const thirdPartyRows = linkedAssignments
+      .map((assignment) => {
+        const crewName = getAssignmentCrewName(assignment);
+        const amount = Math.round(Number(assignment.operatorAmount || 0) * 100) / 100;
+        const tds = Math.round(amount * 0.10 * 100) / 100;
+        return { name: crewName, amount, tds, payable: Math.round((amount - tds) * 100) / 100 };
+      })
+      .filter((row) => row.name && !getExportCoreName(row.name));
+    const tpName = thirdPartyRows.map((row) => row.name).join("\n");
+    const tpAmount = formatMultilineExportAmounts(thirdPartyRows.map((row) => row.amount));
+    const tpAmountTotal = thirdPartyRows.reduce((sum, row) => sum + row.amount, 0);
+    const tpTds = formatMultilineExportAmounts(thirdPartyRows.map((row) => row.tds));
+    const tpPayable = formatMultilineExportAmounts(thirdPartyRows.map((row) => row.payable));
+    const adminCrewCoreNames = [...new Set(linkedAssignments
+      .map((assignment) => getExportCoreName(getAssignmentCrewName(assignment)))
+      .filter(Boolean))];
+    const otherAdminCrewCoreNames = adminCrewCoreNames.filter((coreName) => coreName && coreName !== primaryCoreName);
+    const includesPrimaryAsCrew = primaryCoreName ? adminCrewCoreNames.includes(primaryCoreName) : false;
+    let operatorSplitAlreadyAccountsForTp = false;
+    if (primaryCoreName && includesPrimaryAsCrew && otherAdminCrewCoreNames.length === 2) {
+      const adminPool = Math.max(0, Math.round((netAmount - tpAmountTotal) * 100) / 100);
+      const primaryShare = Math.round(adminPool * 0.40 * 100) / 100;
+      const firstOtherShare = Math.round(adminPool * 0.30 * 100) / 100;
+      const secondOtherShare = Math.round((adminPool - primaryShare - firstOtherShare) * 100) / 100;
+      operatorTotals[primaryCoreName] = primaryShare;
+      operatorTotals[otherAdminCrewCoreNames[0]] = firstOtherShare;
+      operatorTotals[otherAdminCrewCoreNames[1]] = secondOtherShare;
+      operatorSplitAlreadyAccountsForTp = true;
+    } else if (primaryCoreName && otherAdminCrewCoreNames.length >= 1) {
+      const lightDesignerShare = Math.round(netAmount * 0.10 * 100) / 100;
+      const remainingAdminPool = Math.max(0, Math.round((netAmount - lightDesignerShare - tpAmountTotal) * 100) / 100);
+      operatorTotals[primaryCoreName] = lightDesignerShare;
+      if (otherAdminCrewCoreNames.length === 1) {
+        operatorTotals[otherAdminCrewCoreNames[0]] = remainingAdminPool;
+      } else {
+        const firstOtherShare = Math.round((remainingAdminPool / otherAdminCrewCoreNames.length) * 100) / 100;
+        operatorTotals[otherAdminCrewCoreNames[0]] = firstOtherShare;
+        operatorTotals[otherAdminCrewCoreNames[1]] = Math.round((remainingAdminPool - firstOtherShare) * 100) / 100;
+      }
+      operatorSplitAlreadyAccountsForTp = true;
+    } else if (primaryCoreName) {
+      operatorTotals[primaryCoreName] = netAmount;
+    }
+    INVOICE_EXPORT_CORE_NAMES.forEach((coreName) => {
+      grossTotals[coreName] = operatorSplitAlreadyAccountsForTp
+        ? operatorTotals[coreName]
+        : Math.max(0, operatorTotals[coreName] - (coreName === primaryCoreName ? tpAmountTotal : 0));
+    });
+    const values = {
+      serial: index + 1,
+      showDate: showDate || formatInvoiceDate(invoice.issueDate),
+      invoiceNumber: invoice.invoiceNumber,
+      invoiceDate: invoice.issueDate,
+      clientName: invoice.clientName,
+      showName,
+      cityCountry: showLocations || placeOfSupply,
+      showCount: getInvoiceShowCount(invoice, linkedShows),
+      basicAmount,
+      gstAmount,
+      invoiceAmount,
+      tdsAmount,
+      receivableAmount,
+      pixelbugShare,
+      netAmount,
+      operatorRahul: operatorTotals.Rahul || "",
+      operatorAmey: operatorTotals.Amey || "",
+      operatorSachin: operatorTotals.Sachin || "",
+      tpName,
+      tpAmount,
+      tpTds,
+      tpPayable,
+      grossRahul: grossTotals.Rahul || "",
+      grossAmey: grossTotals.Amey || "",
+      grossSachin: grossTotals.Sachin || ""
+    };
+    rows.push(exportColumns.map((column) => values[column.key] ?? ""));
+  });
+  return rows;
+}
+
+function getClientsSheetRows(clients) {
+  const rows = [[
+    "Client Name", "State", "GSTIN", "Contact Person", "Contact Email",
+    "Contact Phone", "Billing Address", "Notes", "Linked Shows", "Linked Invoices"
+  ]];
+  clients.forEach((client) => {
+    const linkedShows = state.shows.filter((show) => (show.clientId || getClientByName(show.client)?.id || "") === client.id).length;
+    const linkedInvoices = state.invoices.filter((invoice) => (invoice.clientId || getClientByName(invoice.clientName)?.id || "") === client.id).length;
+    rows.push([
+      getClientDisplayName(client),
+      client.state || "",
+      client.gstin || "",
+      client.contactName || "",
+      client.contactEmail || "",
+      client.contactPhone || "",
+      client.billingAddress || "",
+      client.notes || "",
+      linkedShows,
+      linkedInvoices
+    ]);
+  });
+  return rows;
+}
+
+function getClientInvoiceExportSheetRows(rows) {
+  return [[
+    "Client Name", "State", "GSTIN", "Contact Person", "Contact Email", "Contact Phone",
+    "Billing Address", "Invoice No", "Invoice Date", "Due Date", "Invoice Status",
+    "Payment Status", "Payment Dates", "Payment Amounts", "Payment Notes", "Amount Paid",
+    "Balance Due", "Invoice Total", "Place of Supply", "Light Designer", "Show Names",
+    "Show Locations", "Crew Names", "Crew Amounts", "Invoice Notes"
+  ], ...rows.map((row) => [
+    row.clientName, row.state, row.gstin, row.contactName, row.contactEmail, row.contactPhone,
+    row.billingAddress, row.invoiceNumber, row.issueDate, row.dueDate, row.invoiceStatus,
+    row.paymentStatus, row.paymentDates, row.paymentAmounts, row.paymentNotes, row.amountPaid,
+    row.balanceDue, row.totalAmount, row.placeOfSupply, row.lightDesigner, row.showNames,
+    row.showLocations, row.crewNames, row.crewAmounts, row.invoiceNotes
+  ])];
+}
+
+function getClientLedgerSheetRows(client, entries) {
+  return [[
+    "Date", "Type", "Reference", "Particulars", "Debit", "Credit", "Balance"
+  ], ...entries.map((entry) => [
+    formatInvoiceDate(entry.date),
+    entry.type,
+    entry.reference,
+    entry.particulars,
+    entry.debit,
+    entry.credit,
+    entry.balance
+  ])];
+}
+
+function getCrewPayoutSheetRows(rows) {
+  return [[
+    "Show Date", "Show Name", "Client", "Crew", "Light Designer",
+    "Location", "Operator Amount", "Status", "Notes"
+  ], ...rows.map((row) => [
+    row.showDateLabel,
+    row.showName,
+    row.clientLabel,
+    row.crewName,
+    row.lightDesigner,
+    row.location,
+    row.operatorAmount,
+    row.statusLabel,
+    row.notes
+  ])];
+}
+
+async function exportGoogleSheetsDocument(title, sheets, options = {}) {
+  if (!state.google?.connected) {
+    throw new Error("Connect Google Calendar first.");
+  }
+  if (!state.google?.sheetsConnected) {
+    throw new Error("Reconnect Google Calendar once to grant Google Sheets access.");
+  }
+  const payload = await apiRequest("/api/admin/google/sheets/export", {
+    method: "POST",
+    body: JSON.stringify({ title, sheets, reuseKey: options.reuseKey || "" })
+  });
+  const spreadsheetUrl = String(
+    payload.spreadsheetUrl
+    || (payload.spreadsheetId ? `https://docs.google.com/spreadsheets/d/${payload.spreadsheetId}/edit` : "")
+  ).trim();
+  if (!spreadsheetUrl) {
+    throw new Error("Google Sheet was created, but no sheet link was returned.");
+  }
+  state.google.lastExportTitle = title;
+  state.google.lastExportUrl = spreadsheetUrl;
+  if (state.ui.activeSidebarTab === "documentsPanel") {
+    renderDocumentCenterPanel();
+  }
+  if (spreadsheetUrl) {
+    copyToClipboard(spreadsheetUrl).catch(() => {});
+    window.setTimeout(() => {
+      window.prompt("Google Sheet created. Copy this link:", spreadsheetUrl);
+    }, 0);
+  }
+  const openedWindow = window.open(spreadsheetUrl, "_blank", "noopener");
+  if (!openedWindow && spreadsheetUrl) {
+    window.location.href = spreadsheetUrl;
+  }
+  return payload;
 }
 
 function seedState() {
@@ -1304,7 +1857,9 @@ function seedState() {
       connected: false,
       calendarId: "",
       lastSyncAt: "",
-      lastError: ""
+      lastError: "",
+      lastExportTitle: "",
+      lastExportUrl: ""
     },
     view: {
       year: new Date().getFullYear(),
@@ -1354,8 +1909,11 @@ function seedState() {
       payoutClient: "all",
       payoutPage: 1,
       payoutPageSize: 10,
-      documentShowsYear: "all",
-      documentShowsMonth: "all",
+      documentShowsDateFrom: "",
+      documentShowsDateTo: "",
+      documentTravelClient: "all",
+      documentTravelDateFrom: "",
+      documentTravelDateTo: "",
       documentInvoicesYear: "all",
       documentInvoicesMonth: "all",
       documentInvoicesClient: "all",
@@ -1420,6 +1978,45 @@ function loadLocalUiState() {
   }
 }
 
+function normalizeStoredFlightSelection(flight) {
+  if (!flight || typeof flight !== "object") return null;
+  const segments = Array.isArray(flight.segments)
+    ? flight.segments
+        .filter((segment) => segment && typeof segment === "object")
+        .map((segment) => ({
+          carrierCode: String(segment.carrierCode || "").trim(),
+          carrierName: String(segment.carrierName || "").trim(),
+          flightNumber: String(segment.flightNumber || "").trim(),
+          departureAirport: String(segment.departureAirport || "").trim(),
+          departureAt: String(segment.departureAt || "").trim(),
+          arrivalAirport: String(segment.arrivalAirport || "").trim(),
+          arrivalAt: String(segment.arrivalAt || "").trim(),
+          duration: String(segment.duration || "").trim(),
+          aircraft: String(segment.aircraft || "").trim()
+        }))
+    : [];
+
+  return {
+    id: String(flight.id || "").trim(),
+    carrierCode: String(flight.carrierCode || "").trim(),
+    carrierName: String(flight.carrierName || "").trim(),
+    flightNumber: String(flight.flightNumber || "").trim(),
+    marketingLabel: String(flight.marketingLabel || "").trim(),
+    departureAirport: String(flight.departureAirport || "").trim(),
+    departureAt: String(flight.departureAt || "").trim(),
+    arrivalAirport: String(flight.arrivalAirport || "").trim(),
+    arrivalAt: String(flight.arrivalAt || "").trim(),
+    duration: String(flight.duration || "").trim(),
+    stops: Number.isFinite(Number(flight.stops)) ? Number(flight.stops) : 0,
+    price: Number(flight.price || 0),
+    currency: String(flight.currency || "").trim(),
+    cabin: String(flight.cabin || "").trim(),
+    bookingClass: String(flight.bookingClass || "").trim(),
+    lastTicketingDate: String(flight.lastTicketingDate || "").trim(),
+    segments
+  };
+}
+
 function normalizeState() {
   ensureUiState();
   ensureViewState();
@@ -1442,6 +2039,8 @@ function normalizeState() {
       returnTravelDate: assignment.returnTravelDate ?? "",
       onwardTravelSector: assignment.onwardTravelSector ?? assignment.travelSector ?? legacyTravelSector,
       returnTravelSector: assignment.returnTravelSector ?? "",
+      onwardFlight: normalizeStoredFlightSelection(assignment.onwardFlight),
+      returnFlight: normalizeStoredFlightSelection(assignment.returnFlight),
       notes: assignment.notes ?? assignment.travelNotes ?? legacyTravelNotes,
       travelDate: undefined,
       travelSector: undefined,
@@ -1536,9 +2135,15 @@ async function apiRequest(path, options = {}) {
     body: options.body
   });
 
-  const payload = await response.json().catch(() => ({}));
+  const rawText = await response.text();
+  let payload = {};
+  try {
+    payload = rawText ? JSON.parse(rawText) : {};
+  } catch (error) {
+    payload = {};
+  }
   if (!response.ok) {
-    throw new Error(payload.error || "Request failed.");
+    throw new Error(payload.error || rawText || "Request failed.");
   }
   return payload;
 }
@@ -1705,8 +2310,8 @@ function ensureUiState() {
       payoutMonth: "all",
       payoutCrew: "all",
       payoutClient: "all",
-      documentShowsYear: "all",
-      documentShowsMonth: "all",
+      documentShowsDateFrom: "",
+      documentShowsDateTo: "",
       documentInvoicesYear: "all",
       documentInvoicesMonth: "all",
       documentInvoicesClient: "all",
@@ -1897,8 +2502,8 @@ function ensureUiState() {
     state.ui.payoutPageSize = 10;
   }
 
-  if (!state.ui.documentShowsYear) state.ui.documentShowsYear = "all";
-  if (!state.ui.documentShowsMonth) state.ui.documentShowsMonth = "all";
+  if (typeof state.ui.documentShowsDateFrom !== "string") state.ui.documentShowsDateFrom = "";
+  if (typeof state.ui.documentShowsDateTo !== "string") state.ui.documentShowsDateTo = "";
   if (!state.ui.documentInvoicesYear) state.ui.documentInvoicesYear = "all";
   if (!state.ui.documentInvoicesMonth) state.ui.documentInvoicesMonth = "all";
   if (!state.ui.documentInvoicesClient) state.ui.documentInvoicesClient = "all";
@@ -2238,6 +2843,10 @@ function getInvoiceStatusTone(invoice) {
 }
 
 function getInvoiceLightDesignerLabel(invoice) {
+  const selectedDesigner = getUserById(normalizeInvoiceDetails(invoice.details).lightDesignerId);
+  if (selectedDesigner?.name) {
+    return selectedDesigner.name;
+  }
   const names = [...new Set((invoice.lineItems || [])
     .flatMap((item) => parseInvoiceShowIds(item.showId)
       .map((showId) => state.shows.find((show) => show.id === showId))
@@ -2258,6 +2867,14 @@ function getInvoiceLinkedShowNames(invoice) {
 function getInvoiceClientLabel(invoice) {
   const client = getClientById(invoice?.clientId) || getClientByName(invoice?.clientName);
   return client ? getClientDisplayName(client) : String(invoice?.clientName || "Client TBD").trim() || "Client TBD";
+}
+
+function getInvoiceLightDesignerIdFromShows(shows = []) {
+  const lightDesignerIds = [...new Set((shows || [])
+    .flatMap((show) => Array.isArray(show.assignments) ? show.assignments : [])
+    .map((assignment) => String(assignment.lightDesignerId || "").trim())
+    .filter(Boolean))];
+  return lightDesignerIds.length === 1 ? lightDesignerIds[0] : "";
 }
 
 function buildInvoiceDraftTemplateFromInvoice(invoice) {
@@ -2308,6 +2925,7 @@ function normalizeInvoiceDetails(details = {}) {
     clientGstin: String(source.clientGstin || "").trim(),
     placeOfSupply: String(source.placeOfSupply || "").trim(),
     paymentTerms: String(source.paymentTerms || "Net 15").trim(),
+    lightDesignerId: String(source.lightDesignerId || "").trim(),
     bankAccountName: String(source.bankAccountName || "").trim(),
     bankName: String(source.bankName || "").trim(),
     bankAccountNumber: String(source.bankAccountNumber || "").trim(),
@@ -3386,12 +4004,29 @@ function renderSessionActions(user) {
               <div id="changePasswordMessage" class="message"></div>
             </form>
           ` : `
-            <div class="stack tight profile-menu-info">
-              <div><strong>${user.name}</strong></div>
-              <div class="meta-line">${user.email}</div>
-              <div class="meta-line">Role: ${getRoleLabel(user.role)}</div>
-              <div class="meta-line">Phone: ${user.phone}</div>
-            </div>
+            <form id="profilePreferencesForm" class="stack tight profile-menu-form">
+              <div class="profile-menu-info">
+                <div><strong>${user.name}</strong></div>
+                <div class="meta-line">${user.email}</div>
+                <div class="meta-line">Role: ${getRoleLabel(user.role)}</div>
+                <div class="meta-line">Phone: ${user.phone}</div>
+              </div>
+              <label>
+                <span>Meal Preference</span>
+                <select name="mealPreference">
+                  ${TRAVEL_MEAL_OPTIONS.map((option) => `<option value="${escapeHtml(option)}" ${String(user.mealPreference || "") === option ? "selected" : ""}>${option || "Select meal"}</option>`).join("")}
+                </select>
+              </label>
+              <label>
+                <span>Seat Preference</span>
+                <select name="seatPreference">
+                  ${TRAVEL_SEAT_OPTIONS.map((option) => `<option value="${escapeHtml(option)}" ${String(user.seatPreference || "") === option ? "selected" : ""}>${option || "Select seat"}</option>`).join("")}
+                </select>
+              </label>
+              <p class="muted-note">These are used as defaults in the Travel Master export.</p>
+              <button type="submit" class="secondary">Save Preferences</button>
+              <div id="profilePreferencesMessage" class="message"></div>
+            </form>
           `}
           <button type="button" class="secondary small" id="logoutButton">Logout</button>
         </div>
@@ -3454,6 +4089,31 @@ function renderSessionActions(user) {
         });
         message.textContent = "Password updated.";
         changePasswordForm.reset();
+      } catch (error) {
+        message.textContent = error.message;
+      }
+    });
+  }
+
+  const profilePreferencesForm = document.getElementById("profilePreferencesForm");
+  if (profilePreferencesForm) {
+    profilePreferencesForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(profilePreferencesForm);
+      const message = document.getElementById("profilePreferencesMessage");
+      try {
+        const payload = await apiRequest("/api/profile", {
+          method: "POST",
+          body: JSON.stringify({
+            mealPreference: form.get("mealPreference").toString(),
+            seatPreference: form.get("seatPreference").toString()
+          })
+        });
+        applyServerState(payload);
+        saveState(state);
+        renderSessionActions(getCurrentUser());
+        const nextMessage = document.getElementById("profilePreferencesMessage");
+        if (nextMessage) nextMessage.textContent = "Preferences saved.";
       } catch (error) {
         message.textContent = error.message;
       }
@@ -4479,6 +5139,107 @@ function renderShowsPanel(user, shows, sourceShows = shows) {
   });
 }
 
+function formatFlightDateTime(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString("en-IN", {
+    day: "numeric",
+    month: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true
+  });
+}
+
+function formatFlightDuration(duration) {
+  const match = String(duration || "").match(/^P(?:\d+D)?T(?:(\d+)H)?(?:(\d+)M)?$/i);
+  if (!match) return duration || "-";
+  const hours = Number(match[1] || 0);
+  const minutes = Number(match[2] || 0);
+  const parts = [];
+  if (hours) parts.push(`${hours}h`);
+  if (minutes) parts.push(`${minutes}m`);
+  return parts.join(" ") || "0m";
+}
+
+function getFlightNumberLabel(flight) {
+  if (!flight) return "-";
+  const segmentNumbers = Array.isArray(flight.segments)
+    ? flight.segments
+        .map((segment) => [segment.carrierCode, segment.flightNumber].filter(Boolean).join(" ").trim())
+        .filter(Boolean)
+    : [];
+  if (segmentNumbers.length) {
+    return segmentNumbers.join(" / ");
+  }
+  return [flight.carrierCode, flight.flightNumber].filter(Boolean).join(" ").trim() || "-";
+}
+
+function getFlightViaLabel(flight, sector = "") {
+  if (flight?.segments?.length > 1) {
+    const viaStops = flight.segments
+      .slice(0, -1)
+      .map((segment) => segment.arrivalAirport)
+      .filter(Boolean);
+    return viaStops.length ? viaStops.join(" / ") : "Direct";
+  }
+  if (flight?.segments?.length === 1) return "Direct";
+  return inferTravelVia({ flight, sector });
+}
+
+function getFlightRouteLabel(flight, sector = "") {
+  const sectorParts = parseTravelSectorParts(sector || "-");
+  const from = flight?.departureAirport || sectorParts.from || "-";
+  const to = flight?.arrivalAirport || sectorParts.to || "-";
+  return `${from} -> ${to}`;
+}
+
+function getFlightSelectionSummary(flight) {
+  if (!flight) return "";
+  const label = flight.marketingLabel || [flight.carrierName, flight.flightNumber].filter(Boolean).join(" ").trim();
+  const stopsLabel = Number(flight.stops || 0) === 0 ? "Non-stop" : `${flight.stops} stop${Number(flight.stops) === 1 ? "" : "s"}`;
+  return [
+    label,
+    [flight.departureAirport, flight.arrivalAirport].filter(Boolean).join(" -> "),
+    formatFlightDateTime(flight.departureAt),
+    `${formatFlightDuration(flight.duration)} · ${stopsLabel}`
+  ].filter(Boolean).join(" · ");
+}
+
+function getFlightTicketMarkup(flight, sector = "", travelDate = "") {
+  if (!flight) {
+    return '<div class="muted-note">No flight selected yet.</div>';
+  }
+  const airlineLabel = flight.carrierName || flight.marketingLabel || "-";
+  const cabinParts = [flight.cabin, flight.bookingClass].filter(Boolean);
+  const fareLabel = Number.isFinite(Number(flight.price)) && Number(flight.price) > 0
+    ? `${flight.currency || "INR"} ${Number(flight.price).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`
+    : "";
+  const metaParts = [
+    `${getFlightRouteLabel(flight, sector)} · ${getFlightViaLabel(flight, sector)}`,
+    `${formatFlightDateTime(flight.departureAt)} -> ${formatFlightDateTime(flight.arrivalAt)}`,
+    `${formatFlightDuration(flight.duration)} · ${Number(flight.stops || 0) === 0 ? "Non-stop" : `${flight.stops} stop${Number(flight.stops) === 1 ? "" : "s"}`}`,
+    cabinParts.join(" · "),
+    fareLabel,
+    travelDate ? `Travel Date ${formatDate(travelDate)}` : ""
+  ].filter(Boolean);
+  const segmentMarkup = (flight.segments || []).map((segment) => `
+    <div class="assignment-flight-segment">
+      <strong>${escapeHtml([segment.carrierName, segment.flightNumber].filter(Boolean).join(" ").trim() || "-")}</strong>
+      <span>${escapeHtml(segment.departureAirport)} ${escapeHtml(formatFlightDateTime(segment.departureAt))} -> ${escapeHtml(segment.arrivalAirport)} ${escapeHtml(formatFlightDateTime(segment.arrivalAt))}${segment.aircraft ? ` · ${escapeHtml(segment.aircraft)}` : ""}</span>
+    </div>
+  `).join("");
+  return `
+    <div class="assignment-flight-selected-card">
+      <strong>${escapeHtml(airlineLabel)}</strong>
+      <div class="meta">Flight No: ${escapeHtml(getFlightNumberLabel(flight))}</div>
+      ${metaParts.map((part) => `<div class="meta">${escapeHtml(part)}</div>`).join("")}
+      ${segmentMarkup ? `<div class="assignment-flight-segments">${segmentMarkup}</div>` : ""}
+    </div>
+  `;
+}
+
 function renderShowCard(show, user, selectedForInvoice = false) {
   const assignments = show.assignments.map((assignment) => {
     const crewUser = getUserById(assignment.crewId);
@@ -4511,6 +5272,10 @@ function renderShowCard(show, user, selectedForInvoice = false) {
             <div class="meta">Return Travel Date: ${returnTravelDate}</div>
             <div class="meta">Onward Travel Sector: ${onwardTravelSector}</div>
             <div class="meta">Return Travel Sector: ${returnTravelSector}</div>
+            <div class="meta"><strong>Onward Ticket</strong></div>
+            ${getFlightTicketMarkup(assignment.onwardFlight, assignment.onwardTravelSector, assignment.onwardTravelDate)}
+            <div class="meta"><strong>Return Ticket</strong></div>
+            ${getFlightTicketMarkup(assignment.returnFlight, assignment.returnTravelSector, assignment.returnTravelDate)}
             <div class="meta">Notes: ${notes}</div>
           </div>
         </details>
@@ -5002,9 +5767,12 @@ async function printInvoiceById(invoiceId, copyCount = state.ui.invoicePrintCopi
   modal.setAttribute("aria-hidden", "false");
   document.body.classList.add("modal-open");
   document.body.classList.add("invoice-printing");
+  const previousTitle = document.title;
+  document.title = String(invoice.invoiceNumber || "Invoice").trim() || "Invoice";
 
   const cleanupAfterPrint = () => {
     document.body.classList.remove("invoice-printing");
+    document.title = previousTitle;
     window.removeEventListener("afterprint", cleanupAfterPrint);
   };
 
@@ -5021,6 +5789,7 @@ function findInvoiceUsingShow(showId, excludeInvoiceId = "") {
 function renderInvoicesPanel() {
   const panel = document.getElementById("invoicesPanel");
   const invoices = sortInvoices(state.invoices || []);
+  const adminOptions = state.users.filter((candidate) => candidate.role === "admin" && candidate.approved);
   const clientMasterOptions = getSortedClients();
   const clientOptions = getInvoiceClientOptions(invoices);
   const invoiceYearOptions = ["all", ...getInvoiceYearOptions(invoices)];
@@ -5044,38 +5813,7 @@ function renderInvoicesPanel() {
   }
   const filteredInvoices = filterInvoices(invoices);
   const invoicePagination = getPaginationSlice(filteredInvoices, "invoiceRegisterPage", "invoiceRegisterPageSize");
-  const todayKey = dateKey(new Date());
-  const nextSevenKey = dateKey(addDays(new Date(), 7));
   const registerInvoices = filteredInvoices;
-  const overdueInvoices = registerInvoices
-    .filter((invoice) => Number(invoice.balanceDue || 0) > 0 && invoice.dueDate && invoice.dueDate < todayKey && invoice.status !== "cancelled")
-    .sort((a, b) => String(a.dueDate || "").localeCompare(String(b.dueDate || "")));
-  const dueSoonInvoices = registerInvoices
-    .filter((invoice) => Number(invoice.balanceDue || 0) > 0 && invoice.dueDate && invoice.dueDate >= todayKey && invoice.dueDate <= nextSevenKey && invoice.status !== "cancelled")
-    .sort((a, b) => String(a.dueDate || "").localeCompare(String(b.dueDate || "")));
-  const partialInvoices = registerInvoices
-    .filter((invoice) => getInvoicePaymentBucket(invoice) === "partiallyPaid")
-    .sort((a, b) => Number(b.balanceDue || 0) - Number(a.balanceDue || 0));
-  const recentCollections = registerInvoices
-    .flatMap((invoice) => (Array.isArray(invoice.paymentEntries) ? invoice.paymentEntries : []).map((payment) => ({
-      ...payment,
-      invoiceNumber: invoice.invoiceNumber,
-      clientName: getInvoiceClientLabel(invoice),
-      invoiceId: invoice.id
-    })))
-    .sort((a, b) => String(b.paymentDate || "").localeCompare(String(a.paymentDate || "")))
-    .slice(0, 5);
-  const topClientOutstanding = [...registerInvoices.reduce((map, invoice) => {
-    const clientLabel = getInvoiceClientLabel(invoice);
-    const current = map.get(clientLabel) || { clientLabel, outstanding: 0, invoices: 0 };
-    current.outstanding += Number(invoice.balanceDue || 0);
-    current.invoices += 1;
-    map.set(clientLabel, current);
-    return map;
-  }, new Map()).values()]
-    .filter((item) => item.outstanding > 0)
-    .sort((a, b) => b.outstanding - a.outstanding)
-    .slice(0, 5);
   const availableShows = [...state.shows].sort((a, b) => getShowStartDate(b).localeCompare(getShowStartDate(a)));
   const editingInvoice = state.ui.editingInvoiceId
     ? invoices.find((invoice) => invoice.id === state.ui.editingInvoiceId)
@@ -5181,6 +5919,13 @@ function renderInvoicesPanel() {
             </label>
             <label class="field"><span>Issue Date</span><input type="date" name="issueDate" required autocomplete="off"></label>
             <label class="field">
+              <span>Light Designer</span>
+              <select name="lightDesignerId">
+                <option value="">Select light designer</option>
+                ${adminOptions.map((adminUser) => `<option value="${adminUser.id}">${escapeHtml(adminUser.name)}</option>`).join("")}
+              </select>
+            </label>
+            <label class="field">
               <span>Status</span>
               <select name="status">
                 <option value="draft">Draft</option>
@@ -5201,7 +5946,7 @@ function renderInvoicesPanel() {
             </label>
             <label class="field"><span>Amount Paid</span><input type="number" name="amountPaid" min="0" step="0.01" autocomplete="off"></label>
           </div>
-          <label class="field editor-section"><span>Notes</span><input type="text" name="notes" autocomplete="off"></label>
+          <label class="field editor-section"><span>Notes</span><textarea name="notes" rows="3" autocomplete="off"></textarea></label>
           <div class="stack tight editor-section">
             <div class="form-header">
               <div>
@@ -5232,81 +5977,8 @@ function renderInvoicesPanel() {
         <div class="form-header">
           <div>
             <h4>Invoice Register</h4>
-            <p class="muted-note">Recent invoices with status, balance, and linked shows.</p>
           </div>
           <span class="pill">${filteredInvoices.length} ${filteredInvoices.length === 1 ? "result" : "results"}</span>
-        </div>
-        <div class="client-detail-grid invoice-collections-grid">
-          <section class="assignment-card">
-            <strong>Overdue</strong>
-            <div class="stack tight client-detail-list">
-              ${overdueInvoices.length ? overdueInvoices.slice(0, 5).map((invoice) => `
-                <div class="client-detail-row">
-                  <div>
-                    <strong>${escapeHtml(invoice.invoiceNumber)}</strong>
-                    <div class="meta">${escapeHtml(getInvoiceClientLabel(invoice))} · Due ${escapeHtml(formatInvoiceDate(invoice.dueDate))}</div>
-                  </div>
-                  <strong>${formatCurrency(invoice.balanceDue || 0)}</strong>
-                </div>
-              `).join("") : '<p class="meta">No overdue invoices in this view.</p>'}
-            </div>
-          </section>
-          <section class="assignment-card">
-            <strong>Due In 7 Days</strong>
-            <div class="stack tight client-detail-list">
-              ${dueSoonInvoices.length ? dueSoonInvoices.slice(0, 5).map((invoice) => `
-                <div class="client-detail-row">
-                  <div>
-                    <strong>${escapeHtml(invoice.invoiceNumber)}</strong>
-                    <div class="meta">${escapeHtml(getInvoiceClientLabel(invoice))} · Due ${escapeHtml(formatInvoiceDate(invoice.dueDate))}</div>
-                  </div>
-                  <strong>${formatCurrency(invoice.balanceDue || 0)}</strong>
-                </div>
-              `).join("") : '<p class="meta">Nothing due in the next 7 days.</p>'}
-            </div>
-          </section>
-          <section class="assignment-card">
-            <strong>Partially Paid</strong>
-            <div class="stack tight client-detail-list">
-              ${partialInvoices.length ? partialInvoices.slice(0, 5).map((invoice) => `
-                <div class="client-detail-row">
-                  <div>
-                    <strong>${escapeHtml(invoice.invoiceNumber)}</strong>
-                    <div class="meta">${escapeHtml(getInvoiceClientLabel(invoice))} · Paid ${formatCurrency(invoice.amountPaid || 0)}</div>
-                  </div>
-                  <strong>${formatCurrency(invoice.balanceDue || 0)}</strong>
-                </div>
-              `).join("") : '<p class="meta">No partially paid invoices in this view.</p>'}
-            </div>
-          </section>
-          <section class="assignment-card">
-            <strong>Recent Collections</strong>
-            <div class="stack tight client-detail-list">
-              ${recentCollections.length ? recentCollections.map((payment) => `
-                <div class="client-detail-row">
-                  <div>
-                    <strong>${escapeHtml(formatInvoiceDate(payment.paymentDate))}</strong>
-                    <div class="meta">${escapeHtml(payment.clientName)} · ${escapeHtml(payment.invoiceNumber)}</div>
-                  </div>
-                  <strong>${formatCurrency(payment.amount || 0)}</strong>
-                </div>
-              `).join("") : '<p class="meta">No recent collections in this view.</p>'}
-            </div>
-          </section>
-          <section class="assignment-card">
-            <strong>Top Outstanding Clients</strong>
-            <div class="stack tight client-detail-list">
-              ${topClientOutstanding.length ? topClientOutstanding.map((entry) => `
-                <div class="client-detail-row">
-                  <div>
-                    <strong>${escapeHtml(entry.clientLabel)}</strong>
-                    <div class="meta">${entry.invoices} ${entry.invoices === 1 ? "invoice" : "invoices"} in this view</div>
-                  </div>
-                  <strong>${formatCurrency(entry.outstanding)}</strong>
-                </div>
-              `).join("") : '<p class="meta">No outstanding client balances in this view.</p>'}
-            </div>
-          </section>
         </div>
         <div class="shows-toolbar invoice-toolbar">
           <div class="shows-toolbar-top">
@@ -5385,13 +6057,25 @@ function renderInvoicesPanel() {
                   <div class="meta">${getInvoiceLightDesignerLabel(invoice) ? `Light Designer: ${getInvoiceLightDesignerLabel(invoice)}` : "Light Designer: -"}</div>
                 </div>
                 <div class="toolbar">
-                  <span class="pill invoice-status-pill invoice-status-${getInvoiceStatusTone(invoice)}">${getInvoiceStatusLabel(invoice)}</span>
-                  <button type="button" class="secondary small" data-mark-payment="${invoice.id}">Mark Payment</button>
-                  <button type="button" class="ghost small" data-duplicate-invoice="${invoice.id}">Duplicate</button>
-                  <button type="button" class="ghost small" data-preview-invoice="${invoice.id}">Preview</button>
                   <button type="button" class="secondary small" data-edit-invoice="${invoice.id}">Edit</button>
                 </div>
               </header>
+              <div class="toolbar">
+                <label class="sort-control invoice-card-status-control">
+                  <span>Status</span>
+                  <select data-inline-invoice-status="${invoice.id}">
+                    <option value="draft" ${invoice.status === "draft" ? "selected" : ""}>Draft</option>
+                    <option value="sent" ${invoice.status === "sent" ? "selected" : ""}>Sent</option>
+                    <option value="partially_paid" ${invoice.status === "partially_paid" ? "selected" : ""}>Partially Paid</option>
+                    <option value="paid" ${invoice.status === "paid" ? "selected" : ""}>Paid</option>
+                    <option value="cancelled" ${invoice.status === "cancelled" ? "selected" : ""}>Cancelled</option>
+                  </select>
+                </label>
+                <button type="button" class="secondary small" data-mark-payment="${invoice.id}">Mark Payment</button>
+                <button type="button" class="ghost small" data-duplicate-invoice="${invoice.id}">Duplicate</button>
+                <button type="button" class="ghost small" data-preview-invoice="${invoice.id}">Preview</button>
+                <button type="button" class="ghost small" data-print-invoice="${invoice.id}">Print</button>
+              </div>
               <div class="show-banner">
                 <span class="show-banner-item">${formatCurrency(invoice.totalAmount)}</span>
                 <span class="show-banner-item">Paid ${formatCurrency(invoice.amountPaid)}</span>
@@ -5522,6 +6206,7 @@ function renderInvoicesPanel() {
   const form = document.getElementById("invoiceForm");
   const lineItemsContainer = document.getElementById("invoiceLineItems");
   const clientSelect = form.elements.namedItem("clientId");
+  const lightDesignerSelect = form.elements.namedItem("lightDesignerId");
 
   function getInvoiceShowPickerLabel(selectedShowIds = []) {
     if (!selectedShowIds.length) return "No linked show - custom details";
@@ -5621,8 +6306,10 @@ function renderInvoicesPanel() {
         });
         setDirtyForm("invoice");
         syncInvoiceShowPicker(picker);
+        menu?.classList.add("hidden");
         const row = picker.closest("[data-invoice-line-item]");
         row?.querySelector('input[name="lineDescription"]')?.focus();
+        maybeAutofillInvoiceLightDesigner();
         updateTotalsPreview();
       });
       picker.querySelectorAll("[data-show-picker-checkbox]").forEach((checkbox) => {
@@ -5661,6 +6348,8 @@ function renderInvoicesPanel() {
             duplicateWarning.querySelector("strong").textContent = duplicates.length ? `Already on ${[...new Set(duplicates.map((invoice) => invoice.invoiceNumber))].join(", ")}` : "";
           }
           setDirtyForm("invoice");
+          menu?.classList.add("hidden");
+          maybeAutofillInvoiceLightDesigner();
           updateTotalsPreview();
         });
       });
@@ -5699,6 +6388,21 @@ function renderInvoicesPanel() {
     document.getElementById("invoiceIgstPreview").textContent = calculation.igstAmount ? formatCurrency(calculation.igstAmount) : "-";
     document.getElementById("invoiceTotalPreview").textContent = formatCurrency(totalAmount);
     document.getElementById("invoiceBalancePreview").textContent = formatCurrency(balanceDue);
+  }
+
+  function getSelectedInvoiceShows() {
+    return [...lineItemsContainer.querySelectorAll("[data-show-picker]")]
+      .flatMap((picker) => parseInvoiceShowIds(picker.querySelector('input[name="lineShowId"]')?.value || ""))
+      .map((showId) => state.shows.find((show) => show.id === showId))
+      .filter(Boolean);
+  }
+
+  function maybeAutofillInvoiceLightDesigner() {
+    if (!lightDesignerSelect || String(lightDesignerSelect.value || "").trim()) return;
+    const derivedLightDesignerId = getInvoiceLightDesignerIdFromShows(getSelectedInvoiceShows());
+    if (!derivedLightDesignerId) return;
+    lightDesignerSelect.value = derivedLightDesignerId;
+    syncCustomSelect(lightDesignerSelect);
   }
 
   function addLineItemRow(lineItem = null) {
@@ -5958,7 +6662,9 @@ function renderInvoicesPanel() {
     status: "draft",
     amountPaid: 0,
     notes: "",
-    details: normalizeInvoiceDetails(),
+    details: normalizeInvoiceDetails({
+      lightDesignerId: getInvoiceLightDesignerIdFromShows(draftShows)
+    }),
     lineItems: draftShows.map((show) => ({
       id: uid("line"),
       showId: show.id,
@@ -6005,13 +6711,16 @@ function renderInvoicesPanel() {
   form.elements.namedItem("amountPaid").value = initialInvoice.amountPaid ?? 0;
   form.elements.namedItem("notes").value = initialInvoice.notes || "";
   form.elements.namedItem("paymentTerms").value = initialInvoice.details.paymentTerms || "Net 15";
+  form.elements.namedItem("lightDesignerId").value = initialInvoice.details.lightDesignerId || "";
   syncCustomSelect(form.elements.namedItem("clientId"));
+  syncCustomSelect(form.elements.namedItem("lightDesignerId"));
   lineItemsContainer.innerHTML = "";
   if (initialInvoice.lineItems.length) {
     initialInvoice.lineItems.forEach((item) => addLineItemRow(item));
   } else {
     addLineItemRow();
   }
+  maybeAutofillInvoiceLightDesigner();
   updateTotalsPreview();
 
   clientSelect.addEventListener("change", refreshLineItemShowOptions);
@@ -6074,6 +6783,7 @@ function renderInvoicesPanel() {
             clientGstin: selectedClient.gstin || "",
             placeOfSupply: selectedClient.state || "",
             paymentTerms,
+            lightDesignerId: form.elements.namedItem("lightDesignerId").value.trim(),
             clientBillingAddress: selectedClient.billingAddress || ""
           },
           lineItems
@@ -6194,6 +6904,57 @@ function renderInvoicesPanel() {
     });
   });
 
+  panel.querySelectorAll("[data-print-invoice]").forEach((button) => {
+    button.addEventListener("click", () => {
+      printInvoiceById(button.dataset.printInvoice);
+    });
+  });
+
+  panel.querySelectorAll("[data-inline-invoice-status]").forEach((select) => {
+    select.addEventListener("change", async (event) => {
+      const invoiceId = event.currentTarget.dataset.inlineInvoiceStatus;
+      const nextStatus = event.currentTarget.value;
+      const invoice = invoices.find((item) => item.id === invoiceId);
+      if (!invoice) return;
+      try {
+        const payload = await apiRequest("/api/admin/invoices", {
+          method: "POST",
+          body: JSON.stringify({
+            id: invoice.id,
+            invoiceNumber: invoice.invoiceNumber,
+            clientId: invoice.clientId,
+            clientName: invoice.clientName,
+            issueDate: invoice.issueDate,
+            dueDate: invoice.dueDate,
+            status: nextStatus,
+            taxPercent: invoice.taxPercent,
+            amountPaid: Number(invoice.amountPaid || 0),
+            notes: invoice.notes || "",
+            details: normalizeInvoiceDetails(invoice.details),
+            lineItems: (invoice.lineItems || []).map((item) => ({
+              id: item.id,
+              showId: item.showId || "",
+              description: item.description || "",
+              sac: item.sac || "",
+              customDetails: item.customDetails || "",
+              discount: item.discount || "",
+              quantity: Number(item.quantity || 1),
+              unitRate: Number(item.unitRate || 0),
+              lineOrder: Number(item.lineOrder || 0)
+            })),
+            paymentEntries: Array.isArray(invoice.paymentEntries) ? invoice.paymentEntries : []
+          })
+        });
+        applyServerState(payload);
+        renderDashboard();
+        showToast(`Invoice marked ${getInvoiceStatusLabel({ ...invoice, status: nextStatus })}.`);
+      } catch (error) {
+        event.currentTarget.value = invoice.status || "draft";
+        showToast(error.message);
+      }
+    });
+  });
+
   panel.querySelectorAll("[data-open-payment-invoice]").forEach((button) => {
     button.addEventListener("click", () => {
       if (!confirmDiscardDirtyForm("open this invoice")) return;
@@ -6291,7 +7052,10 @@ function renderGoogleEntriesPanel(user) {
         <div class="toolbar google-calendar-actions">
           <span class="pill">${activeGoogleShows.length} ${activeGoogleShows.length === 1 ? "entry" : "entries"}</span>
           ${googleStatus.connected
-            ? `<button type="button" class="secondary small" id="googleSyncNowButton">Sync Now</button>`
+            ? `${googleStatus.sheetsConnected
+                ? ""
+                : `<button type="button" class="ghost small" id="googleReconnectButton">Reconnect For Sheets</button>`}
+               <button type="button" class="secondary small" id="googleSyncNowButton">Sync Now</button>`
             : `<button type="button" class="secondary small" id="googleConnectButton" ${googleStatus.configured ? "" : "disabled"}>${googleStatus.configured ? "Connect Google Calendar" : "Google Not Configured"}</button>`}
         </div>
       </div>
@@ -6327,6 +7091,7 @@ function renderGoogleEntriesPanel(user) {
           </div>
           <div class="google-sync-meta-right">
             <div class="meta"><strong>Status:</strong> ${googleStatus.connected ? "Connected" : googleStatus.configured ? "Ready to connect" : "Missing config"}</div>
+            ${googleStatus.connected ? `<div class="meta"><strong>Sheets Export:</strong> ${googleStatus.sheetsConnected ? "Ready" : "Reconnect required"}</div>` : ""}
             ${googleStatus.calendarId ? `<div class="meta">Calendar: ${googleStatus.calendarId}</div>` : ""}
           </div>
         </div>
@@ -6335,6 +7100,7 @@ function renderGoogleEntriesPanel(user) {
           <div class="google-sync-meta-left"></div>
           <div class="google-sync-meta-right">
             <div class="meta"><strong>Status:</strong> ${googleStatus.connected ? "Connected" : googleStatus.configured ? "Ready to connect" : "Missing config"}</div>
+            ${googleStatus.connected ? `<div class="meta"><strong>Sheets Export:</strong> ${googleStatus.sheetsConnected ? "Ready" : "Reconnect required"}</div>` : ""}
             ${googleStatus.calendarId ? `<div class="meta">Calendar: ${googleStatus.calendarId}</div>` : ""}
           </div>
         </div>
@@ -6495,6 +7261,15 @@ function renderGoogleEntriesPanel(user) {
   });
 
   document.getElementById("googleConnectButton")?.addEventListener("click", async () => {
+    try {
+      const payload = await apiRequest("/api/admin/google/auth");
+      window.location.href = payload.authUrl;
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+
+  document.getElementById("googleReconnectButton")?.addEventListener("click", async () => {
     try {
       const payload = await apiRequest("/api/admin/google/auth");
       window.location.href = payload.authUrl;
@@ -6721,24 +7496,34 @@ function renderDocumentCenterPanel() {
   const panel = document.getElementById("documentsPanel");
   const user = getCurrentUser();
   const documentShowsBase = visibleShowsForUser(user);
-  const documentShowYearOptions = [...new Set(documentShowsBase.map((show) => String(getShowStartDate(show) || "").slice(0, 4)).filter(Boolean))].sort((a, b) => b.localeCompare(a));
-  if (!["all", ...documentShowYearOptions].includes(state.ui.documentShowsYear)) {
-    state.ui.documentShowsYear = "all";
-  }
-  const documentShowMonthKeys = [...new Set(documentShowsBase
-    .filter((show) => state.ui.documentShowsYear === "all" || String(getShowStartDate(show) || "").slice(0, 4) === state.ui.documentShowsYear)
-    .map((show) => String(getShowStartDate(show) || "").slice(0, 7))
-    .filter(Boolean))].sort((a, b) => b.localeCompare(a));
-  if (state.ui.documentShowsMonth !== "all" && !documentShowMonthKeys.includes(state.ui.documentShowsMonth)) {
-    state.ui.documentShowsMonth = "all";
-  }
   const filteredShows = sortShows(documentShowsBase.filter((show) => {
-    const showYear = String(getShowStartDate(show) || "").slice(0, 4);
-    const showMonth = String(getShowStartDate(show) || "").slice(0, 7);
-    const matchesYear = state.ui.documentShowsYear === "all" || showYear === state.ui.documentShowsYear;
-    const matchesMonth = state.ui.documentShowsMonth === "all" || showMonth === state.ui.documentShowsMonth;
-    return matchesYear && matchesMonth;
+    const showDate = String(getShowStartDate(show) || "");
+    const matchesDateFrom = !state.ui.documentShowsDateFrom || showDate >= state.ui.documentShowsDateFrom;
+    const matchesDateTo = !state.ui.documentShowsDateTo || showDate <= state.ui.documentShowsDateTo;
+    return matchesDateFrom && matchesDateTo;
   }), "date");
+  const showExportKey = [
+    state.ui.documentShowsDateFrom || "start",
+    state.ui.documentShowsDateTo || "end"
+  ].join("-");
+  const showExportGoogleReuseKey = `shows:${state.ui.documentShowsDateFrom || "start"}:${state.ui.documentShowsDateTo || "end"}`;
+  const documentTravelClientOptions = ["all", ...new Set(documentShowsBase.map((show) => getClientDisplayValue(show.clientId, show.client)).filter(Boolean))].sort((a, b) => {
+    if (a === "all") return -1;
+    if (b === "all") return 1;
+    return a.localeCompare(b);
+  });
+  if (!documentTravelClientOptions.includes(state.ui.documentTravelClient || "all")) {
+    state.ui.documentTravelClient = "all";
+  }
+  const filteredTravelShows = sortShows(documentShowsBase.filter((show) => {
+    const clientLabel = getClientDisplayValue(show.clientId, show.client);
+    const showDate = String(getShowStartDate(show) || "");
+    const matchesClient = state.ui.documentTravelClient === "all" || clientLabel === state.ui.documentTravelClient;
+    const matchesDateFrom = !state.ui.documentTravelDateFrom || showDate >= state.ui.documentTravelDateFrom;
+    const matchesDateTo = !state.ui.documentTravelDateTo || showDate <= state.ui.documentTravelDateTo;
+    return matchesClient && matchesDateFrom && matchesDateTo;
+  }), "date");
+  const travelDocumentRows = getTravelDocumentRows(filteredTravelShows);
 
   const allInvoicesSorted = sortInvoices(state.invoices || []);
   const documentInvoiceYearOptions = getInvoiceYearOptions(allInvoicesSorted);
@@ -6840,29 +7625,58 @@ function renderDocumentCenterPanel() {
           <p class="muted-note">Generate the main exports and ledgers from one place using the filters you already set in the app.</p>
         </div>
       </div>
+      ${state.google?.lastExportUrl ? `
+        <section class="assignment-card">
+          <strong>Last Google Sheet</strong>
+          <p class="meta">${escapeHtml(state.google.lastExportTitle || "Untitled Export")}</p>
+          <div class="toolbar">
+            <a class="secondary" href="${escapeHtml(state.google.lastExportUrl)}" target="_blank" rel="noopener">Open Google Sheet</a>
+          </div>
+        </section>
+      ` : ""}
       <div class="client-detail-grid document-center-grid">
         <section class="assignment-card">
           <strong>Shows Export</strong>
           <p class="meta">Choose the show period here and export directly.</p>
           <div class="shows-toolbar-top">
             <label class="sort-control">
-              <span>Year</span>
-              <select id="documentShowsYear">
-                <option value="all" ${state.ui.documentShowsYear === "all" ? "selected" : ""}>All Years</option>
-                ${documentShowYearOptions.map((year) => `<option value="${year}" ${state.ui.documentShowsYear === year ? "selected" : ""}>${year}</option>`).join("")}
-              </select>
+              <span>Date From</span>
+              <input type="date" id="documentShowsDateFrom" value="${escapeHtml(state.ui.documentShowsDateFrom || "")}">
             </label>
             <label class="sort-control">
-              <span>Month</span>
-              <select id="documentShowsMonth">
-                <option value="all" ${state.ui.documentShowsMonth === "all" ? "selected" : ""}>All Months</option>
-                ${documentShowMonthKeys.map((monthKey) => `<option value="${monthKey}" ${state.ui.documentShowsMonth === monthKey ? "selected" : ""}>${monthGroupLabel(`${monthKey}-01`).split(" ")[0]}</option>`).join("")}
-              </select>
+              <span>Date To</span>
+              <input type="date" id="documentShowsDateTo" value="${escapeHtml(state.ui.documentShowsDateTo || "")}">
             </label>
           </div>
           <div class="toolbar">
             <span class="pill">${filteredShows.length} rows</span>
             <button type="button" class="secondary" id="documentExportShows" ${filteredShows.length ? "" : "disabled"}>Export Shows</button>
+            <button type="button" class="ghost" id="documentExportShowsGoogle" ${filteredShows.length ? "" : "disabled"}>Google Sheets</button>
+          </div>
+        </section>
+        <section class="assignment-card">
+          <strong>Travel Master Export</strong>
+          <p class="meta">Export the travel sheet in the same onward and return structure as your master plan.</p>
+          <div class="shows-toolbar-top">
+            <label class="sort-control">
+              <span>Client</span>
+              <select id="documentTravelClient">
+                ${documentTravelClientOptions.map((option) => `<option value="${option}" ${state.ui.documentTravelClient === option ? "selected" : ""}>${option === "all" ? "All Clients" : escapeHtml(option)}</option>`).join("")}
+              </select>
+            </label>
+            <label class="sort-control">
+              <span>Date From</span>
+              <input type="date" id="documentTravelDateFrom" value="${escapeHtml(state.ui.documentTravelDateFrom || "")}">
+            </label>
+            <label class="sort-control">
+              <span>Date To</span>
+              <input type="date" id="documentTravelDateTo" value="${escapeHtml(state.ui.documentTravelDateTo || "")}">
+            </label>
+          </div>
+          <div class="toolbar">
+            <span class="pill">${travelDocumentRows.length} rows</span>
+            <button type="button" class="secondary" id="documentExportTravelMaster" ${travelDocumentRows.length ? "" : "disabled"}>Export Travel Master</button>
+            <button type="button" class="ghost" id="documentExportTravelMasterGoogle" ${travelDocumentRows.length ? "" : "disabled"}>Google Sheets</button>
           </div>
         </section>
         <section class="assignment-card">
@@ -6893,6 +7707,7 @@ function renderDocumentCenterPanel() {
           <div class="toolbar">
             <span class="pill">${filteredInvoices.length} rows</span>
             <button type="button" class="secondary" id="documentExportInvoices" ${filteredInvoices.length ? "" : "disabled"}>Export Invoices</button>
+            <button type="button" class="ghost" id="documentExportInvoicesGoogle" ${filteredInvoices.length ? "" : "disabled"}>Google Sheets</button>
           </div>
         </section>
         <section class="assignment-card">
@@ -6923,6 +7738,7 @@ function renderDocumentCenterPanel() {
           <div class="toolbar">
             <span class="pill">${clientFinancialRows.length} rows</span>
             <button type="button" class="secondary" id="documentExportClientFinancials" ${clientFinancialRows.length ? "" : "disabled"}>Export Client Financials</button>
+            <button type="button" class="ghost" id="documentExportClientFinancialsGoogle" ${clientFinancialRows.length ? "" : "disabled"}>Google Sheets</button>
           </div>
         </section>
         <section class="assignment-card">
@@ -6939,6 +7755,7 @@ function renderDocumentCenterPanel() {
           <div class="toolbar">
             <span class="pill">${selectedLedgerClient ? `${selectedLedgerEntries.length} entries` : "Pick a client"}</span>
             <button type="button" class="secondary" id="documentExportClientLedger" ${(selectedLedgerClient && selectedLedgerEntries.length) ? "" : "disabled"}>Export Ledger</button>
+            <button type="button" class="ghost" id="documentExportClientLedgerGoogle" ${(selectedLedgerClient && selectedLedgerEntries.length) ? "" : "disabled"}>Google Sheets</button>
             <button type="button" class="ghost" id="documentPrintClientLedger" ${(selectedLedgerClient && selectedLedgerEntries.length) ? "" : "disabled"}>Print Ledger</button>
           </div>
         </section>
@@ -6958,6 +7775,7 @@ function renderDocumentCenterPanel() {
           <div class="toolbar">
             <span class="pill">${filteredClients.length} rows</span>
             <button type="button" class="secondary" id="documentExportClients" ${filteredClients.length ? "" : "disabled"}>Export Clients</button>
+            <button type="button" class="ghost" id="documentExportClientsGoogle" ${filteredClients.length ? "" : "disabled"}>Google Sheets</button>
           </div>
         </section>
         <section class="assignment-card">
@@ -6994,6 +7812,7 @@ function renderDocumentCenterPanel() {
           <div class="toolbar">
             <span class="pill">${filteredPayoutRows.length} rows</span>
             <button type="button" class="secondary" id="documentExportPayouts" ${filteredPayoutRows.length ? "" : "disabled"}>Export Payouts</button>
+            <button type="button" class="ghost" id="documentExportPayoutsGoogle" ${filteredPayoutRows.length ? "" : "disabled"}>Google Sheets</button>
           </div>
         </section>
       </div>
@@ -7005,13 +7824,25 @@ function renderDocumentCenterPanel() {
       showToast("No shows to export.");
       return;
     }
-    const exportKey = state.ui.documentShowsMonth !== "all"
-      ? state.ui.documentShowsMonth
-      : state.ui.documentShowsYear !== "all"
-        ? state.ui.documentShowsYear
-        : "all-shows";
-    downloadSingleSheetWorkbook(exportKey, buildShowsSheetXml(filteredShows), `pixelbug-${safeFileNamePart(exportKey)}-shows.xlsx`);
+    downloadSingleSheetWorkbook("Shows", buildShowsSheetXml(filteredShows), `pixelbug-${safeFileNamePart(showExportKey)}-shows.xlsx`);
     showToast("Shows export ready.");
+  });
+
+  document.getElementById("documentExportShowsGoogle")?.addEventListener("click", async () => {
+    if (!filteredShows.length) {
+      showToast("No shows to export.");
+      return;
+    }
+    try {
+      await exportGoogleSheetsDocument(`PixelBug Shows ${showExportKey}`, [
+        { name: "Shows", rows: getShowsSheetRows(filteredShows), freezeRows: 1, columnWidths: getShowsGoogleSheetWidths(), rowHeight: 30 }
+      ], {
+        reuseKey: showExportGoogleReuseKey
+      });
+      showToast("Google Sheet updated.");
+    } catch (error) {
+      showToast(error.message);
+    }
   });
 
   document.getElementById("documentExportInvoices")?.addEventListener("click", () => {
@@ -7030,6 +7861,70 @@ function renderDocumentCenterPanel() {
     showToast("Invoice export ready.");
   });
 
+  document.getElementById("documentExportInvoicesGoogle")?.addEventListener("click", async () => {
+    if (!filteredInvoices.length) {
+      showToast("No invoices to export.");
+      return;
+    }
+    try {
+      const exportKey = state.ui.documentInvoicesMonth !== "all"
+        ? state.ui.documentInvoicesMonth
+        : state.ui.documentInvoicesYear !== "all"
+          ? state.ui.documentInvoicesYear
+          : "all";
+      const sortedInvoices = sortInvoicesForExport(filteredInvoices);
+      const invoiceColumns = getInvoiceExportColumns();
+      const invoiceColumnWidths = getInvoiceGoogleSheetWidths(invoiceColumns);
+      const sheets = state.ui.documentInvoicesMonth === "all"
+        ? [...new Set(sortedInvoices.map(getInvoiceMonthKey))].sort().map((monthKey) => ({
+            name: getInvoiceMonthSheetName(monthKey),
+            rows: getInvoiceExportSheetRows(sortedInvoices.filter((invoice) => getInvoiceMonthKey(invoice) === monthKey), invoiceColumns),
+            freezeRows: 2,
+            columnWidths: invoiceColumnWidths,
+            rowHeight: 28
+          }))
+        : [{ name: "Invoices", rows: getInvoiceExportSheetRows(sortedInvoices, invoiceColumns), freezeRows: 2, columnWidths: invoiceColumnWidths, rowHeight: 28 }];
+      await exportGoogleSheetsDocument(`PixelBug Invoices ${exportKey}`, sheets);
+      showToast("Google Sheet created.");
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+
+  document.getElementById("documentExportTravelMaster")?.addEventListener("click", () => {
+    if (!travelDocumentRows.length) {
+      showToast("No travel rows to export.");
+      return;
+    }
+    const exportKey = [
+      state.ui.documentTravelClient !== "all" ? safeFileNamePart(state.ui.documentTravelClient) : "all-clients",
+      state.ui.documentTravelDateFrom || "start",
+      state.ui.documentTravelDateTo || "end"
+    ].filter(Boolean).join("-");
+    downloadSingleSheetWorkbook("Travel Master", buildTravelMasterSheetXml(filteredTravelShows), `pixelbug-${safeFileNamePart(exportKey)}-travel-master.xlsx`);
+    showToast("Travel master export ready.");
+  });
+
+  document.getElementById("documentExportTravelMasterGoogle")?.addEventListener("click", async () => {
+    if (!travelDocumentRows.length) {
+      showToast("No travel rows to export.");
+      return;
+    }
+    try {
+      const exportKey = [
+        state.ui.documentTravelClient !== "all" ? safeFileNamePart(state.ui.documentTravelClient) : "all-clients",
+        state.ui.documentTravelDateFrom || "start",
+        state.ui.documentTravelDateTo || "end"
+      ].filter(Boolean).join("-");
+      await exportGoogleSheetsDocument(`PixelBug Travel Master ${exportKey}`, [
+        { name: "Travel Master", rows: getTravelMasterSheetRows(filteredTravelShows), freezeRows: 1, columnWidths: getTravelMasterGoogleSheetWidths(), rowHeight: 28 }
+      ]);
+      showToast("Google Sheet created.");
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+
   document.getElementById("documentExportClientFinancials")?.addEventListener("click", () => {
     if (!clientFinancialRows.length) {
       showToast("No client financial rows to export.");
@@ -7045,6 +7940,27 @@ function renderDocumentCenterPanel() {
     showToast("Client financial export ready.");
   });
 
+  document.getElementById("documentExportClientFinancialsGoogle")?.addEventListener("click", async () => {
+    if (!clientFinancialRows.length) {
+      showToast("No client financial rows to export.");
+      return;
+    }
+    try {
+      const exportKeyParts = [
+        state.ui.documentClientFinancialYear !== "all" ? state.ui.documentClientFinancialYear : "",
+        state.ui.documentClientFinancialMonth !== "all" ? state.ui.documentClientFinancialMonth : "",
+        state.ui.documentClientFinancialClient !== "all" ? safeFileNamePart(getClientDisplayValue(state.ui.documentClientFinancialClient)) : ""
+      ].filter(Boolean);
+      const exportKey = exportKeyParts.join("-") || "all";
+      await exportGoogleSheetsDocument(`PixelBug Client Financials ${exportKey}`, [
+        { name: "Client Financials", rows: getClientInvoiceExportSheetRows(clientFinancialRows), freezeRows: 1, columnWidths: getClientFinancialGoogleSheetWidths(), rowHeight: 28 }
+      ]);
+      showToast("Google Sheet created.");
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+
   document.getElementById("documentExportClientLedger")?.addEventListener("click", () => {
     if (!selectedLedgerClient || !selectedLedgerEntries.length) {
       showToast("Select a client with ledger entries first.");
@@ -7052,6 +7968,21 @@ function renderDocumentCenterPanel() {
     }
     exportClientLedgerExcel(selectedLedgerClient);
     showToast("Client ledger export ready.");
+  });
+
+  document.getElementById("documentExportClientLedgerGoogle")?.addEventListener("click", async () => {
+    if (!selectedLedgerClient || !selectedLedgerEntries.length) {
+      showToast("Select a client with ledger entries first.");
+      return;
+    }
+    try {
+      await exportGoogleSheetsDocument(`PixelBug Ledger ${getClientDisplayName(selectedLedgerClient)}`, [
+        { name: "Client Ledger", rows: getClientLedgerSheetRows(selectedLedgerClient, selectedLedgerEntries), freezeRows: 1, columnWidths: getLedgerGoogleSheetWidths(), rowHeight: 28 }
+      ]);
+      showToast("Google Sheet created.");
+    } catch (error) {
+      showToast(error.message);
+    }
   });
 
   document.getElementById("documentPrintClientLedger")?.addEventListener("click", () => {
@@ -7071,6 +8002,21 @@ function renderDocumentCenterPanel() {
     showToast("Client master export ready.");
   });
 
+  document.getElementById("documentExportClientsGoogle")?.addEventListener("click", async () => {
+    if (!filteredClients.length) {
+      showToast("No clients to export.");
+      return;
+    }
+    try {
+      await exportGoogleSheetsDocument("PixelBug Clients", [
+        { name: "Clients", rows: getClientsSheetRows(filteredClients), freezeRows: 1, columnWidths: getClientsGoogleSheetWidths(), rowHeight: 28 }
+      ]);
+      showToast("Google Sheet created.");
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+
   document.getElementById("documentExportPayouts")?.addEventListener("click", () => {
     if (!filteredPayoutRows.length) {
       showToast("No payout rows to export.");
@@ -7086,9 +8032,33 @@ function renderDocumentCenterPanel() {
     showToast("Crew payout export ready.");
   });
 
+  document.getElementById("documentExportPayoutsGoogle")?.addEventListener("click", async () => {
+    if (!filteredPayoutRows.length) {
+      showToast("No payout rows to export.");
+      return;
+    }
+    try {
+      const exportKey = [
+        state.ui.documentPayoutYear !== "all" ? state.ui.documentPayoutYear : "all",
+        state.ui.documentPayoutMonth !== "all" ? state.ui.documentPayoutMonth : "",
+        state.ui.documentPayoutCrew !== "all" ? safeFileNamePart(state.ui.documentPayoutCrew) : "",
+        state.ui.documentPayoutClient !== "all" ? safeFileNamePart(state.ui.documentPayoutClient) : ""
+      ].filter(Boolean).join("-");
+      await exportGoogleSheetsDocument(`PixelBug Crew Payouts ${exportKey}`, [
+        { name: "Crew Payouts", rows: getCrewPayoutSheetRows(filteredPayoutRows), freezeRows: 1, columnWidths: getCrewPayoutGoogleSheetWidths(), rowHeight: 28 }
+      ]);
+      showToast("Google Sheet created.");
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+
   [
-    "documentShowsYear",
-    "documentShowsMonth",
+    "documentShowsDateFrom",
+    "documentShowsDateTo",
+    "documentTravelClient",
+    "documentTravelDateFrom",
+    "documentTravelDateTo",
     "documentInvoicesYear",
     "documentInvoicesMonth",
     "documentInvoicesClient",
@@ -7723,43 +8693,452 @@ function renderShowForm() {
   const assignmentEditor = document.getElementById("assignmentEditor");
   enhanceCustomSelects(panel);
 
+  function parseTravelSector(sector = "") {
+    const normalized = String(sector || "").trim().toUpperCase();
+    if (!normalized) return null;
+    const parts = normalized.match(/\b[A-Z]{3}\b/g) || [];
+    if (parts.length < 2) return null;
+    return {
+      from: parts[0],
+      to: parts[1]
+    };
+  }
+
+  function parseStoredFlightValue(rawValue) {
+    if (!rawValue) return null;
+    try {
+      return normalizeStoredFlightSelection(JSON.parse(rawValue));
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function getSelectedLocationChoice(row, direction, endpoint) {
+    const prefix = `assignment${direction === "onward" ? "Onward" : "Return"}${endpoint === "from" ? "From" : "To"}`;
+    const label = row.querySelector(`input[name="${prefix}City"]`)?.value || "";
+    const code = row.querySelector(`input[name="${prefix}Code"]`)?.value || "";
+    if (!label && !code) return null;
+    return { label: String(label || "").trim(), code: String(code || "").trim().toUpperCase() };
+  }
+
+  function buildTravelSectorFromSelectedCities(row, direction) {
+    const fromChoice = getSelectedLocationChoice(row, direction, "from");
+    const toChoice = getSelectedLocationChoice(row, direction, "to");
+    if (!fromChoice?.code || !toChoice?.code) return "";
+    return `${fromChoice.code}-${toChoice.code}`;
+  }
+
+  function deriveInitialLocationChoice(assignment, direction, endpoint) {
+    const sector = direction === "onward"
+      ? assignment?.onwardTravelSector || ""
+      : assignment?.returnTravelSector || "";
+    const flight = direction === "onward"
+      ? assignment?.onwardFlight
+      : assignment?.returnFlight;
+    const sectorParts = parseTravelSectorParts(sector);
+    const code = endpoint === "from"
+      ? String(flight?.departureAirport || sectorParts.from || "").trim().toUpperCase()
+      : String(flight?.arrivalAirport || sectorParts.to || "").trim().toUpperCase();
+    return {
+      label: code || "",
+      code
+    };
+  }
+
+  function clearFlightSearchState(row, direction) {
+    setStoredFlightSelection(row, direction, null);
+    renderFlightResults(row, direction, null);
+  }
+
+  function syncTravelSectorFromCities(row, direction, clearFlight = true) {
+    const sectorInput = row.querySelector(`input[name="assignment${direction === "onward" ? "Onward" : "Return"}TravelSector"]`);
+    if (!sectorInput) return;
+    const derivedSector = buildTravelSectorFromSelectedCities(row, direction);
+    sectorInput.value = derivedSector || "";
+    if (clearFlight) {
+      clearFlightSearchState(row, direction);
+    }
+  }
+
+  async function fetchLocationOptions(keyword) {
+    const localMatches = getLocalLocationMatches(keyword, 8);
+    try {
+      const payload = await apiRequest("/api/admin/flights/locations", {
+        method: "POST",
+        body: JSON.stringify({
+          keyword,
+          max: 8
+        })
+      });
+      const remoteOptions = Array.isArray(payload.options) ? payload.options : [];
+      const deduped = new Map();
+      [...localMatches, ...remoteOptions].forEach((option) => {
+        if (!option?.code) return;
+        const key = `${String(option.code).trim().toUpperCase()}:${String(option.cityName || option.label || "").trim().toLowerCase()}`;
+        if (!deduped.has(key)) {
+          deduped.set(key, option);
+        }
+      });
+      return [...deduped.values()];
+    } catch (error) {
+      if (localMatches.length) {
+        return localMatches;
+      }
+      throw error;
+    }
+  }
+
+  function closeLocationSuggestionMenus(scope = panel) {
+    scope.querySelectorAll("[data-location-suggestions]").forEach((node) => {
+      node.innerHTML = "";
+      node.classList.add("hidden");
+    });
+  }
+
+  function setLocationChoice(row, direction, endpoint, option) {
+    const prefix = `assignment${direction === "onward" ? "Onward" : "Return"}${endpoint === "from" ? "From" : "To"}`;
+    const cityInput = row.querySelector(`input[name="${prefix}City"]`);
+    const codeInput = row.querySelector(`input[name="${prefix}Code"]`);
+    if (cityInput) cityInput.value = option?.label || "";
+    if (codeInput) codeInput.value = option?.code || "";
+  }
+
+  async function resolveTypedLocationChoice(row, direction, endpoint) {
+    const prefix = `assignment${direction === "onward" ? "Onward" : "Return"}${endpoint === "from" ? "From" : "To"}`;
+    const cityInput = row.querySelector(`input[name="${prefix}City"]`);
+    const codeInput = row.querySelector(`input[name="${prefix}Code"]`);
+    const keyword = String(cityInput?.value || "").trim();
+    if (!keyword) {
+      if (codeInput) codeInput.value = "";
+      return null;
+    }
+    if (codeInput?.value) {
+      return { label: keyword, code: String(codeInput.value).trim().toUpperCase() };
+    }
+
+    const options = await fetchLocationOptions(keyword);
+    if (!options.length) {
+      throw new Error(`No airport or city match found for "${keyword}".`);
+    }
+    const normalizedKeyword = keyword.toLowerCase();
+    const exactOption = options.find((option) => {
+      const labels = [
+        option.label,
+        option.cityName,
+        option.code
+      ].map((value) => String(value || "").trim().toLowerCase()).filter(Boolean);
+      return labels.includes(normalizedKeyword);
+    }) || options[0];
+
+    setLocationChoice(row, direction, endpoint, exactOption);
+    syncTravelSectorFromCities(row, direction, false);
+    return {
+      label: exactOption.label || "",
+      code: exactOption.code || ""
+    };
+  }
+
+  function attachLocationAutocomplete(row, direction, endpoint) {
+    const prefix = `assignment${direction === "onward" ? "Onward" : "Return"}${endpoint === "from" ? "From" : "To"}`;
+    const input = row.querySelector(`input[name="${prefix}City"]`);
+    const codeInput = row.querySelector(`input[name="${prefix}Code"]`);
+    const suggestions = row.querySelector(`[data-location-suggestions="${prefix}"]`);
+    if (!input || !suggestions) return;
+    let requestSeq = 0;
+
+    const hideSuggestions = () => {
+      suggestions.innerHTML = "";
+      suggestions.classList.add("hidden");
+    };
+
+    input.addEventListener("input", async () => {
+      const keyword = input.value.trim();
+      if (codeInput) codeInput.value = "";
+      syncTravelSectorFromCities(row, direction);
+      if (keyword.length < 2) {
+        hideSuggestions();
+        return;
+      }
+      requestSeq += 1;
+      const currentSeq = requestSeq;
+      suggestions.innerHTML = '<div class="location-suggestion-item muted-note">Searching cities...</div>';
+      suggestions.classList.remove("hidden");
+      try {
+        const options = await fetchLocationOptions(keyword);
+        if (currentSeq !== requestSeq) return;
+        if (!options.length) {
+          suggestions.innerHTML = '<div class="location-suggestion-item muted-note">No cities found.</div>';
+          return;
+        }
+        suggestions.innerHTML = options.map((option, index) => `
+          <button type="button" class="location-suggestion-item" data-location-option-index="${index}">
+            <strong>${escapeHtml(option.label || option.cityName || option.code)}</strong>
+            <span>${escapeHtml(option.code || "")}${option.countryCode ? ` · ${escapeHtml(option.countryCode)}` : ""}${option.subType ? ` · ${escapeHtml(option.subType)}` : ""}</span>
+          </button>
+        `).join("");
+        suggestions.querySelectorAll("[data-location-option-index]").forEach((button) => {
+          button.addEventListener("click", () => {
+            const option = options[Number(button.dataset.locationOptionIndex || -1)];
+            if (!option) return;
+            setLocationChoice(row, direction, endpoint, option);
+            syncTravelSectorFromCities(row, direction);
+            hideSuggestions();
+            setDirtyForm("show");
+          });
+        });
+      } catch (error) {
+        if (currentSeq !== requestSeq) return;
+        suggestions.innerHTML = '<div class="location-suggestion-item muted-note">Not found</div>';
+      }
+    });
+
+    input.addEventListener("focus", () => {
+      if (suggestions.innerHTML.trim()) {
+        suggestions.classList.remove("hidden");
+      }
+    });
+
+    input.addEventListener("blur", () => {
+      window.setTimeout(async () => {
+        if (input.value.trim() && !codeInput?.value) {
+          try {
+            await resolveTypedLocationChoice(row, direction, endpoint);
+          } catch (error) {
+            if (codeInput) codeInput.value = "";
+          }
+        }
+        hideSuggestions();
+      }, 150);
+    });
+  }
+
+  function formatFlightPrice(flight) {
+    if (!flight || !Number.isFinite(Number(flight.price))) return "-";
+    const amount = Number(flight.price || 0).toLocaleString("en-IN", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    });
+    return `${flight.currency || "INR"} ${amount}`;
+  }
+
+  function renderFlightSelection(row, direction) {
+    const hiddenInput = row.querySelector(`input[name="assignment${direction === "onward" ? "Onward" : "Return"}Flight"]`);
+    const target = row.querySelector(`[data-flight-selected="${direction}"]`);
+    const selectedFlight = parseStoredFlightValue(hiddenInput?.value || "");
+    if (!target) return;
+    if (!selectedFlight) {
+      target.innerHTML = '<div class="muted-note">No flight selected yet.</div>';
+      return;
+    }
+
+    const travelSector = row.querySelector(`input[name="assignment${direction === "onward" ? "Onward" : "Return"}TravelSector"]`)?.value || "";
+    const travelDate = row.querySelector(`input[name="assignment${direction === "onward" ? "Onward" : "Return"}TravelDate"]`)?.value || "";
+    target.innerHTML = getFlightTicketMarkup(selectedFlight, travelSector, travelDate);
+  }
+
+  function setStoredFlightSelection(row, direction, flight) {
+    const hiddenInput = row.querySelector(`input[name="assignment${direction === "onward" ? "Onward" : "Return"}Flight"]`);
+    if (!hiddenInput) return;
+    hiddenInput.value = flight ? JSON.stringify(flight) : "";
+    renderFlightSelection(row, direction);
+  }
+
+  function renderFlightResults(row, direction, offers = null) {
+    row.__flightSearchResults = row.__flightSearchResults || {};
+    row.__flightSearchResults[direction] = Array.isArray(offers) ? offers : [];
+    const target = row.querySelector(`[data-flight-results="${direction}"]`);
+    const selectedFlight = parseStoredFlightValue(row.querySelector(`input[name="assignment${direction === "onward" ? "Onward" : "Return"}Flight"]`)?.value || "");
+    if (!target) return;
+    if (!Array.isArray(offers)) {
+      target.innerHTML = "";
+      return;
+    }
+    if (!offers.length) {
+      target.innerHTML = '<div class="muted-note">No matching flights found for this route yet.</div>';
+      return;
+    }
+
+    target.innerHTML = offers.map((offer, index) => {
+      const isSelected = selectedFlight?.id && selectedFlight.id === offer.id;
+      const segmentDetails = (offer.segments || [])
+        .map((segment) => `${segment.departureAirport}-${segment.arrivalAirport} ${formatFlightDateTime(segment.departureAt)}${segment.aircraft ? ` · ${segment.aircraft}` : ""}`)
+        .join(" · ");
+      const cabinLabel = [offer.cabin, offer.bookingClass].filter(Boolean).join(" · ");
+      return `
+        <article class="assignment-flight-result ${isSelected ? "is-selected" : ""}">
+          <div>
+            <strong>${escapeHtml(offer.carrierName || offer.marketingLabel || "Flight Option")}</strong>
+            <div class="meta">Flight No: ${escapeHtml(getFlightNumberLabel(offer))}</div>
+            <div class="meta">${escapeHtml(getFlightRouteLabel(offer))} · ${escapeHtml(getFlightViaLabel(offer))}</div>
+            <div class="meta">${escapeHtml(formatFlightDateTime(offer.departureAt))} -> ${escapeHtml(formatFlightDateTime(offer.arrivalAt))}</div>
+            <div class="meta">${escapeHtml(formatFlightDuration(offer.duration))} · ${offer.stops === 0 ? "Non-stop" : `${offer.stops} stop${offer.stops === 1 ? "" : "s"}`} · ${escapeHtml(formatFlightPrice(offer))}</div>
+            ${cabinLabel ? `<div class="meta">${escapeHtml(cabinLabel)}</div>` : ""}
+            ${segmentDetails ? `<div class="meta">${escapeHtml(segmentDetails)}</div>` : ""}
+          </div>
+          <button type="button" class="${isSelected ? "secondary" : "ghost"} small" data-select-flight-index="${index}" data-select-flight-direction="${direction}">${isSelected ? "Selected" : "Select"}</button>
+        </article>
+      `;
+    }).join("");
+
+    target.querySelectorAll("[data-select-flight-index]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const index = Number(button.dataset.selectFlightIndex || -1);
+        const nextFlight = row.__flightSearchResults?.[direction]?.[index];
+        if (!nextFlight) return;
+        setStoredFlightSelection(row, direction, nextFlight);
+        renderFlightResults(row, direction, row.__flightSearchResults?.[direction] || []);
+        setDirtyForm("show");
+      });
+    });
+  }
+
+  async function searchFlightsForRow(row, direction, button) {
+    const isOnward = direction === "onward";
+    const travelDate = row.querySelector(`input[name="${isOnward ? "assignmentOnwardTravelDate" : "assignmentReturnTravelDate"}"]`)?.value || "";
+    const travelSector = row.querySelector(`input[name="${isOnward ? "assignmentOnwardTravelSector" : "assignmentReturnTravelSector"}"]`)?.value || "";
+    const resultsTarget = row.querySelector(`[data-flight-results="${direction}"]`);
+    if (resultsTarget) {
+      resultsTarget.innerHTML = '<div class="muted-note">Searching live flights...</div>';
+    }
+
+    button.disabled = true;
+    try {
+      const fromChoice = await resolveTypedLocationChoice(row, direction, "from").catch((error) => {
+        throw error;
+      });
+      const toChoice = await resolveTypedLocationChoice(row, direction, "to").catch((error) => {
+        throw error;
+      });
+      const parsedSector = parseTravelSector(travelSector);
+      const originLocationCode = fromChoice?.code || parsedSector?.from || "";
+      const destinationLocationCode = toChoice?.code || parsedSector?.to || "";
+
+      if (!travelDate || !originLocationCode || !destinationLocationCode) {
+        throw new Error("Select from and to cities first, or enter a valid sector like BOM-DEL.");
+      }
+
+      const payload = await apiRequest("/api/admin/flights/search", {
+        method: "POST",
+        body: JSON.stringify({
+          originLocationCode,
+          destinationLocationCode,
+          departureDate: travelDate,
+          adults: 1,
+          max: 6
+        })
+      });
+      renderFlightResults(row, direction, Array.isArray(payload.offers) ? payload.offers : []);
+    } catch (error) {
+      if (resultsTarget) {
+        resultsTarget.innerHTML = `<div class="muted-note">${escapeHtml(error.message || "Flight search failed for this route.")}</div>`;
+      }
+      showToast(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
   function addAssignmentRow(assignment = null) {
     const row = document.createElement("div");
-    row.className = "form-grid";
+    row.className = "assignment-editor-card";
     row.dataset.assignmentRow = "true";
+    const onwardFlightValue = assignment?.onwardFlight ? escapeHtml(JSON.stringify(assignment.onwardFlight)) : "";
+    const returnFlightValue = assignment?.returnFlight ? escapeHtml(JSON.stringify(assignment.returnFlight)) : "";
+    const onwardFromCity = deriveInitialLocationChoice(assignment, "onward", "from");
+    const onwardToCity = deriveInitialLocationChoice(assignment, "onward", "to");
+    const returnFromCity = deriveInitialLocationChoice(assignment, "return", "from");
+    const returnToCity = deriveInitialLocationChoice(assignment, "return", "to");
     row.innerHTML = `
-      <label class="field">
-        <span>Crew</span>
-        <select name="assignmentCrew">
-          <option value="">Select crew</option>
-          ${crewOptions.map((crewUser) => `<option value="${crewUser.id}" ${assignment?.crewId === crewUser.id ? "selected" : ""}>${crewUser.name}</option>`).join("")}
-        </select>
-      </label>
-      <label class="field">
-        <span>Amount of the Operator</span>
-        <input type="number" name="assignmentAmount" min="0" step="1" value="${assignment?.operatorAmount ?? ""}" autocomplete="off">
-      </label>
-      <label class="field">
-        <span>Onward Travel Date</span>
-        <input type="date" name="assignmentOnwardTravelDate" value="${assignment?.onwardTravelDate ?? ""}" autocomplete="off">
-      </label>
-      <label class="field">
-        <span>Return Travel Date</span>
-        <input type="date" name="assignmentReturnTravelDate" value="${assignment?.returnTravelDate ?? ""}" autocomplete="off">
-      </label>
-      <label class="field">
-        <span>Onward Travel Sector</span>
-        <input type="text" name="assignmentOnwardTravelSector" value="${assignment?.onwardTravelSector ?? ""}" autocomplete="off" data-form-type="other">
-      </label>
-      <label class="field">
-        <span>Return Travel Sector</span>
-        <input type="text" name="assignmentReturnTravelSector" value="${assignment?.returnTravelSector ?? ""}" autocomplete="off" data-form-type="other">
-      </label>
-      <label class="field">
-        <span>Notes</span>
-        <input type="text" name="assignmentNotes" value="${assignment?.notes ?? ""}" autocomplete="off" data-form-type="other">
-      </label>
-      <button type="button" class="ghost small remove-assignment">Remove</button>
+      <div class="assignment-meta-grid">
+        <label class="field">
+          <span>Crew</span>
+          <select name="assignmentCrew">
+            <option value="">Select crew</option>
+            ${crewOptions.map((crewUser) => `<option value="${crewUser.id}" ${assignment?.crewId === crewUser.id ? "selected" : ""}>${crewUser.name}</option>`).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>Amount of the Operator</span>
+          <input type="number" name="assignmentAmount" min="0" step="1" value="${assignment?.operatorAmount ?? ""}" autocomplete="off">
+        </label>
+        <label class="field">
+          <span>Notes</span>
+          <input type="text" name="assignmentNotes" value="${assignment?.notes ?? ""}" autocomplete="off" data-form-type="other">
+        </label>
+        <div class="assignment-remove-slot">
+          <button type="button" class="ghost small remove-assignment">Remove</button>
+        </div>
+      </div>
+      <div class="assignment-travel-layout">
+        <section class="assignment-direction-card">
+          <div class="assignment-direction-header">
+            <strong>Onward Travel</strong>
+            <div class="toolbar">
+              <button type="button" class="ghost small" data-search-flight="onward">Search Flights</button>
+              <button type="button" class="ghost small" data-clear-flight="onward">Clear</button>
+            </div>
+          </div>
+          <div class="assignment-direction-grid">
+            <label class="field">
+              <span>Date</span>
+              <input type="date" name="assignmentOnwardTravelDate" value="${assignment?.onwardTravelDate ?? ""}" autocomplete="off">
+            </label>
+            <label class="field">
+              <span>From City</span>
+              <input type="text" name="assignmentOnwardFromCity" value="${escapeHtml(onwardFromCity.label || "")}" placeholder="Type city or airport" autocomplete="off" data-form-type="other">
+              <input type="hidden" name="assignmentOnwardFromCode" value="${escapeHtml(onwardFromCity.code || "")}">
+              <div class="location-suggestions hidden" data-location-suggestions="assignmentOnwardFrom"></div>
+            </label>
+            <label class="field">
+              <span>To City</span>
+              <input type="text" name="assignmentOnwardToCity" value="${escapeHtml(onwardToCity.label || "")}" placeholder="Type city or airport" autocomplete="off" data-form-type="other">
+              <input type="hidden" name="assignmentOnwardToCode" value="${escapeHtml(onwardToCity.code || "")}">
+              <div class="location-suggestions hidden" data-location-suggestions="assignmentOnwardTo"></div>
+            </label>
+            <label class="field assignment-sector-field">
+              <span>Sector</span>
+              <input type="text" name="assignmentOnwardTravelSector" value="${assignment?.onwardTravelSector ?? ""}" autocomplete="off" data-form-type="other" readonly>
+            </label>
+          </div>
+          <input type="hidden" name="assignmentOnwardFlight" value="${onwardFlightValue}">
+          <div class="assignment-flight-selected" data-flight-selected="onward"></div>
+          <div class="assignment-flight-results" data-flight-results="onward"></div>
+        </section>
+        <section class="assignment-direction-card">
+          <div class="assignment-direction-header">
+            <strong>Return Travel</strong>
+            <div class="toolbar">
+              <button type="button" class="ghost small" data-search-flight="return">Search Flights</button>
+              <button type="button" class="ghost small" data-clear-flight="return">Clear</button>
+            </div>
+          </div>
+          <div class="assignment-direction-grid">
+            <label class="field">
+              <span>Date</span>
+              <input type="date" name="assignmentReturnTravelDate" value="${assignment?.returnTravelDate ?? ""}" autocomplete="off">
+            </label>
+            <label class="field">
+              <span>From City</span>
+              <input type="text" name="assignmentReturnFromCity" value="${escapeHtml(returnFromCity.label || "")}" placeholder="Type city or airport" autocomplete="off" data-form-type="other">
+              <input type="hidden" name="assignmentReturnFromCode" value="${escapeHtml(returnFromCity.code || "")}">
+              <div class="location-suggestions hidden" data-location-suggestions="assignmentReturnFrom"></div>
+            </label>
+            <label class="field">
+              <span>To City</span>
+              <input type="text" name="assignmentReturnToCity" value="${escapeHtml(returnToCity.label || "")}" placeholder="Type city or airport" autocomplete="off" data-form-type="other">
+              <input type="hidden" name="assignmentReturnToCode" value="${escapeHtml(returnToCity.code || "")}">
+              <div class="location-suggestions hidden" data-location-suggestions="assignmentReturnTo"></div>
+            </label>
+            <label class="field assignment-sector-field">
+              <span>Sector</span>
+              <input type="text" name="assignmentReturnTravelSector" value="${assignment?.returnTravelSector ?? ""}" autocomplete="off" data-form-type="other" readonly>
+            </label>
+          </div>
+          <input type="hidden" name="assignmentReturnFlight" value="${returnFlightValue}">
+          <div class="assignment-flight-selected" data-flight-selected="return"></div>
+          <div class="assignment-flight-results" data-flight-results="return"></div>
+        </section>
+      </div>
     `;
     assignmentEditor.append(row);
     enhanceCustomSelects(row);
@@ -7769,6 +9148,28 @@ function renderShowForm() {
       row.remove();
       setDirtyForm("show");
     });
+    row.querySelectorAll("[data-search-flight]").forEach((button) => {
+      button.addEventListener("click", () => {
+        searchFlightsForRow(row, button.dataset.searchFlight || "onward", button);
+      });
+    });
+    row.querySelectorAll("[data-clear-flight]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const direction = button.dataset.clearFlight || "onward";
+        clearFlightSearchState(row, direction);
+        setDirtyForm("show");
+      });
+    });
+    attachLocationAutocomplete(row, "onward", "from");
+    attachLocationAutocomplete(row, "onward", "to");
+    attachLocationAutocomplete(row, "return", "from");
+    attachLocationAutocomplete(row, "return", "to");
+    row.querySelector('input[name="assignmentOnwardTravelDate"]')?.addEventListener("change", () => clearFlightSearchState(row, "onward"));
+    row.querySelector('input[name="assignmentReturnTravelDate"]')?.addEventListener("change", () => clearFlightSearchState(row, "return"));
+    row.querySelector('input[name="assignmentOnwardTravelSector"]')?.addEventListener("input", () => clearFlightSearchState(row, "onward"));
+    row.querySelector('input[name="assignmentReturnTravelSector"]')?.addEventListener("input", () => clearFlightSearchState(row, "return"));
+    renderFlightSelection(row, "onward");
+    renderFlightSelection(row, "return");
   }
 
   const initialAssignments = isEditing
@@ -7835,6 +9236,8 @@ function renderShowForm() {
       const returnTravelDateInput = row.querySelector('input[name="assignmentReturnTravelDate"]');
       const onwardTravelSectorInput = row.querySelector('input[name="assignmentOnwardTravelSector"]');
       const returnTravelSectorInput = row.querySelector('input[name="assignmentReturnTravelSector"]');
+      const onwardFlightInput = row.querySelector('input[name="assignmentOnwardFlight"]');
+      const returnFlightInput = row.querySelector('input[name="assignmentReturnFlight"]');
       const notesInput = row.querySelector('input[name="assignmentNotes"]');
       const crewValue = crewSelect?.value || "";
 
@@ -7847,6 +9250,8 @@ function renderShowForm() {
         returnTravelDate: returnTravelDateInput?.value || "",
         onwardTravelSector: onwardTravelSectorInput?.value || "",
         returnTravelSector: returnTravelSectorInput?.value || "",
+        onwardFlight: parseStoredFlightValue(onwardFlightInput?.value || ""),
+        returnFlight: parseStoredFlightValue(returnFlightInput?.value || ""),
         notes: notesInput?.value || ""
       };
     })
@@ -7860,6 +9265,8 @@ function renderShowForm() {
         returnTravelDate: assignment.returnTravelDate,
         onwardTravelSector: assignment.onwardTravelSector.trim(),
         returnTravelSector: assignment.returnTravelSector.trim(),
+        onwardFlight: normalizeStoredFlightSelection(assignment.onwardFlight),
+        returnFlight: normalizeStoredFlightSelection(assignment.returnFlight),
         notes: assignment.notes.trim()
       }));
 
@@ -7967,29 +9374,6 @@ function fillShowForm(showId, returnTab = state.ui.activeSidebarTab || "showsPan
     field.checked = field.value === (show.showStatus === "tentative" ? "tentative" : "confirmed");
   });
 
-  const editor = document.getElementById("assignmentEditor");
-  editor.innerHTML = "";
-
-  if (!show.assignments.length) {
-    document.getElementById("addAssignmentRow").click();
-    form.scrollIntoView({ behavior: "smooth", block: "start" });
-    return;
-  }
-
-  show.assignments.forEach((assignment) => {
-    const addButton = document.getElementById("addAssignmentRow");
-    addButton.click();
-    const row = editor.lastElementChild;
-    row.querySelector('select[name="assignmentCrew"]').value = assignment.crewId || "";
-    row.querySelector('select[name="assignmentCrew"]').dispatchEvent(new Event("change", { bubbles: true }));
-    row.querySelector('input[name="assignmentAmount"]').value = assignment.operatorAmount;
-    row.querySelector('input[name="assignmentOnwardTravelDate"]').value = assignment.onwardTravelDate || "";
-    row.querySelector('input[name="assignmentReturnTravelDate"]').value = assignment.returnTravelDate || "";
-    row.querySelector('input[name="assignmentOnwardTravelSector"]').value = assignment.onwardTravelSector || "";
-    row.querySelector('input[name="assignmentReturnTravelSector"]').value = assignment.returnTravelSector || "";
-    row.querySelector('input[name="assignmentNotes"]').value = assignment.notes || "";
-  });
-
   form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -8019,6 +9403,8 @@ function startShowDraftFromExistingShow(showId, returnTab = state.ui.activeSideb
       returnTravelDate: assignment.returnTravelDate || "",
       onwardTravelSector: assignment.onwardTravelSector || "",
       returnTravelSector: assignment.returnTravelSector || "",
+      onwardFlight: normalizeStoredFlightSelection(assignment.onwardFlight),
+      returnFlight: normalizeStoredFlightSelection(assignment.returnFlight),
       notes: assignment.notes || ""
     }))
   };

@@ -42,7 +42,11 @@ const SESSION_COOKIE = "pixelbug_session";
 const GOOGLE_TOKEN_SETTING_KEY = "google_oauth_tokens";
 const GOOGLE_LAST_SYNC_SETTING_KEY = "google_last_sync_at";
 const GOOGLE_LAST_ERROR_SETTING_KEY = "google_last_sync_error";
+const GOOGLE_SHEET_EXPORT_MAP_SETTING_KEY = "google_sheet_export_map";
 const GOOGLE_SYNC_DEBOUNCE_MS = 1000 * 30;
+const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
+const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+const GOOGLE_OAUTH_SCOPES = [GOOGLE_CALENDAR_SCOPE, GOOGLE_SHEETS_SCOPE];
 const INVOICE_STATUSES = new Set(["draft", "sent", "partially_paid", "paid", "cancelled"]);
 const SELF_SERVICE_ROLES = new Set(["admin", "crew", "viewer"]);
 const sessions = new Map();
@@ -55,6 +59,7 @@ const GST_LOOKUP_API_KEY = process.env.GST_LOOKUP_API_KEY || "";
 const GST_LOOKUP_API_KEY_HEADER = process.env.GST_LOOKUP_API_KEY_HEADER || "x-api-key";
 const CLEARTAX_GST_LOOKUP_URL = process.env.CLEARTAX_GST_LOOKUP_URL || "https://cleartax.in/f/compliance-report";
 const CLEARTAX_GST_LOOKUP_ENABLED = process.env.CLEARTAX_GST_LOOKUP_ENABLED !== "false";
+const AMADEUS_BASE_URL = (process.env.AMADEUS_BASE_URL || "https://test.api.amadeus.com").trim().replace(/\/+$/, "");
 const CREW_COLOR_REMAP = {
   "#ee8f8f": "#d93025",
   "#f2b779": "#f29900",
@@ -85,6 +90,25 @@ const GOOGLE_EVENT_COLOR_IDS = {
   "#c26401": "6",
   "#d81b60": "4"
 };
+let amadeusAccessTokenCache = null;
+const LOCATION_FALLBACKS = [
+  { label: "Ahmedabad, IN", cityName: "Ahmedabad", countryCode: "IN", countryName: "India", code: "AMD", subType: "CITY" },
+  { label: "Bengaluru, IN", cityName: "Bengaluru", countryCode: "IN", countryName: "India", code: "BLR", subType: "CITY" },
+  { label: "Chandigarh, IN", cityName: "Chandigarh", countryCode: "IN", countryName: "India", code: "IXC", subType: "CITY" },
+  { label: "Chennai, IN", cityName: "Chennai", countryCode: "IN", countryName: "India", code: "MAA", subType: "CITY" },
+  { label: "Dehradun, IN", cityName: "Dehradun", countryCode: "IN", countryName: "India", code: "DED", subType: "CITY" },
+  { label: "Delhi, IN", cityName: "Delhi", countryCode: "IN", countryName: "India", code: "DEL", subType: "CITY" },
+  { label: "Dubai, AE", cityName: "Dubai", countryCode: "AE", countryName: "UAE", code: "DXB", subType: "CITY" },
+  { label: "Goa, IN", cityName: "Goa", countryCode: "IN", countryName: "India", code: "GOX", subType: "CITY" },
+  { label: "Hyderabad, IN", cityName: "Hyderabad", countryCode: "IN", countryName: "India", code: "HYD", subType: "CITY" },
+  { label: "Jaipur, IN", cityName: "Jaipur", countryCode: "IN", countryName: "India", code: "JAI", subType: "CITY" },
+  { label: "Kolkata, IN", cityName: "Kolkata", countryCode: "IN", countryName: "India", code: "CCU", subType: "CITY" },
+  { label: "Lucknow, IN", cityName: "Lucknow", countryCode: "IN", countryName: "India", code: "LKO", subType: "CITY" },
+  { label: "Mumbai, IN", cityName: "Mumbai", countryCode: "IN", countryName: "India", code: "BOM", subType: "CITY" },
+  { label: "Paris, FR", cityName: "Paris", countryCode: "FR", countryName: "France", code: "PAR", subType: "CITY" },
+  { label: "Pune, IN", cityName: "Pune", countryCode: "IN", countryName: "India", code: "PNQ", subType: "CITY" },
+  { label: "Singapore, SG", cityName: "Singapore", countryCode: "SG", countryName: "Singapore", code: "SIN", subType: "CITY" }
+];
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -287,6 +311,8 @@ function ensureDatabase() {
       role TEXT NOT NULL,
       approved INTEGER NOT NULL DEFAULT 0,
       color TEXT,
+      meal_preference TEXT,
+      seat_preference TEXT,
       email_verified INTEGER NOT NULL DEFAULT 1,
       verification_token TEXT,
       reset_token TEXT,
@@ -502,6 +528,13 @@ function ensureDatabase() {
   if (!showColumns.includes("client_id")) {
     db.exec("ALTER TABLE shows ADD COLUMN client_id TEXT");
   }
+  const userColumns = db.prepare("PRAGMA table_info(users)").all().map((column) => column.name);
+  if (!userColumns.includes("meal_preference")) {
+    db.exec("ALTER TABLE users ADD COLUMN meal_preference TEXT");
+  }
+  if (!userColumns.includes("seat_preference")) {
+    db.exec("ALTER TABLE users ADD COLUMN seat_preference TEXT");
+  }
   const clientColumns = db.prepare("PRAGMA table_info(clients)").all().map((column) => column.name);
   if (!clientColumns.includes("state")) {
     db.exec("ALTER TABLE clients ADD COLUMN state TEXT");
@@ -636,6 +669,7 @@ function normalizeInvoice(invoice) {
     clientGstin: String(rawDetails.clientGstin || "").trim(),
     placeOfSupply: String(rawDetails.placeOfSupply || "").trim(),
     paymentTerms: String(rawDetails.paymentTerms || "Due on receipt").trim(),
+    lightDesignerId: String(rawDetails.lightDesignerId || "").trim(),
     bankAccountName: String(rawDetails.bankAccountName || "").trim(),
     bankName: String(rawDetails.bankName || "").trim(),
     bankAccountNumber: String(rawDetails.bankAccountNumber || "").trim(),
@@ -1068,6 +1102,24 @@ function setSetting(key, value) {
   database.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)").run(key, String(value));
 }
 
+function getJsonSetting(key, fallback = null) {
+  const raw = getSetting(key);
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function setJsonSetting(key, value) {
+  if (value === null || value === undefined) {
+    setSetting(key, "");
+    return;
+  }
+  setSetting(key, JSON.stringify(value));
+}
+
 function getGoogleTokens() {
   const raw = getSetting(GOOGLE_TOKEN_SETTING_KEY);
   if (!raw) return null;
@@ -1116,15 +1168,255 @@ function getGoogleConfig(req) {
 function getGoogleStatus(req) {
   const config = getGoogleConfig(req);
   const tokens = getGoogleTokens();
+  const grantedScope = String(tokens?.scope || "").trim();
   return {
     configured: config.configured,
     connected: Boolean(tokens?.refresh_token || tokens?.access_token),
+    sheetsConnected: grantedScope.includes(GOOGLE_SHEETS_SCOPE),
     calendarId: config.calendarId || "",
     redirectUri: config.redirectUri,
+    scope: grantedScope,
     missingConfig: config.missing || [],
     lastSyncAt: getSetting(GOOGLE_LAST_SYNC_SETTING_KEY) || "",
     lastError: getSetting(GOOGLE_LAST_ERROR_SETTING_KEY) || ""
   };
+}
+
+function getAmadeusConfig() {
+  const clientId = readFirstConfiguredEnv(["AMADEUS_API_KEY", "AMADEUS_CLIENT_ID"]);
+  const clientSecret = readFirstConfiguredEnv(["AMADEUS_API_SECRET", "AMADEUS_CLIENT_SECRET"]);
+  const missing = [];
+  if (!clientId) missing.push("AMADEUS_API_KEY");
+  if (!clientSecret) missing.push("AMADEUS_API_SECRET");
+  return {
+    clientId,
+    clientSecret,
+    baseUrl: AMADEUS_BASE_URL,
+    configured: missing.length === 0,
+    missing
+  };
+}
+
+async function getAmadeusAccessToken() {
+  const config = getAmadeusConfig();
+  if (!config.configured) {
+    throw new Error(`Amadeus env vars are not configured. Missing: ${config.missing.join(", ")}`);
+  }
+
+  if (amadeusAccessTokenCache?.accessToken && amadeusAccessTokenCache.expiresAt > Date.now() + 60_000) {
+    return amadeusAccessTokenCache.accessToken;
+  }
+
+  const response = await fetch(`${config.baseUrl}/v1/security/oauth2/token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: new URLSearchParams({
+      grant_type: "client_credentials",
+      client_id: config.clientId,
+      client_secret: config.clientSecret
+    }).toString()
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error_description || payload.error || "Amadeus authentication failed.");
+  }
+
+  amadeusAccessTokenCache = {
+    accessToken: String(payload.access_token || ""),
+    expiresAt: Date.now() + (Number(payload.expires_in || 1800) * 1000)
+  };
+  if (!amadeusAccessTokenCache.accessToken) {
+    throw new Error("Amadeus authentication failed.");
+  }
+  return amadeusAccessTokenCache.accessToken;
+}
+
+function normalizeAmadeusFlightOffer(offer, dictionaries = {}) {
+  const itinerary = Array.isArray(offer?.itineraries) ? offer.itineraries[0] : null;
+  const segments = Array.isArray(itinerary?.segments) ? itinerary.segments : [];
+  const firstSegment = segments[0];
+  const lastSegment = segments[segments.length - 1];
+  if (!firstSegment || !lastSegment) return null;
+  const fareDetails = offer?.travelerPricings?.[0]?.fareDetailsBySegment?.[0] || {};
+  const carrierCode = String(firstSegment.carrierCode || "").trim();
+  const carrierName = String(dictionaries?.carriers?.[carrierCode] || carrierCode || "").trim();
+  const flightNumber = String(firstSegment.number || "").trim();
+  const departureAirport = String(firstSegment.departure?.iataCode || "").trim();
+  const arrivalAirport = String(lastSegment.arrival?.iataCode || "").trim();
+  const price = Number(offer?.price?.grandTotal || offer?.price?.total || 0);
+
+  return {
+    id: String(offer.id || `${carrierCode}${flightNumber}-${firstSegment.departure?.at || ""}`),
+    carrierCode,
+    carrierName,
+    flightNumber,
+    marketingLabel: [carrierName, flightNumber].filter(Boolean).join(" ").trim(),
+    departureAirport,
+    departureAt: String(firstSegment.departure?.at || "").trim(),
+    arrivalAirport,
+    arrivalAt: String(lastSegment.arrival?.at || "").trim(),
+    duration: String(itinerary?.duration || "").trim(),
+    stops: Math.max(segments.length - 1, 0),
+    price,
+    currency: String(offer?.price?.currency || "").trim(),
+    cabin: String(fareDetails.cabin || "").trim(),
+    bookingClass: String(fareDetails.class || "").trim(),
+    lastTicketingDate: String(offer?.lastTicketingDate || "").trim(),
+    segments: segments.map((segment) => {
+      const segmentCarrierCode = String(segment.carrierCode || "").trim();
+      return {
+        carrierCode: segmentCarrierCode,
+        carrierName: String(dictionaries?.carriers?.[segmentCarrierCode] || segmentCarrierCode || "").trim(),
+        flightNumber: String(segment.number || "").trim(),
+        departureAirport: String(segment.departure?.iataCode || "").trim(),
+        departureAt: String(segment.departure?.at || "").trim(),
+        arrivalAirport: String(segment.arrival?.iataCode || "").trim(),
+        arrivalAt: String(segment.arrival?.at || "").trim(),
+        duration: String(segment.duration || "").trim(),
+        aircraft: String(dictionaries?.aircraft?.[String(segment.aircraft?.code || "").trim()] || segment.aircraft?.code || "").trim()
+      };
+    })
+  };
+}
+
+async function searchAmadeusFlights({ originLocationCode, destinationLocationCode, departureDate, adults = 1, max = 8 }) {
+  const accessToken = await getAmadeusAccessToken();
+  const config = getAmadeusConfig();
+  const requestUrl = new URL(`${config.baseUrl}/v2/shopping/flight-offers`);
+  requestUrl.searchParams.set("originLocationCode", originLocationCode);
+  requestUrl.searchParams.set("destinationLocationCode", destinationLocationCode);
+  requestUrl.searchParams.set("departureDate", departureDate);
+  requestUrl.searchParams.set("adults", String(Math.max(1, Number(adults || 1))));
+  requestUrl.searchParams.set("max", String(Math.min(Math.max(1, Number(max || 8)), 20)));
+  requestUrl.searchParams.set("currencyCode", "INR");
+
+  const response = await fetch(requestUrl, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`
+    }
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = Array.isArray(payload?.errors) ? payload.errors[0]?.detail || payload.errors[0]?.title : "";
+    throw new Error(detail || payload.error || "Flight search failed.");
+  }
+
+  return (Array.isArray(payload?.data) ? payload.data : [])
+    .map((offer) => normalizeAmadeusFlightOffer(offer, payload?.dictionaries || {}))
+    .filter(Boolean);
+}
+
+function normalizeAmadeusLocationOption(item) {
+  if (!item || typeof item !== "object") return null;
+  const code = String(item.iataCode || "").trim().toUpperCase();
+  if (!code) return null;
+  const cityName = String(item.address?.cityName || item.name || "").trim();
+  const countryCode = String(item.address?.countryCode || "").trim().toUpperCase();
+  const countryName = String(item.address?.countryName || "").trim();
+  const detailedName = String(item.detailedName || "").trim();
+  return {
+    id: String(item.id || `${item.subType || "CITY"}-${code}-${cityName}`).trim(),
+    label: detailedName || [cityName, countryCode].filter(Boolean).join(", "),
+    cityName,
+    countryCode,
+    countryName,
+    code,
+    subType: String(item.subType || "").trim().toUpperCase()
+  };
+}
+
+async function searchAmadeusLocationOptions({ keyword, max = 8 }) {
+  const accessToken = await getAmadeusAccessToken();
+  const config = getAmadeusConfig();
+  const normalizedKeyword = String(keyword || "").trim();
+  if (normalizedKeyword.length < 2) {
+    return [];
+  }
+
+  const makeLocationUrl = (subType) => {
+    const requestUrl = new URL(`${config.baseUrl}/v1/reference-data/locations`);
+    requestUrl.searchParams.set("subType", subType);
+    requestUrl.searchParams.set("keyword", normalizedKeyword);
+    requestUrl.searchParams.set("sort", "analytics.travelers.score");
+    requestUrl.searchParams.set("view", "LIGHT");
+    requestUrl.searchParams.set("page[limit]", String(Math.min(Math.max(1, Number(max || 8)), 10)));
+    return requestUrl;
+  };
+  const citySearchUrl = new URL(`${config.baseUrl}/v1/reference-data/locations/cities`);
+  citySearchUrl.searchParams.set("keyword", normalizedKeyword);
+  citySearchUrl.searchParams.set("include", "AIRPORTS");
+  citySearchUrl.searchParams.set("max", String(Math.min(Math.max(1, Number(max || 8)), 10)));
+
+  const [cityLocationResponse, airportLocationResponse, cityResponse] = await Promise.all([
+    fetch(makeLocationUrl("CITY"), {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    }),
+    fetch(makeLocationUrl("AIRPORT"), {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    }),
+    fetch(citySearchUrl, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    })
+  ]);
+
+  const cityLocationPayload = await cityLocationResponse.json().catch(() => ({}));
+  const airportLocationPayload = await airportLocationResponse.json().catch(() => ({}));
+  const cityPayload = await cityResponse.json().catch(() => ({}));
+
+  const locationOptions = [];
+  if (cityLocationResponse.ok) {
+    locationOptions.push(...(Array.isArray(cityLocationPayload?.data) ? cityLocationPayload.data : []));
+  }
+  if (airportLocationResponse.ok) {
+    locationOptions.push(...(Array.isArray(airportLocationPayload?.data) ? airportLocationPayload.data : []));
+  }
+  if (cityResponse.ok) {
+    locationOptions.push(...(Array.isArray(cityPayload?.data) ? cityPayload.data : []));
+  }
+
+  if (!locationOptions.length) {
+    const cityLocationError = Array.isArray(cityLocationPayload?.errors) ? cityLocationPayload.errors[0]?.detail || cityLocationPayload.errors[0]?.title : "";
+    const airportError = Array.isArray(airportLocationPayload?.errors) ? airportLocationPayload.errors[0]?.detail || airportLocationPayload.errors[0]?.title : "";
+    const cityError = Array.isArray(cityPayload?.errors) ? cityPayload.errors[0]?.detail || cityPayload.errors[0]?.title : "";
+    const fallbackMatches = LOCATION_FALLBACKS.filter((item) => {
+      const haystack = [item.label, item.cityName, item.code, item.countryName]
+        .map((value) => String(value || "").toLowerCase());
+      return haystack.some((value) => value.includes(normalizedKeyword.toLowerCase()));
+    }).slice(0, Math.min(Math.max(1, Number(max || 8)), 10));
+    if (fallbackMatches.length) {
+      return fallbackMatches;
+    }
+    throw new Error(cityLocationError || airportError || cityError || "Location search failed.");
+  }
+
+  const deduped = new Map();
+  locationOptions.forEach((item) => {
+    const normalized = normalizeAmadeusLocationOption(item);
+    if (!normalized) return;
+    const key = `${normalized.code}:${normalized.cityName}:${normalized.countryCode}`;
+    if (!deduped.has(key)) {
+      deduped.set(key, normalized);
+    }
+  });
+
+  LOCATION_FALLBACKS
+    .filter((item) => item.cityName.toLowerCase().includes(normalizedKeyword.toLowerCase()) || item.code.toLowerCase().includes(normalizedKeyword.toLowerCase()))
+    .forEach((item) => {
+      const key = `${item.code}:${item.cityName}:${item.countryCode}`;
+      if (!deduped.has(key)) {
+        deduped.set(key, item);
+      }
+    });
+
+  return [...deduped.values()].slice(0, Math.min(Math.max(1, Number(max || 8)), 10));
 }
 
 function migrateLegacyJsonToDatabase() {
@@ -1305,7 +1597,7 @@ function syncClientMasterFromExistingRecords(database) {
 function readStore() {
   const database = ensureDatabase();
   const users = database.prepare(`
-    SELECT id, name, email, phone, role, approved, color, email_verified, verification_token, reset_token, reset_token_expires_at, password_hash
+    SELECT id, name, email, phone, role, approved, color, meal_preference, seat_preference, email_verified, verification_token, reset_token, reset_token_expires_at, password_hash
     FROM users
     ORDER BY name COLLATE NOCASE
   `).all().map((user) => ({
@@ -1316,6 +1608,8 @@ function readStore() {
     role: user.role,
     approved: Boolean(user.approved),
     color: user.color || null,
+    mealPreference: user.meal_preference || "",
+    seatPreference: user.seat_preference || "",
     emailVerified: Boolean(user.email_verified),
     verificationToken: user.verification_token || null,
     resetToken: user.reset_token || null,
@@ -1378,8 +1672,8 @@ function writeStore(store) {
   const database = ensureDatabase();
   const replaceUser = database.prepare(`
     INSERT OR REPLACE INTO users (
-      id, name, email, phone, role, approved, color, email_verified, verification_token, reset_token, reset_token_expires_at, password_hash
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      id, name, email, phone, role, approved, color, meal_preference, seat_preference, email_verified, verification_token, reset_token, reset_token_expires_at, password_hash
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const replaceShow = database.prepare(`
     INSERT OR REPLACE INTO shows (
@@ -1410,6 +1704,8 @@ function writeStore(store) {
         user.role,
         user.approved ? 1 : 0,
         user.color || null,
+        user.mealPreference || null,
+        user.seatPreference || null,
         user.emailVerified ? 1 : 0,
         user.verificationToken || null,
         user.resetToken || null,
@@ -1516,6 +1812,8 @@ function sanitizeUser(user) {
     role: user.role,
     approved: Boolean(user.approved),
     color: user.color || null,
+    mealPreference: user.mealPreference || "",
+    seatPreference: user.seatPreference || "",
     emailVerified: Boolean(user.emailVerified)
   };
 }
@@ -1588,6 +1886,43 @@ function normalizeShow(show) {
   const showDateTo = rawShowDateTo && showDateFrom && rawShowDateTo < showDateFrom
     ? showDateFrom
     : rawShowDateTo;
+  const normalizeFlightSelection = (flight) => {
+    if (!flight || typeof flight !== "object") return null;
+    const segments = Array.isArray(flight.segments)
+      ? flight.segments
+          .filter((segment) => segment && typeof segment === "object")
+          .map((segment) => ({
+            carrierCode: String(segment.carrierCode || "").trim(),
+            carrierName: String(segment.carrierName || "").trim(),
+            flightNumber: String(segment.flightNumber || "").trim(),
+            departureAirport: String(segment.departureAirport || "").trim(),
+            departureAt: String(segment.departureAt || "").trim(),
+            arrivalAirport: String(segment.arrivalAirport || "").trim(),
+            arrivalAt: String(segment.arrivalAt || "").trim(),
+            duration: String(segment.duration || "").trim(),
+            aircraft: String(segment.aircraft || "").trim()
+          }))
+      : [];
+    return {
+      id: String(flight.id || "").trim(),
+      carrierCode: String(flight.carrierCode || "").trim(),
+      carrierName: String(flight.carrierName || "").trim(),
+      flightNumber: String(flight.flightNumber || "").trim(),
+      marketingLabel: String(flight.marketingLabel || "").trim(),
+      departureAirport: String(flight.departureAirport || "").trim(),
+      departureAt: String(flight.departureAt || "").trim(),
+      arrivalAirport: String(flight.arrivalAirport || "").trim(),
+      arrivalAt: String(flight.arrivalAt || "").trim(),
+      duration: String(flight.duration || "").trim(),
+      stops: Number.isFinite(Number(flight.stops)) ? Number(flight.stops) : 0,
+      price: Number(flight.price || 0),
+      currency: String(flight.currency || "").trim(),
+      cabin: String(flight.cabin || "").trim(),
+      bookingClass: String(flight.bookingClass || "").trim(),
+      lastTicketingDate: String(flight.lastTicketingDate || "").trim(),
+      segments
+    };
+  };
   return {
     id: show.id || uid("show"),
     showDate: showDateFrom,
@@ -1622,6 +1957,8 @@ function normalizeShow(show) {
             returnTravelDate: String(assignment.returnTravelDate || ""),
             onwardTravelSector: String(assignment.onwardTravelSector || assignment.travelSector || "").trim(),
             returnTravelSector: String(assignment.returnTravelSector || "").trim(),
+            onwardFlight: normalizeFlightSelection(assignment.onwardFlight),
+            returnFlight: normalizeFlightSelection(assignment.returnFlight),
             notes: String(assignment.notes || assignment.travelNotes || "").trim()
           }))
       : []
@@ -1884,6 +2221,8 @@ function mapGoogleEventToShow(event, store, existingShow = null) {
       returnTravelDate: "",
       onwardTravelSector: "",
       returnTravelSector: "",
+      onwardFlight: null,
+      returnFlight: null,
       notes: ""
     };
   });
@@ -1972,7 +2311,8 @@ async function refreshGoogleAccessToken(req, tokens) {
     ...tokens,
     access_token: payload.access_token,
     expires_at: Date.now() + (Number(payload.expires_in || 3600) * 1000),
-    token_type: payload.token_type || tokens.token_type || "Bearer"
+    token_type: payload.token_type || tokens.token_type || "Bearer",
+    scope: payload.scope || tokens.scope || ""
   };
 }
 
@@ -1993,6 +2333,42 @@ async function getGoogleAccessToken(req) {
   }
 
   return tokens.access_token;
+}
+
+function ensureGoogleSheetsScope() {
+  const tokens = getGoogleTokens();
+  const grantedScope = String(tokens?.scope || "").trim();
+  if (!grantedScope.includes(GOOGLE_SHEETS_SCOPE)) {
+    throw new Error("Reconnect Google Calendar to grant Google Sheets export access.");
+  }
+}
+
+async function googleJsonRequest(req, method, url, body = null) {
+  const accessToken = await getGoogleAccessToken(req);
+  const response = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json"
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error?.message || payload.error_description || "Google request failed.");
+  }
+  return payload;
+}
+
+async function clearGoogleSheetValues(req, spreadsheetId, ranges = []) {
+  const normalizedRanges = ranges.filter(Boolean);
+  if (!normalizedRanges.length) return;
+  await googleJsonRequest(
+    req,
+    "POST",
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values:batchClear`,
+    { ranges: normalizedRanges }
+  );
 }
 
 async function googleApiRequest(req, method, apiPath, body = null, query = null) {
@@ -2019,6 +2395,299 @@ async function googleApiRequest(req, method, apiPath, body = null, query = null)
     throw new Error(payload.error?.message || payload.error_description || "Google Calendar request failed.");
   }
   return payload;
+}
+
+function sanitizeGoogleSheetTitle(name = "", fallback = "Sheet") {
+  const cleaned = String(name || "").replace(/[\[\]\*\?\/\\]/g, " ").trim();
+  return (cleaned || fallback).slice(0, 100);
+}
+
+function buildGoogleSheetFormatRequests(sheetId, rows = [], freezeRows = 1, columnWidths = [], rowHeight = 30) {
+  if (sheetId === undefined) return [];
+  const rowCount = Array.isArray(rows) ? rows.length : 0;
+  const maxColumns = Array.isArray(rows)
+    ? rows.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 0)
+    : 0;
+  const borderColor = { red: 0.56, green: 0.56, blue: 0.56 };
+  const requests = [{
+    updateSheetProperties: {
+      properties: {
+        sheetId,
+        gridProperties: {
+          frozenRowCount: Math.max(0, Number(freezeRows || 0))
+        }
+      },
+      fields: "gridProperties.frozenRowCount"
+    }
+  }];
+
+  if (maxColumns > 0) {
+    requests.push({
+      autoResizeDimensions: {
+        dimensions: {
+          sheetId,
+          dimension: "COLUMNS",
+          startIndex: 0,
+          endIndex: maxColumns
+        }
+      }
+    });
+  }
+
+  columnWidths.slice(0, maxColumns).forEach((width, index) => {
+    requests.push({
+      updateDimensionProperties: {
+        range: {
+          sheetId,
+          dimension: "COLUMNS",
+          startIndex: index,
+          endIndex: index + 1
+        },
+        properties: {
+          pixelSize: Math.max(40, Math.round(Number(width || 0)))
+        },
+        fields: "pixelSize"
+      }
+    });
+  });
+
+  if (rowCount > 0) {
+    requests.push({
+      updateDimensionProperties: {
+        range: {
+          sheetId,
+          dimension: "ROWS",
+          startIndex: 0,
+          endIndex: rowCount
+        },
+        properties: {
+          pixelSize: Math.max(24, Math.round(Number(rowHeight || 30)))
+        },
+        fields: "pixelSize"
+      }
+    });
+  }
+
+  if (rowCount > 0 && maxColumns > 0) {
+    requests.push({
+      repeatCell: {
+        range: {
+          sheetId,
+          startRowIndex: 0,
+          endRowIndex: rowCount,
+          startColumnIndex: 0,
+          endColumnIndex: maxColumns
+        },
+        cell: {
+          userEnteredFormat: {
+            verticalAlignment: "MIDDLE",
+            wrapStrategy: "WRAP",
+            borders: {
+              top: { style: "SOLID", color: borderColor },
+              bottom: { style: "SOLID", color: borderColor },
+              left: { style: "SOLID", color: borderColor },
+              right: { style: "SOLID", color: borderColor }
+            }
+          }
+        },
+        fields: "userEnteredFormat(borders,verticalAlignment,wrapStrategy)"
+      }
+    });
+  }
+
+  if (freezeRows > 0 && maxColumns > 0) {
+    requests.push({
+      repeatCell: {
+        range: {
+          sheetId,
+          startRowIndex: 0,
+          endRowIndex: Math.min(freezeRows, rowCount),
+          startColumnIndex: 0,
+          endColumnIndex: maxColumns
+        },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: { red: 0.94, green: 0.94, blue: 0.94 },
+            textFormat: {
+              bold: true
+            }
+          }
+        },
+        fields: "userEnteredFormat(backgroundColor,textFormat)"
+      }
+    });
+  }
+
+  return requests;
+}
+
+function normalizeGoogleExportSheets(exportPayload = {}) {
+  return Array.isArray(exportPayload.sheets)
+    ? exportPayload.sheets
+        .map((sheet, index) => ({
+          name: sanitizeGoogleSheetTitle(sheet?.name, `Sheet ${index + 1}`),
+          rows: Array.isArray(sheet?.rows) ? sheet.rows.map((row) => Array.isArray(row) ? row : []) : [],
+          freezeRows: Math.max(0, Number(sheet?.freezeRows || 1)),
+          columnWidths: Array.isArray(sheet?.columnWidths) ? sheet.columnWidths : [],
+          rowHeight: Math.max(24, Number(sheet?.rowHeight || 30))
+        }))
+        .filter((sheet) => sheet.rows.length)
+    : [];
+}
+
+function getGoogleExportRegistry() {
+  const registry = getJsonSetting(GOOGLE_SHEET_EXPORT_MAP_SETTING_KEY, {});
+  return registry && typeof registry === "object" ? registry : {};
+}
+
+function setGoogleExportRegistry(registry) {
+  setJsonSetting(GOOGLE_SHEET_EXPORT_MAP_SETTING_KEY, registry);
+}
+
+async function syncGoogleSpreadsheetContents(req, spreadsheetId, title, sheets) {
+  const metadata = await googleJsonRequest(
+    req,
+    "GET",
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?fields=spreadsheetId,spreadsheetUrl,sheets.properties`
+  );
+
+  const existingSheets = Array.isArray(metadata.sheets) ? metadata.sheets : [];
+  const existingByTitle = new Map(existingSheets.map((sheet) => [sheet.properties?.title, sheet.properties?.sheetId]));
+  const desiredNames = new Set(sheets.map((sheet) => sheet.name));
+  const syncRequests = [];
+
+  if (title) {
+    syncRequests.push({
+      updateSpreadsheetProperties: {
+        properties: { title: sanitizeGoogleSheetTitle(title, "PixelBug Export") },
+        fields: "title"
+      }
+    });
+  }
+
+  sheets.forEach((sheet) => {
+    if (!existingByTitle.has(sheet.name)) {
+      syncRequests.push({
+        addSheet: {
+          properties: { title: sheet.name }
+        }
+      });
+    }
+  });
+
+  existingSheets.forEach((sheet) => {
+    const sheetTitle = sheet.properties?.title;
+    const sheetId = sheet.properties?.sheetId;
+    if (sheetId === undefined || !sheetTitle || desiredNames.has(sheetTitle)) return;
+    syncRequests.push({
+      deleteSheet: { sheetId }
+    });
+  });
+
+  if (syncRequests.length) {
+    await googleJsonRequest(
+      req,
+      "POST",
+      `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+      { requests: syncRequests }
+    );
+  }
+
+  const refreshedMetadata = await googleJsonRequest(
+    req,
+    "GET",
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?fields=spreadsheetId,spreadsheetUrl,sheets.properties`
+  );
+  const refreshedByTitle = new Map((refreshedMetadata.sheets || []).map((sheet) => [sheet.properties?.title, sheet.properties?.sheetId]));
+
+  await clearGoogleSheetValues(req, spreadsheetId, sheets.map((sheet) => `'${sheet.name}'`));
+  await googleJsonRequest(req, "POST", `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values:batchUpdate`, {
+    valueInputOption: "USER_ENTERED",
+    data: sheets.map((sheet) => ({
+      range: `'${sheet.name}'!A1`,
+      majorDimension: "ROWS",
+      values: sheet.rows
+    }))
+  });
+
+  const formatRequests = sheets.flatMap((sheet) => {
+    const sheetId = refreshedByTitle.get(sheet.name);
+    return buildGoogleSheetFormatRequests(sheetId, sheet.rows, sheet.freezeRows, sheet.columnWidths, sheet.rowHeight);
+  });
+
+  if (formatRequests.length) {
+    await googleJsonRequest(req, "POST", `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}:batchUpdate`, {
+      requests: formatRequests
+    });
+  }
+
+  return {
+    spreadsheetId: refreshedMetadata.spreadsheetId,
+    spreadsheetUrl: refreshedMetadata.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${refreshedMetadata.spreadsheetId}/edit`
+  };
+}
+
+async function exportGoogleSpreadsheet(req, exportPayload = {}) {
+  ensureGoogleSheetsScope();
+  const sheets = normalizeGoogleExportSheets(exportPayload);
+  if (!sheets.length) {
+    throw new Error("At least one export sheet is required.");
+  }
+
+  const reuseKey = String(exportPayload.reuseKey || "").trim();
+  const registry = getGoogleExportRegistry();
+  const existingSpreadsheetId = reuseKey ? String(registry[reuseKey] || "").trim() : "";
+
+  if (existingSpreadsheetId) {
+    try {
+      return await syncGoogleSpreadsheetContents(req, existingSpreadsheetId, exportPayload.title || "PixelBug Export", sheets);
+    } catch (error) {
+      delete registry[reuseKey];
+      setGoogleExportRegistry(registry);
+    }
+  }
+
+  const spreadsheet = await googleJsonRequest(req, "POST", "https://sheets.googleapis.com/v4/spreadsheets", {
+    properties: {
+      title: sanitizeGoogleSheetTitle(exportPayload.title || "PixelBug Export", "PixelBug Export")
+    },
+    sheets: sheets.map((sheet) => ({
+      properties: {
+        title: sheet.name
+      }
+    }))
+  });
+
+  const sheetIdByTitle = new Map((spreadsheet.sheets || []).map((sheet) => [sheet.properties?.title, sheet.properties?.sheetId]));
+  await googleJsonRequest(req, "POST", `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheet.spreadsheetId)}/values:batchUpdate`, {
+    valueInputOption: "USER_ENTERED",
+    data: sheets.map((sheet) => ({
+      range: `'${sheet.name}'!A1`,
+      majorDimension: "ROWS",
+      values: sheet.rows
+    }))
+  });
+
+  const formatRequests = sheets.flatMap((sheet) => {
+    const sheetId = sheetIdByTitle.get(sheet.name);
+    return buildGoogleSheetFormatRequests(sheetId, sheet.rows, sheet.freezeRows, sheet.columnWidths, sheet.rowHeight);
+  });
+
+  if (formatRequests.length) {
+    await googleJsonRequest(req, "POST", `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheet.spreadsheetId)}:batchUpdate`, {
+      requests: formatRequests
+    });
+  }
+
+  if (reuseKey) {
+    registry[reuseKey] = spreadsheet.spreadsheetId;
+    setGoogleExportRegistry(registry);
+  }
+
+  return {
+    spreadsheetId: spreadsheet.spreadsheetId,
+    spreadsheetUrl: spreadsheet.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${spreadsheet.spreadsheetId}/edit`
+  };
 }
 
 async function pullGoogleCalendarIntoStore(req, currentStore) {
@@ -2203,6 +2872,8 @@ async function handleApi(req, res) {
       role: "admin",
       approved: true,
       color,
+      mealPreference: "",
+      seatPreference: "",
       emailVerified: true,
       passwordHash: hashPassword(password)
     };
@@ -2281,6 +2952,8 @@ async function handleApi(req, res) {
       role,
       approved: false,
       color: role === "crew" || role === "admin" ? color : null,
+      mealPreference: "",
+      seatPreference: "",
       emailVerified: true,
       verificationToken: null,
       passwordHash: hashPassword(String(body.password || ""))
@@ -2376,7 +3049,7 @@ async function handleApi(req, res) {
     authUrl.searchParams.set("client_id", config.clientId);
     authUrl.searchParams.set("redirect_uri", config.redirectUri);
     authUrl.searchParams.set("response_type", "code");
-    authUrl.searchParams.set("scope", "https://www.googleapis.com/auth/calendar");
+    authUrl.searchParams.set("scope", GOOGLE_OAUTH_SCOPES.join(" "));
     authUrl.searchParams.set("access_type", "offline");
     authUrl.searchParams.set("prompt", "consent");
     authUrl.searchParams.set("state", stateToken);
@@ -2402,7 +3075,8 @@ async function handleApi(req, res) {
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         token_type: tokens.token_type || "Bearer",
-        expires_at: Date.now() + (Number(tokens.expires_in || 3600) * 1000)
+        expires_at: Date.now() + (Number(tokens.expires_in || 3600) * 1000),
+        scope: String(tokens.scope || GOOGLE_OAUTH_SCOPES.join(" ")).trim()
       });
       setSetting(GOOGLE_LAST_ERROR_SETTING_KEY, "");
       googleOauthStates.delete(stateToken);
@@ -2425,6 +3099,17 @@ async function handleApi(req, res) {
     } catch (error) {
       setSetting(GOOGLE_LAST_ERROR_SETTING_KEY, error.message || "Google sync failed.");
       sendJson(res, 400, { error: error.message || "Google sync failed." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && pathname === "/api/admin/google/sheets/export") {
+    try {
+      const body = await readJson(req);
+      const result = await exportGoogleSpreadsheet(req, body || {});
+      sendJson(res, 200, result);
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Google Sheets export failed." });
     }
     return true;
   }
@@ -2465,6 +3150,8 @@ async function handleApi(req, res) {
       role: "crew",
       approved: true,
       color,
+      mealPreference: "",
+      seatPreference: "",
       emailVerified: true,
       verificationToken: null,
       passwordHash: hashPassword(password)
@@ -2506,6 +3193,8 @@ async function handleApi(req, res) {
       role: "viewer",
       approved: true,
       color: null,
+      mealPreference: "",
+      seatPreference: "",
       emailVerified: true,
       verificationToken: null,
       passwordHash: hashPassword(password)
@@ -2547,6 +3236,8 @@ async function handleApi(req, res) {
       role: "accounts",
       approved: true,
       color: null,
+      mealPreference: "",
+      seatPreference: "",
       emailVerified: true,
       verificationToken: null,
       passwordHash: hashPassword(password)
@@ -2582,6 +3273,26 @@ async function handleApi(req, res) {
     storedUser.passwordHash = hashPassword(nextPassword);
     writeStore(store);
     sendJson(res, 200, { ok: true });
+    return true;
+  }
+
+  if (req.method === "POST" && pathname === "/api/profile") {
+    if (!currentUser) {
+      sendJson(res, 403, { error: "Login required." });
+      return true;
+    }
+
+    const body = await readJson(req);
+    const storedUser = store.users.find((user) => user.id === currentUser.id);
+    if (!storedUser) {
+      sendJson(res, 404, { error: "User not found." });
+      return true;
+    }
+
+    storedUser.mealPreference = String(body.mealPreference || "").trim().slice(0, 80);
+    storedUser.seatPreference = String(body.seatPreference || "").trim().slice(0, 120);
+    writeStore(store);
+    sendBootstrap(res, store, storedUser, {}, req);
     return true;
   }
 
@@ -2623,6 +3334,56 @@ async function handleApi(req, res) {
     const body = await readJson(req);
     const result = await lookupGstinDetails(body?.gstin || "");
     sendJson(res, 200, result);
+    return true;
+  }
+
+  if (req.method === "POST" && pathname === "/api/admin/flights/search") {
+    try {
+      const body = await readJson(req);
+      const originLocationCode = String(body.originLocationCode || "").trim().toUpperCase();
+      const destinationLocationCode = String(body.destinationLocationCode || "").trim().toUpperCase();
+      const departureDate = String(body.departureDate || "").trim();
+
+      if (!/^[A-Z]{3}$/.test(originLocationCode) || !/^[A-Z]{3}$/.test(destinationLocationCode)) {
+        sendJson(res, 400, { error: "Use valid 3-letter city or airport IATA codes like DEL, BOM, DXB, or PAR." });
+        return true;
+      }
+
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(departureDate)) {
+        sendJson(res, 400, { error: "A valid departure date is required." });
+        return true;
+      }
+
+      const offers = await searchAmadeusFlights({
+        originLocationCode,
+        destinationLocationCode,
+        departureDate,
+        adults: body.adults || 1,
+        max: body.max || 8
+      });
+      sendJson(res, 200, { offers });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Flight search failed." });
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && pathname === "/api/admin/flights/locations") {
+    try {
+      const body = await readJson(req);
+      const keyword = String(body.keyword || "").trim();
+      if (keyword.length < 2) {
+        sendJson(res, 200, { options: [] });
+        return true;
+      }
+      const options = await searchAmadeusLocationOptions({
+        keyword,
+        max: body.max || 8
+      });
+      sendJson(res, 200, { options });
+    } catch (error) {
+      sendJson(res, 400, { error: error.message || "Location search failed." });
+    }
     return true;
   }
 
@@ -2671,7 +3432,9 @@ async function handleApi(req, res) {
         phone: String(item.phone || "").trim(),
         role: item.role === "admin" ? "admin" : item.role === "viewer" ? "viewer" : item.role === "accounts" ? "accounts" : "crew",
         approved: Boolean(item.approved),
-        color: item.color || null
+        color: item.color || null,
+        mealPreference: String(item.mealPreference ?? existing.mealPreference ?? "").trim().slice(0, 80),
+        seatPreference: String(item.seatPreference ?? existing.seatPreference ?? "").trim().slice(0, 120)
       });
     }
 

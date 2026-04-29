@@ -75,7 +75,7 @@ test("accounts users can manage invoices but not admin-only routes", async (t) =
   const port = await getFreePort();
   const baseUrl = `http://127.0.0.1:${port}`;
   const child = spawn(process.execPath, ["server.js"], {
-    cwd: "/Users/Rahul/Documents/Playground",
+    cwd: path.resolve(__dirname, ".."),
     env: {
       ...process.env,
       HOST: "127.0.0.1",

@@ -1237,6 +1237,199 @@ button.danger {
   margin-top: 8px;
 }
 
+.assignment-travel-actions .toolbar {
+  margin-top: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.assignment-travel-actions .toolbar button {
+  min-width: 0;
+}
+
+.assignment-flight-stack {
+  display: grid;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.assignment-flight-panel {
+  border: 1px solid rgba(128, 144, 160, 0.18);
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.assignment-editor-card {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid rgba(128, 144, 160, 0.16);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.assignment-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.assignment-remove-slot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: end;
+}
+
+.assignment-travel-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.assignment-direction-card {
+  border: 1px solid rgba(128, 144, 160, 0.18);
+  border-radius: 16px;
+  padding: 12px;
+  background: rgba(8, 15, 26, 0.18);
+  display: grid;
+  gap: 12px;
+}
+
+.assignment-direction-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assignment-direction-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.assignment-sector-field input[readonly] {
+  opacity: 0.9;
+}
+
+.assignment-flight-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.assignment-flight-panel-header .toolbar {
+  margin-top: 0;
+}
+
+.assignment-flight-selected,
+.assignment-flight-results {
+  margin-top: 10px;
+}
+
+.assignment-flight-selected-card,
+.assignment-flight-result {
+  border: 1px solid rgba(128, 144, 160, 0.18);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(8, 15, 26, 0.24);
+}
+
+.assignment-flight-result {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.assignment-flight-result + .assignment-flight-result {
+  margin-top: 8px;
+}
+
+.assignment-flight-result.is-selected,
+.assignment-flight-selected-card {
+  border-color: rgba(111, 157, 255, 0.42);
+  box-shadow: 0 10px 20px rgba(16, 24, 40, 0.12);
+}
+
+.assignment-flight-segments {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.assignment-flight-segment {
+  display: grid;
+  gap: 2px;
+  font-size: 0.88rem;
+}
+
+.assignment-flight-segment span {
+  color: var(--muted);
+}
+
+.field {
+  position: relative;
+}
+
+.location-suggestions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  display: grid;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid rgba(128, 144, 160, 0.18);
+  border-radius: 14px;
+  background: rgba(15, 23, 35, 0.98);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.35);
+}
+
+.location-suggestions.hidden {
+  display: none;
+}
+
+.location-suggestion-item {
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: inherit;
+  display: grid;
+  gap: 2px;
+}
+
+.location-suggestion-item span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.location-suggestion-item:hover {
+  background: rgba(111, 157, 255, 0.16);
+}
+
+@media (max-width: 900px) {
+  .assignment-meta-grid,
+  .assignment-travel-layout,
+  .assignment-direction-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .assignment-remove-slot {
+    justify-content: flex-start;
+  }
+}
+
 :root[data-theme="light"] #invoicesPanel .summary-card {
   background:
     linear-gradient(160deg, rgba(0, 0, 0, 0.025), rgba(0, 0, 0, 0.008)),
@@ -2332,6 +2525,32 @@ button.danger {
   border: 1px solid transparent;
 }
 
+.invoice-card-status-control {
+  min-width: auto;
+  flex: 0 0 auto;
+}
+
+.invoice-card-status-control > span {
+  display: none;
+}
+
+.invoice-card-status-control select {
+  min-height: 34px;
+  padding: 8px 30px 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--button-ghost-border);
+  background: var(--surface-strong);
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 600;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.08);
+}
+
+:root[data-theme="light"] .invoice-card-status-control select {
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.06);
+}
+
 .invoice-status-paid {
   background: rgba(91, 214, 154, 0.14);
   color: #bff7de;
@@ -2444,6 +2663,9 @@ button.danger {
 .invoice-preview-content {
   overflow: auto;
   padding: 22px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent),
     rgba(255, 255, 255, 0.02);
@@ -2457,8 +2679,10 @@ button.danger {
 
 .invoice-print-page {
   box-sizing: border-box;
-  width: min(100%, 210mm);
-  max-width: 210mm;
+  width: 210mm;
+  min-width: 210mm;
+  max-width: none;
+  flex: 0 0 auto;
   min-height: 297mm;
   margin: 0 auto;
   padding: 10mm;
@@ -3264,16 +3488,6 @@ button.danger {
     padding: 18px;
   }
 
-  .invoice-print-page {
-    padding: 24px;
-  }
-
-  .invoice-print-header,
-  .invoice-print-grid {
-    grid-template-columns: 1fr;
-    display: grid;
-  }
-
   .search-submit-button {
     width: calc(50% - 5px);
   }
@@ -3413,15 +3627,6 @@ button.danger {
 
   .invoice-preview-header .toolbar button {
     width: 100%;
-  }
-
-  .invoice-print-page {
-    padding: 18px;
-  }
-
-  .invoice-print-header {
-    display: flex;
-    flex-direction: column;
   }
 
   .invoice-print-meta,
