@@ -59,7 +59,7 @@ const GST_LOOKUP_API_KEY = process.env.GST_LOOKUP_API_KEY || "";
 const GST_LOOKUP_API_KEY_HEADER = process.env.GST_LOOKUP_API_KEY_HEADER || "x-api-key";
 const CLEARTAX_GST_LOOKUP_URL = process.env.CLEARTAX_GST_LOOKUP_URL || "https://cleartax.in/f/compliance-report";
 const CLEARTAX_GST_LOOKUP_ENABLED = process.env.CLEARTAX_GST_LOOKUP_ENABLED !== "false";
-const AMADEUS_BASE_URL = (process.env.AMADEUS_BASE_URL || "https://test.api.amadeus.com").trim().replace(/\/+$/, "");
+const SKYSCANNER_BASE_URL = (process.env.SKYSCANNER_BASE_URL || "https://partners.api.skyscanner.net").trim().replace(/\/+$/, "");
 const CREW_COLOR_REMAP = {
   "#ee8f8f": "#d93025",
   "#f2b779": "#f29900",
@@ -90,7 +90,6 @@ const GOOGLE_EVENT_COLOR_IDS = {
   "#c26401": "6",
   "#d81b60": "4"
 };
-let amadeusAccessTokenCache = null;
 const LOCATION_FALLBACKS = [
   { label: "Ahmedabad, IN", cityName: "Ahmedabad", countryCode: "IN", countryName: "India", code: "AMD", subType: "CITY" },
   { label: "Bengaluru, IN", cityName: "Bengaluru", countryCode: "IN", countryName: "India", code: "BLR", subType: "CITY" },
@@ -1182,231 +1181,183 @@ function getGoogleStatus(req) {
   };
 }
 
-function getAmadeusConfig() {
-  const clientId = readFirstConfiguredEnv(["AMADEUS_API_KEY", "AMADEUS_CLIENT_ID"]);
-  const clientSecret = readFirstConfiguredEnv(["AMADEUS_API_SECRET", "AMADEUS_CLIENT_SECRET"]);
+function getSkyscannerConfig() {
+  const apiKey = readFirstConfiguredEnv(["SKYSCANNER_API_KEY", "SKYSCANNER_KEY"]);
   const missing = [];
-  if (!clientId) missing.push("AMADEUS_API_KEY");
-  if (!clientSecret) missing.push("AMADEUS_API_SECRET");
+  if (!apiKey) missing.push("SKYSCANNER_API_KEY");
   return {
-    clientId,
-    clientSecret,
-    baseUrl: AMADEUS_BASE_URL,
+    apiKey,
+    baseUrl: SKYSCANNER_BASE_URL,
+    market: (process.env.SKYSCANNER_MARKET || "IN").trim(),
+    locale: (process.env.SKYSCANNER_LOCALE || "en-IN").trim(),
+    currency: (process.env.SKYSCANNER_CURRENCY || "INR").trim(),
     configured: missing.length === 0,
     missing
   };
 }
 
-async function getAmadeusAccessToken() {
-  const config = getAmadeusConfig();
+async function skyscannerJsonRequest(pathname, body = {}) {
+  const config = getSkyscannerConfig();
   if (!config.configured) {
-    throw new Error(`Amadeus env vars are not configured. Missing: ${config.missing.join(", ")}`);
+    throw new Error(`Skyscanner env vars are not configured. Missing: ${config.missing.join(", ")}`);
   }
-
-  if (amadeusAccessTokenCache?.accessToken && amadeusAccessTokenCache.expiresAt > Date.now() + 60_000) {
-    return amadeusAccessTokenCache.accessToken;
-  }
-
-  const response = await fetch(`${config.baseUrl}/v1/security/oauth2/token`, {
+  const response = await fetch(`${config.baseUrl}${pathname}`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/x-www-form-urlencoded"
+      "Content-Type": "application/json",
+      "x-api-key": config.apiKey
     },
-    body: new URLSearchParams({
-      grant_type: "client_credentials",
-      client_id: config.clientId,
-      client_secret: config.clientSecret
-    }).toString()
+    body: JSON.stringify(body)
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.error_description || payload.error || "Amadeus authentication failed.");
+    const errorMessage = payload?.message
+      || payload?.error?.message
+      || payload?.error
+      || payload?.details?.[0]?.message
+      || "Skyscanner request failed.";
+    throw new Error(errorMessage);
   }
-
-  amadeusAccessTokenCache = {
-    accessToken: String(payload.access_token || ""),
-    expiresAt: Date.now() + (Number(payload.expires_in || 1800) * 1000)
-  };
-  if (!amadeusAccessTokenCache.accessToken) {
-    throw new Error("Amadeus authentication failed.");
-  }
-  return amadeusAccessTokenCache.accessToken;
+  return payload;
 }
 
-function normalizeAmadeusFlightOffer(offer, dictionaries = {}) {
-  const itinerary = Array.isArray(offer?.itineraries) ? offer.itineraries[0] : null;
-  const segments = Array.isArray(itinerary?.segments) ? itinerary.segments : [];
-  const firstSegment = segments[0];
-  const lastSegment = segments[segments.length - 1];
-  if (!firstSegment || !lastSegment) return null;
-  const fareDetails = offer?.travelerPricings?.[0]?.fareDetailsBySegment?.[0] || {};
-  const carrierCode = String(firstSegment.carrierCode || "").trim();
-  const carrierName = String(dictionaries?.carriers?.[carrierCode] || carrierCode || "").trim();
-  const flightNumber = String(firstSegment.number || "").trim();
-  const departureAirport = String(firstSegment.departure?.iataCode || "").trim();
-  const arrivalAirport = String(lastSegment.arrival?.iataCode || "").trim();
-  const price = Number(offer?.price?.grandTotal || offer?.price?.total || 0);
+function skyscannerDateTimeToIso(value) {
+  if (!value || typeof value !== "object") return "";
+  const year = Number(value.year || 0);
+  const month = Number(value.month || 0);
+  const day = Number(value.day || 0);
+  const hour = Number(value.hour || 0);
+  const minute = Number(value.minute || 0);
+  const second = Number(value.second || 0);
+  if (!year || !month || !day) return "";
+  return new Date(Date.UTC(year, month - 1, day, hour, minute, second)).toISOString();
+}
 
-  return {
-    id: String(offer.id || `${carrierCode}${flightNumber}-${firstSegment.departure?.at || ""}`),
-    carrierCode,
-    carrierName,
-    flightNumber,
-    marketingLabel: [carrierName, flightNumber].filter(Boolean).join(" ").trim(),
-    departureAirport,
-    departureAt: String(firstSegment.departure?.at || "").trim(),
-    arrivalAirport,
-    arrivalAt: String(lastSegment.arrival?.at || "").trim(),
-    duration: String(itinerary?.duration || "").trim(),
-    stops: Math.max(segments.length - 1, 0),
-    price,
-    currency: String(offer?.price?.currency || "").trim(),
-    cabin: String(fareDetails.cabin || "").trim(),
-    bookingClass: String(fareDetails.class || "").trim(),
-    lastTicketingDate: String(offer?.lastTicketingDate || "").trim(),
-    segments: segments.map((segment) => {
-      const segmentCarrierCode = String(segment.carrierCode || "").trim();
+function minutesToIsoDuration(totalMinutes = 0) {
+  const minutes = Math.max(0, Number(totalMinutes || 0));
+  const hoursPart = Math.floor(minutes / 60);
+  const minutesPart = minutes % 60;
+  return `PT${hoursPart ? `${hoursPart}H` : ""}${minutesPart ? `${minutesPart}M` : ""}` || "PT0M";
+}
+
+function normalizeSkyscannerFlightResult(payload = {}, max = 8) {
+  const config = getSkyscannerConfig();
+  const results = payload?.content?.results || {};
+  const itineraries = Object.entries(results.itineraries || {});
+  const legs = results.legs || {};
+  const segments = results.segments || {};
+  const places = results.places || {};
+  const carriers = results.carriers || {};
+  const agents = results.agents || {};
+
+  return itineraries
+    .map(([itineraryId, itinerary]) => {
+      const legId = Array.isArray(itinerary?.legIds) ? itinerary.legIds[0] : null;
+      const leg = legId ? legs[legId] : null;
+      const segmentIds = Array.isArray(leg?.segmentIds) ? leg.segmentIds : [];
+      const flightSegments = segmentIds
+        .map((segmentId) => {
+          const segment = segments[segmentId];
+          if (!segment) return null;
+          const originPlace = places[segment.originPlaceId] || {};
+          const destinationPlace = places[segment.destinationPlaceId] || {};
+          const marketingCarrier = carriers[segment.marketingCarrierId] || {};
+          const operatingCarrier = carriers[segment.operatingCarrierId] || {};
+          return {
+            carrierCode: String(marketingCarrier.displayCode || marketingCarrier.iata || "").trim(),
+            carrierName: String(marketingCarrier.name || "").trim(),
+            flightNumber: String(segment.marketingFlightNumber || "").trim(),
+            departureAirport: String(originPlace.iata || originPlace.name || "").trim().toUpperCase(),
+            departureAt: skyscannerDateTimeToIso(segment.departureDateTime),
+            arrivalAirport: String(destinationPlace.iata || destinationPlace.name || "").trim().toUpperCase(),
+            arrivalAt: skyscannerDateTimeToIso(segment.arrivalDateTime),
+            duration: minutesToIsoDuration(segment.durationInMinutes),
+            aircraft: "",
+            operatingCarrierCode: String(operatingCarrier.displayCode || operatingCarrier.iata || "").trim(),
+            operatingCarrierName: String(operatingCarrier.name || "").trim()
+          };
+        })
+        .filter(Boolean);
+
+      const firstSegment = flightSegments[0];
+      const lastSegment = flightSegments[flightSegments.length - 1];
+      if (!firstSegment || !lastSegment) return null;
+      const firstPricingOption = Array.isArray(itinerary?.pricingOptions) ? itinerary.pricingOptions[0] : null;
+      const firstItem = Array.isArray(firstPricingOption?.items) ? firstPricingOption.items[0] : null;
+      const primaryAgentId = Array.isArray(firstPricingOption?.agentIds) ? firstPricingOption.agentIds[0] : "";
+      const primaryAgent = primaryAgentId ? agents[primaryAgentId] : null;
+      const primaryCarrier = carriers[leg?.marketingCarrierIds?.[0]] || carriers[segments[segmentIds[0]]?.marketingCarrierId] || {};
+      const price = Number(firstPricingOption?.price?.amount || firstItem?.price?.amount || 0);
+
       return {
-        carrierCode: segmentCarrierCode,
-        carrierName: String(dictionaries?.carriers?.[segmentCarrierCode] || segmentCarrierCode || "").trim(),
-        flightNumber: String(segment.number || "").trim(),
-        departureAirport: String(segment.departure?.iataCode || "").trim(),
-        departureAt: String(segment.departure?.at || "").trim(),
-        arrivalAirport: String(segment.arrival?.iataCode || "").trim(),
-        arrivalAt: String(segment.arrival?.at || "").trim(),
-        duration: String(segment.duration || "").trim(),
-        aircraft: String(dictionaries?.aircraft?.[String(segment.aircraft?.code || "").trim()] || segment.aircraft?.code || "").trim()
+        id: String(itineraryId || `${firstSegment.carrierCode}${firstSegment.flightNumber}-${firstSegment.departureAt}`),
+        carrierCode: String(primaryCarrier.displayCode || primaryCarrier.iata || firstSegment.carrierCode || "").trim(),
+        carrierName: String(primaryCarrier.name || firstSegment.carrierName || "").trim(),
+        flightNumber: String(firstSegment.flightNumber || "").trim(),
+        marketingLabel: [primaryCarrier.name || firstSegment.carrierName, firstSegment.flightNumber].filter(Boolean).join(" ").trim(),
+        departureAirport: firstSegment.departureAirport,
+        departureAt: firstSegment.departureAt,
+        arrivalAirport: lastSegment.arrivalAirport,
+        arrivalAt: lastSegment.arrivalAt,
+        duration: minutesToIsoDuration(leg?.durationInMinutes),
+        stops: Math.max(Number(leg?.stopCount || 0), 0),
+        price,
+        currency: config.currency,
+        cabin: "",
+        bookingClass: "",
+        lastTicketingDate: "",
+        deepLink: String(firstItem?.deepLink || "").trim(),
+        agentName: String(primaryAgent?.name || "").trim(),
+        segments: flightSegments
       };
     })
-  };
+    .filter(Boolean)
+    .sort((a, b) => Number(a.price || 0) - Number(b.price || 0))
+    .slice(0, Math.min(Math.max(1, Number(max || 8)), 20));
 }
 
-async function searchAmadeusFlights({ originLocationCode, destinationLocationCode, departureDate, adults = 1, max = 8 }) {
-  const accessToken = await getAmadeusAccessToken();
-  const config = getAmadeusConfig();
-  const requestUrl = new URL(`${config.baseUrl}/v2/shopping/flight-offers`);
-  requestUrl.searchParams.set("originLocationCode", originLocationCode);
-  requestUrl.searchParams.set("destinationLocationCode", destinationLocationCode);
-  requestUrl.searchParams.set("departureDate", departureDate);
-  requestUrl.searchParams.set("adults", String(Math.max(1, Number(adults || 1))));
-  requestUrl.searchParams.set("max", String(Math.min(Math.max(1, Number(max || 8)), 20)));
-  requestUrl.searchParams.set("currencyCode", "INR");
-
-  const response = await fetch(requestUrl, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`
-    }
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = Array.isArray(payload?.errors) ? payload.errors[0]?.detail || payload.errors[0]?.title : "";
-    throw new Error(detail || payload.error || "Flight search failed.");
-  }
-
-  return (Array.isArray(payload?.data) ? payload.data : [])
-    .map((offer) => normalizeAmadeusFlightOffer(offer, payload?.dictionaries || {}))
-    .filter(Boolean);
-}
-
-function normalizeAmadeusLocationOption(item) {
+function normalizeSkyscannerLocationOption(item) {
   if (!item || typeof item !== "object") return null;
-  const code = String(item.iataCode || "").trim().toUpperCase();
+  const code = String(item.iataCode || item.airportInformation?.iataCode || "").trim().toUpperCase();
   if (!code) return null;
-  const cityName = String(item.address?.cityName || item.name || "").trim();
-  const countryCode = String(item.address?.countryCode || "").trim().toUpperCase();
-  const countryName = String(item.address?.countryName || "").trim();
-  const detailedName = String(item.detailedName || "").trim();
   return {
-    id: String(item.id || `${item.subType || "CITY"}-${code}-${cityName}`).trim(),
-    label: detailedName || [cityName, countryCode].filter(Boolean).join(", "),
-    cityName,
-    countryCode,
-    countryName,
+    id: String(item.entityId || `${item.type || "PLACE"}-${code}`).trim(),
+    label: String(item.name || item.cityName || code).trim(),
+    cityName: String(item.cityName || item.name || "").trim(),
+    countryCode: String(item.countryId || "").trim().toUpperCase(),
+    countryName: String(item.countryName || "").trim(),
     code,
-    subType: String(item.subType || "").trim().toUpperCase()
+    subType: String(item.type || "").trim().replace(/^PLACE_TYPE_/, ""),
+    entityId: String(item.entityId || "").trim()
   };
 }
 
-async function searchAmadeusLocationOptions({ keyword, max = 8 }) {
-  const accessToken = await getAmadeusAccessToken();
-  const config = getAmadeusConfig();
+async function searchSkyscannerLocationOptions({ keyword, max = 8 }) {
   const normalizedKeyword = String(keyword || "").trim();
   if (normalizedKeyword.length < 2) {
     return [];
   }
-
-  const makeLocationUrl = (subType) => {
-    const requestUrl = new URL(`${config.baseUrl}/v1/reference-data/locations`);
-    requestUrl.searchParams.set("subType", subType);
-    requestUrl.searchParams.set("keyword", normalizedKeyword);
-    requestUrl.searchParams.set("sort", "analytics.travelers.score");
-    requestUrl.searchParams.set("view", "LIGHT");
-    requestUrl.searchParams.set("page[limit]", String(Math.min(Math.max(1, Number(max || 8)), 10)));
-    return requestUrl;
-  };
-  const citySearchUrl = new URL(`${config.baseUrl}/v1/reference-data/locations/cities`);
-  citySearchUrl.searchParams.set("keyword", normalizedKeyword);
-  citySearchUrl.searchParams.set("include", "AIRPORTS");
-  citySearchUrl.searchParams.set("max", String(Math.min(Math.max(1, Number(max || 8)), 10)));
-
-  const [cityLocationResponse, airportLocationResponse, cityResponse] = await Promise.all([
-    fetch(makeLocationUrl("CITY"), {
-      headers: {
-        Authorization: `Bearer ${accessToken}`
-      }
-    }),
-    fetch(makeLocationUrl("AIRPORT"), {
-      headers: {
-        Authorization: `Bearer ${accessToken}`
-      }
-    }),
-    fetch(citySearchUrl, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`
-      }
-    })
-  ]);
-
-  const cityLocationPayload = await cityLocationResponse.json().catch(() => ({}));
-  const airportLocationPayload = await airportLocationResponse.json().catch(() => ({}));
-  const cityPayload = await cityResponse.json().catch(() => ({}));
-
-  const locationOptions = [];
-  if (cityLocationResponse.ok) {
-    locationOptions.push(...(Array.isArray(cityLocationPayload?.data) ? cityLocationPayload.data : []));
-  }
-  if (airportLocationResponse.ok) {
-    locationOptions.push(...(Array.isArray(airportLocationPayload?.data) ? airportLocationPayload.data : []));
-  }
-  if (cityResponse.ok) {
-    locationOptions.push(...(Array.isArray(cityPayload?.data) ? cityPayload.data : []));
-  }
-
-  if (!locationOptions.length) {
-    const cityLocationError = Array.isArray(cityLocationPayload?.errors) ? cityLocationPayload.errors[0]?.detail || cityLocationPayload.errors[0]?.title : "";
-    const airportError = Array.isArray(airportLocationPayload?.errors) ? airportLocationPayload.errors[0]?.detail || airportLocationPayload.errors[0]?.title : "";
-    const cityError = Array.isArray(cityPayload?.errors) ? cityPayload.errors[0]?.detail || cityPayload.errors[0]?.title : "";
-    const fallbackMatches = LOCATION_FALLBACKS.filter((item) => {
-      const haystack = [item.label, item.cityName, item.code, item.countryName]
-        .map((value) => String(value || "").toLowerCase());
-      return haystack.some((value) => value.includes(normalizedKeyword.toLowerCase()));
-    }).slice(0, Math.min(Math.max(1, Number(max || 8)), 10));
-    if (fallbackMatches.length) {
-      return fallbackMatches;
-    }
-    throw new Error(cityLocationError || airportError || cityError || "Location search failed.");
-  }
-
+  const config = getSkyscannerConfig();
+  const payload = await skyscannerJsonRequest("/apiservices/v3/autosuggest/flights", {
+    query: {
+      market: config.market,
+      locale: config.locale,
+      searchTerm: normalizedKeyword,
+      includedEntityTypes: ["PLACE_TYPE_AIRPORT", "PLACE_TYPE_CITY"]
+    },
+    limit: Math.min(Math.max(1, Number(max || 8)), 10),
+    isDestination: false
+  });
+  const options = Array.isArray(payload?.places) ? payload.places : [];
   const deduped = new Map();
-  locationOptions.forEach((item) => {
-    const normalized = normalizeAmadeusLocationOption(item);
+  options.forEach((item) => {
+    const normalized = normalizeSkyscannerLocationOption(item);
     if (!normalized) return;
     const key = `${normalized.code}:${normalized.cityName}:${normalized.countryCode}`;
     if (!deduped.has(key)) {
       deduped.set(key, normalized);
     }
   });
-
   LOCATION_FALLBACKS
     .filter((item) => item.cityName.toLowerCase().includes(normalizedKeyword.toLowerCase()) || item.code.toLowerCase().includes(normalizedKeyword.toLowerCase()))
     .forEach((item) => {
@@ -1415,8 +1366,51 @@ async function searchAmadeusLocationOptions({ keyword, max = 8 }) {
         deduped.set(key, item);
       }
     });
-
   return [...deduped.values()].slice(0, Math.min(Math.max(1, Number(max || 8)), 10));
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function searchSkyscannerFlights({ originLocationCode, destinationLocationCode, departureDate, adults = 1, max = 8 }) {
+  const config = getSkyscannerConfig();
+  const [year, month, day] = String(departureDate || "").split("-").map((part) => Number(part || 0));
+  const createPayload = await skyscannerJsonRequest("/apiservices/v3/flights/live/search/create", {
+    query: {
+      market: config.market,
+      locale: config.locale,
+      currency: config.currency,
+      queryLegs: [
+        {
+          originPlaceId: { iata: originLocationCode },
+          destinationPlaceId: { iata: destinationLocationCode },
+          date: { year, month, day }
+        }
+      ],
+      adults: Math.max(1, Number(adults || 1)),
+      cabinClass: "CABIN_CLASS_ECONOMY"
+    }
+  });
+
+  let bestPayload = createPayload;
+  const initialOffers = normalizeSkyscannerFlightResult(createPayload, max);
+  if (createPayload?.sessionToken) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await sleep(350);
+      const pollPayload = await skyscannerJsonRequest(`/apiservices/v3/flights/live/search/poll/${encodeURIComponent(createPayload.sessionToken)}`, {});
+      const pollOffers = normalizeSkyscannerFlightResult(pollPayload, max);
+      if (pollOffers.length >= initialOffers.length) {
+        bestPayload = pollPayload;
+      }
+      if (String(pollPayload?.status || "").toUpperCase() === "RESULT_STATUS_COMPLETE") {
+        bestPayload = pollPayload;
+        break;
+      }
+    }
+  }
+
+  return normalizeSkyscannerFlightResult(bestPayload, max);
 }
 
 function migrateLegacyJsonToDatabase() {
@@ -2305,6 +2299,9 @@ async function refreshGoogleAccessToken(req, tokens) {
   });
   const payload = await response.json();
   if (!response.ok) {
+    if (payload.error === "invalid_grant") {
+      throw new Error("Google token expired or revoked. Reconnect Google Calendar.");
+    }
     throw new Error(payload.error_description || payload.error || "Google token refresh failed.");
   }
   return {
@@ -2392,6 +2389,9 @@ async function googleApiRequest(req, method, apiPath, body = null, query = null)
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error("Google token expired or revoked. Reconnect Google Calendar.");
+    }
     throw new Error(payload.error?.message || payload.error_description || "Google Calendar request failed.");
   }
   return payload;
@@ -3354,7 +3354,7 @@ async function handleApi(req, res) {
         return true;
       }
 
-      const offers = await searchAmadeusFlights({
+      const offers = await searchSkyscannerFlights({
         originLocationCode,
         destinationLocationCode,
         departureDate,
@@ -3376,7 +3376,7 @@ async function handleApi(req, res) {
         sendJson(res, 200, { options: [] });
         return true;
       }
-      const options = await searchAmadeusLocationOptions({
+      const options = await searchSkyscannerLocationOptions({
         keyword,
         max: body.max || 8
       });

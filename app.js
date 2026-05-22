@@ -34,6 +34,8 @@ const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const SHOW_BLOCK_MINUTES = 120;
 const DAY_START_HOUR = 6;
 const DAY_END_HOUR = 24;
+const DEFAULT_INVOICE_PARTICULARS = "Light Designing and Operating Charges";
+const DEFAULT_INVOICE_SAC = "998875";
 const TRAVEL_MEAL_OPTIONS = ["", "Veg", "Non-Veg", "Jain", "No Preference"];
 const TRAVEL_SEAT_OPTIONS = ["", "Window", "Aisle", "Emergency Exit + Window", "Emergency Exit + Aisle", "Front Row", "No Preference"];
 const FAST_FORWARD_AIRLINES = ["indigo", "air india", "air india express", "akasa", "spicejet"];
@@ -2566,10 +2568,10 @@ function ensureUiState() {
   state.ui.invoicePrintCopies = [1, 2, 3, 4, 5].includes(normalizedInvoicePrintCopies) ? normalizedInvoicePrintCopies : 1;
 
   if (!state.ui.invoiceLineDefaults || typeof state.ui.invoiceLineDefaults !== "object") {
-    state.ui.invoiceLineDefaults = { description: "", sac: "" };
+    state.ui.invoiceLineDefaults = { description: DEFAULT_INVOICE_PARTICULARS, sac: DEFAULT_INVOICE_SAC };
   }
-  state.ui.invoiceLineDefaults.description = String(state.ui.invoiceLineDefaults.description || "");
-  state.ui.invoiceLineDefaults.sac = String(state.ui.invoiceLineDefaults.sac || "");
+  state.ui.invoiceLineDefaults.description = String(state.ui.invoiceLineDefaults.description || DEFAULT_INVOICE_PARTICULARS);
+  state.ui.invoiceLineDefaults.sac = String(state.ui.invoiceLineDefaults.sac || DEFAULT_INVOICE_SAC);
 
   if (!state.ui.googleArchiveYear) {
     state.ui.googleArchiveYear = "all";
@@ -5353,9 +5355,18 @@ function getInvoiceLineShowLabels(showId) {
 }
 
 function defaultInvoiceLineDescription(show) {
+  return DEFAULT_INVOICE_PARTICULARS;
+}
+
+function defaultInvoiceLineCustomDetails(show) {
   if (!show) return "";
   const dateLabel = formatDateRange(getShowStartDate(show), getShowEndDate(show));
-  return `${show.showName}${dateLabel !== "-" ? ` (${dateLabel})` : ""}`;
+  const location = String(show.location || show.venue || "").trim();
+  return [
+    show.showName,
+    dateLabel !== "-" ? dateLabel : "",
+    location
+  ].filter(Boolean).join(" - ");
 }
 
 function escapeHtml(value) {
@@ -5463,8 +5474,6 @@ function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
     : `<div class="invoice-print-empty-space"></div>`;
   const lineItemsMarkup = (invoice.lineItems || []).map((item, index) => {
     const grossLineAmount = Number(item.quantity || 1) * Number(item.unitRate || 0);
-    const discountAmount = getDiscountAmount(item.discount || "", grossLineAmount);
-    const netLineAmount = Math.max(0, grossLineAmount - discountAmount);
     const linkedShowLines = getInvoiceLineShowLabels(item.showId);
     return `
       <tr>
@@ -5477,7 +5486,7 @@ function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
         <td>${escapeHtml(item.sac || "")}</td>
         <td>${Number(item.quantity || 0)}</td>
         <td>${escapeHtml(formatCurrency(item.unitRate))}</td>
-        <td>${escapeHtml(formatCurrency(netLineAmount))}</td>
+        <td>${escapeHtml(formatCurrency(grossLineAmount))}</td>
       </tr>
     `;
   }).join("");
@@ -5567,6 +5576,7 @@ function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
         </div>
         <div><span>Subtotal</span><strong>${escapeHtml(formatCurrency(gstBreakup.grossSubtotal))}</strong></div>
         <div><span>Discount</span><strong>${gstBreakup.discountAmount ? escapeHtml(formatCurrency(gstBreakup.discountAmount)) : "-"}</strong></div>
+        <div><span>Total Taxable Amount</span><strong>${escapeHtml(formatCurrency(gstBreakup.taxableAmount))}</strong></div>
         <div><span>SGST (9%)</span><strong>${gstBreakup.sgstAmount ? escapeHtml(formatCurrency(gstBreakup.sgstAmount)) : "-"}</strong></div>
         <div><span>CGST (9%)</span><strong>${gstBreakup.cgstAmount ? escapeHtml(formatCurrency(gstBreakup.cgstAmount)) : "-"}</strong></div>
         <div><span>IGST (18%)</span><strong>${gstBreakup.igstAmount ? escapeHtml(formatCurrency(gstBreakup.igstAmount)) : "-"}</strong></div>
@@ -5626,6 +5636,16 @@ function getInvoiceDocumentMarkup(invoice, options = {}) {
   return copyLabels.map((copyLabel) => getSingleInvoiceDocumentMarkup(invoice, copyLabel)).join("");
 }
 
+function getInvoicePdfTitle(invoice) {
+  const invoiceNumber = String(invoice?.invoiceNumber || "Invoice").trim();
+  const clientName = String(invoice?.clientName || "").trim();
+  const title = [invoiceNumber, clientName].filter(Boolean).join(" - ") || "Invoice";
+  return title
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function getInvoicePrintStyles() {
   return `
     @page {
@@ -5638,74 +5658,81 @@ function getInvoicePrintStyles() {
       }
     }
     * { box-sizing: border-box; }
-    body { margin: 0; background: #eef2f7; color: #17212b; font-family: "IBM Plex Sans", sans-serif; }
-    .invoice-print-page { width: 210mm; min-height: 297mm; margin: 0 auto; background: #fff; padding: 10mm; font-size: 11px; box-shadow: none; }
-    .invoice-print-header { display: block; margin-bottom: 16px; border-bottom: 2px solid #d8e0ea; padding-bottom: 12px; }
+    html, body { width: 210mm; min-width: 210mm; margin: 0; background: #fff; color: #17212b; font-family: "IBM Plex Sans", sans-serif; }
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .invoice-print-page { width: 210mm; min-height: 297mm; margin: 0 auto; background: #fff; padding: 7mm 8mm; font-size: 9.5px; line-height: 1.24; box-shadow: none; break-after: page; page-break-after: always; }
+    .invoice-print-page:last-child { break-after: auto; page-break-after: auto; }
+    .invoice-print-header { display: block; margin-bottom: 7px; border-bottom: 2px solid #d8e0ea; padding-bottom: 6px; }
     .invoice-print-brand-block { flex: 1 1 auto; }
-    .invoice-print-brand-row { display: flex; align-items: flex-start; gap: 12px; }
-    .invoice-print-logo { width: 70px; height: 70px; object-fit: contain; border-radius: 12px; }
+    .invoice-print-brand-row { display: flex; align-items: flex-start; gap: 8px; }
+    .invoice-print-logo { width: 48px; height: 48px; object-fit: contain; border-radius: 9px; }
     .invoice-print-brand-copy { flex: 1 1 auto; }
-    .invoice-print-brand-title { margin: 0 0 5px; font-family: "Space Grotesk", sans-serif; font-size: 24px; font-weight: 700; line-height: 1.05; }
-    .invoice-print-company-line { margin: 0 0 2px; color: #4a5b6d; font-size: 10px; line-height: 1.24; }
+    .invoice-print-brand-title { margin: 0 0 3px; font-family: "Space Grotesk", sans-serif; font-size: 18px; font-weight: 700; line-height: 1.02; }
+    .invoice-print-company-line { margin: 0 0 1px; color: #4a5b6d; font-size: 8px; line-height: 1.15; }
     .invoice-print-copy-block { margin-left: auto; text-align: right; }
-    .invoice-print-document-title { font-family: "Space Grotesk", sans-serif; font-size: 24px; font-weight: 700; line-height: 1.05; text-align: right; white-space: nowrap; }
-    .invoice-print-copy-label { margin-top: 5px; color: #5c6b7a; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; text-align: right; }
-    .invoice-print-subtle { color: #667789; font-size: 10px; line-height: 1.3; }
-    .invoice-print-meta { min-width: 260px; display: grid; gap: 12px; padding: 18px; border: 1px solid #dfe6ef; border-radius: 18px; background: #f8fafc; }
-    .invoice-print-meta div { display: flex; justify-content: space-between; gap: 18px; }
-    .invoice-print-meta span { color: #667789; font-size: 13px; }
-    .invoice-print-section { margin-bottom: 12px; }
-    .invoice-print-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .invoice-print-document-title { font-family: "Space Grotesk", sans-serif; font-size: 20px; font-weight: 700; line-height: 1.02; text-align: right; white-space: nowrap; }
+    .invoice-print-copy-label { margin-top: 3px; color: #5c6b7a; font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; text-align: right; }
+    .invoice-print-subtle { color: #667789; font-size: 8px; line-height: 1.2; white-space: pre-line; }
+    .invoice-print-meta { min-width: 240px; display: grid; gap: 8px; padding: 10px; border: 1px solid #dfe6ef; border-radius: 12px; background: #f8fafc; }
+    .invoice-print-meta div { display: flex; justify-content: space-between; gap: 8px; }
+    .invoice-print-meta span { color: #667789; font-size: 9px; }
+    .invoice-print-section { margin-bottom: 6px; }
+    .invoice-print-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .invoice-print-summary-grid { align-items: start; }
-    .invoice-print-card { padding: 11px; border: 1px solid #dfe6ef; border-radius: 10px; background: #fbfcfe; min-height: 100%; }
-    .invoice-print-grid h2 { margin: 0 0 5px; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #5c6b7a; }
-    .invoice-print-grid p { margin: 0 0 4px; line-height: 1.3; }
-    .invoice-print-empty-space { min-height: 18px; }
-    .invoice-print-billto-rule, .invoice-print-notes-rule { margin: 2px 0 9px; border-top: 2px solid #17212b; }
-    .invoice-print-billto { margin-bottom: 8px; }
-    .invoice-print-billto h2 { margin: 0 0 4px; color: #5c6b7a; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
-    .invoice-print-billto p { margin: 0 0 3px; line-height: 1.28; }
-    .invoice-print-billto-divider { margin: 6px 0 5px; border-top: 1px solid #dfe6ef; }
-    .invoice-print-detail-list { display: grid; gap: 5px; }
-    .invoice-print-detail-list div { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid #dfe6ef; padding-bottom: 4px; }
-    .invoice-print-detail-list span { color: #667789; font-size: 10px; }
-    .invoice-print-table { width: 100%; border-collapse: collapse; table-layout: auto; border: 0; }
-    .invoice-print-table th, .invoice-print-table td { padding: 7px 8px; border: 0; border-bottom: 1px solid #dfe6ef; text-align: left; vertical-align: top; }
-    .invoice-print-table th { color: #5c6b7a; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; background: #f8fafc; }
-    .invoice-print-hsn-summary { margin-top: 6px; padding-top: 2px; }
-    .invoice-print-hsn-summary h2 { margin: 0 0 6px; color: #5c6b7a; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
-    .invoice-print-hsn-summary-table { width: 100%; border-collapse: collapse; table-layout: auto; }
-    .invoice-print-hsn-summary-table th, .invoice-print-hsn-summary-table td { padding: 5px 8px; border-bottom: 1px solid #dfe6ef; text-align: left; vertical-align: top; }
-    .invoice-print-hsn-summary-table th { color: #5c6b7a; font-size: 9px; text-transform: uppercase; letter-spacing: .08em; background: #f8fafc; }
-    .invoice-print-totals { margin-left: 0; display: grid; grid-template-columns: 1fr minmax(250px, 300px); column-gap: 12px; row-gap: 0; }
+    .invoice-print-card { padding: 7px; border: 1px solid #dfe6ef; border-radius: 8px; background: #fbfcfe; min-height: 100%; }
+    .invoice-print-grid h2 { margin: 0 0 3px; font-size: 8px; text-transform: uppercase; letter-spacing: .08em; color: #5c6b7a; }
+    .invoice-print-grid p { margin: 0 0 2px; line-height: 1.2; }
+    .invoice-print-empty-space { min-height: 12px; }
+    .invoice-print-billto-rule, .invoice-print-notes-rule { margin: 1px 0 5px; border-top: 1px solid #17212b; }
+    .invoice-print-billto { margin-bottom: 5px; }
+    .invoice-print-billto h2 { margin: 0 0 2px; color: #5c6b7a; font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
+    .invoice-print-billto p { margin: 0 0 1px; line-height: 1.18; }
+    .invoice-print-billto-divider { margin: 4px 0 3px; border-top: 1px solid #dfe6ef; }
+    .invoice-print-detail-list { display: grid; gap: 3px; }
+    .invoice-print-detail-list div { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px solid #dfe6ef; padding-bottom: 2px; }
+    .invoice-print-detail-list span { color: #667789; font-size: 8px; }
+    .invoice-print-table { width: 100%; border-collapse: collapse; table-layout: fixed; border: 0; }
+    .invoice-print-table th, .invoice-print-table td { padding: 4px 5px; border: 0; border-bottom: 1px solid #dfe6ef; text-align: left; vertical-align: top; }
+    .invoice-print-table th { color: #5c6b7a; font-size: 7.5px; text-transform: uppercase; letter-spacing: .08em; background: #f8fafc; }
+    .invoice-print-table th:nth-child(1), .invoice-print-table td:nth-child(1) { width: 22px; }
+    .invoice-print-table th:nth-child(3), .invoice-print-table td:nth-child(3) { width: 58px; }
+    .invoice-print-table th:nth-child(4), .invoice-print-table td:nth-child(4) { width: 38px; text-align: right; }
+    .invoice-print-table th:nth-child(5), .invoice-print-table td:nth-child(5) { width: 76px; text-align: right; }
+    .invoice-print-table th:nth-child(6), .invoice-print-table td:nth-child(6) { width: 82px; text-align: right; }
+    .invoice-print-hsn-summary { margin-top: 3px; padding-top: 0; }
+    .invoice-print-hsn-summary h2 { margin: 0 0 3px; color: #5c6b7a; font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
+    .invoice-print-hsn-summary-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .invoice-print-hsn-summary-table th, .invoice-print-hsn-summary-table td { padding: 3px 5px; border-bottom: 1px solid #dfe6ef; text-align: left; vertical-align: top; }
+    .invoice-print-hsn-summary-table th { color: #5c6b7a; font-size: 7.5px; text-transform: uppercase; letter-spacing: .08em; background: #f8fafc; }
+    .invoice-print-totals { margin-left: 0; display: grid; grid-template-columns: 1fr minmax(220px, 250px); column-gap: 8px; row-gap: 0; }
     .invoice-print-totals > div:not(.invoice-print-amount-words) { grid-column: 2; }
-    .invoice-print-totals > div:not(.invoice-print-amount-words):not(.invoice-print-signature) { display: flex; justify-content: space-between; gap: 12px; }
-    .invoice-print-totals > div:not(.invoice-print-amount-words):not(.invoice-print-signature):not(.invoice-print-balance-rule) { padding: 5px 7px; border: 0; border-bottom: 1px solid #dfe6ef; }
-    .invoice-print-total-row { font-size: 11px; font-weight: 700; }
-    .invoice-print-total-row strong { font-size: 12px; }
-    .invoice-print-totals > div:not(.invoice-print-amount-words):not(.invoice-print-signature) > span { color: #667789; font-size: 10px; }
-    .invoice-print-amount-words { grid-column: 1; grid-row: 1 / span 8; padding-right: 10px; }
-    .invoice-print-amount-line { padding: 6px 0 7px; border-top: 1px solid #d8e0ea; border-bottom: 1px solid #d8e0ea; }
-    .invoice-print-amount-line span { display: block; margin-bottom: 3px; color: #5c6b7a; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
-    .invoice-print-amount-line strong { display: block; color: #17212b; font-size: 10px; font-style: italic; line-height: 1.3; }
-    .invoice-print-bank-block { margin-top: 8px; color: #4a5b6d; font-size: 10px; line-height: 1.3; }
-    .invoice-print-bank-block p { margin: 0 0 4px; }
-    .invoice-print-bank-block div { display: block; margin: 2px 0; }
+    .invoice-print-totals > div:not(.invoice-print-amount-words):not(.invoice-print-signature) { display: flex; justify-content: space-between; gap: 8px; }
+    .invoice-print-totals > div:not(.invoice-print-amount-words):not(.invoice-print-signature):not(.invoice-print-balance-rule) { padding: 3px 5px; border: 0; border-bottom: 1px solid #dfe6ef; }
+    .invoice-print-total-row { font-size: 10px; font-weight: 700; }
+    .invoice-print-total-row strong { font-size: 10.5px; }
+    .invoice-print-totals > div:not(.invoice-print-amount-words):not(.invoice-print-signature) > span { color: #667789; font-size: 8.5px; }
+    .invoice-print-amount-words { grid-column: 1; grid-row: 1 / span 9; padding-right: 8px; }
+    .invoice-print-amount-line { padding: 4px 0 5px; border-top: 1px solid #d8e0ea; border-bottom: 1px solid #d8e0ea; }
+    .invoice-print-amount-line span { display: block; margin-bottom: 2px; color: #5c6b7a; font-size: 7.5px; letter-spacing: .08em; text-transform: uppercase; }
+    .invoice-print-amount-line strong { display: block; color: #17212b; font-size: 8.5px; font-style: italic; line-height: 1.22; }
+    .invoice-print-bank-block { margin-top: 5px; color: #4a5b6d; font-size: 8px; line-height: 1.2; }
+    .invoice-print-bank-block p { margin: 0 0 2px; }
+    .invoice-print-bank-block div { display: block; margin: 1px 0; }
     .invoice-print-bank-block span { color: #667789; }
     .invoice-print-bank-block strong { color: #17212b; font-weight: 700; }
-    .invoice-print-balance { border-top: 2px solid #dfe6ef; border-bottom: 1px solid #dfe6ef; padding-top: 7px; font-size: 13px; }
-    .invoice-print-balance-rule { grid-column: 2; height: 0; margin-top: 3px; border-top: 2px solid #17212b; }
-    .invoice-print-signature { grid-column: 2; display: block; margin-top: 7px; text-align: center; }
-    .invoice-print-signature-space { height: 58px; margin: 4px 0 5px; border-bottom: 1px solid #17212b; display: flex; align-items: end; justify-content: center; overflow: hidden; }
-    .invoice-print-signature-image { max-height: 52px; width: auto; max-width: 180px; object-fit: contain; }
-    .invoice-print-signature strong { display: block; margin-bottom: 3px; color: #17212b; font-size: 10px; white-space: nowrap; }
-    .invoice-print-signature span { color: #17212b; font-size: 10px; font-weight: 700; }
-    .invoice-print-footer { margin-top: 16px; border-top: 1px solid #dfe6ef; padding-top: 9px; color: #667789; font-size: 9px; line-height: 1.3; }
-    .invoice-print-thank-you { margin-bottom: 4px; color: #17212b; font-weight: 700; }
-    .invoice-print-payment-note { font-size: 9px; line-height: 1.3; }
+    .invoice-print-balance { border-top: 2px solid #dfe6ef; border-bottom: 1px solid #dfe6ef; padding-top: 4px; font-size: 10.5px; }
+    .invoice-print-balance-rule { grid-column: 2; height: 0; margin-top: 2px; border-top: 2px solid #17212b; }
+    .invoice-print-signature { grid-column: 2; display: block; margin-top: 4px; text-align: center; }
+    .invoice-print-signature-space { height: 36px; margin: 2px 0 3px; border-bottom: 1px solid #17212b; display: flex; align-items: end; justify-content: center; overflow: hidden; }
+    .invoice-print-signature-image { max-height: 32px; width: auto; max-width: 150px; object-fit: contain; }
+    .invoice-print-signature strong { display: block; margin-bottom: 2px; color: #17212b; font-size: 8.5px; white-space: nowrap; }
+    .invoice-print-signature span { color: #17212b; font-size: 8.5px; font-weight: 700; }
+    .invoice-print-footer { margin-top: 6px; border-top: 1px solid #dfe6ef; padding-top: 4px; color: #667789; font-size: 7.5px; line-height: 1.18; }
+    .invoice-print-thank-you { margin-bottom: 2px; color: #17212b; font-weight: 700; }
+    .invoice-print-payment-note { font-size: 7.5px; line-height: 1.18; }
     .invoice-print-page-number { display: none; }
-    .invoice-print-page + .invoice-print-page { margin-top: 18px; page-break-before: always; }
-    @media print { body { background: #fff; } .invoice-print-page { margin: 0; box-shadow: none; border-radius: 0; } .invoice-print-page + .invoice-print-page { margin-top: 0; page-break-before: always; } }
+    .invoice-print-page + .invoice-print-page { margin-top: 0; page-break-before: always; }
+    @media print { body { background: #fff; } .invoice-print-page { margin: 0; box-shadow: none; border-radius: 0; } }
   `;
 }
 
@@ -5752,33 +5779,78 @@ function waitForImagesToLoad(container) {
   })));
 }
 
+async function printInvoiceDocument(invoice, copyCount) {
+  const printFrame = document.createElement("iframe");
+  printFrame.setAttribute("aria-hidden", "true");
+  printFrame.style.position = "fixed";
+  printFrame.style.left = "-10000px";
+  printFrame.style.top = "0";
+  printFrame.style.width = "210mm";
+  printFrame.style.height = "297mm";
+  printFrame.style.border = "0";
+  printFrame.style.opacity = "0";
+  document.body.append(printFrame);
+
+  const printWindow = printFrame.contentWindow;
+  const printDocument = printWindow?.document;
+  if (!printWindow || !printDocument) {
+    printFrame.remove();
+    throw new Error("Unable to prepare invoice print document.");
+  }
+
+  const printTitle = getInvoicePdfTitle(invoice);
+  printDocument.open();
+  printDocument.write(`<!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=794, initial-scale=1">
+        <title>${escapeHtml(printTitle)}</title>
+        <style>${getInvoicePrintStyles()}</style>
+      </head>
+      <body>${getInvoiceDocumentMarkup(invoice, { copyCount })}</body>
+    </html>`);
+  printDocument.close();
+
+  await new Promise((resolve) => {
+    if (printDocument.readyState === "complete") {
+      resolve();
+      return;
+    }
+    printFrame.addEventListener("load", resolve, { once: true });
+  });
+  if (printDocument.fonts?.ready) {
+    await printDocument.fonts.ready.catch(() => {});
+  }
+  await waitForImagesToLoad(printDocument.body);
+
+  const removeFrame = () => {
+    window.setTimeout(() => printFrame.remove(), 250);
+  };
+  printWindow.addEventListener("afterprint", removeFrame, { once: true });
+  window.setTimeout(() => {
+    if (printFrame.isConnected) printFrame.remove();
+  }, 120000);
+
+  printWindow.focus();
+  printWindow.print();
+}
+
 async function printInvoiceById(invoiceId, copyCount = state.ui.invoicePrintCopies || 1) {
   const invoice = (state.invoices || []).find((item) => item.id === invoiceId);
   if (!invoice) {
     showToast("Invoice not found.");
     return;
   }
-  const modal = document.getElementById("invoicePreviewModal");
-  const content = document.getElementById("invoicePreviewContent");
-  if (!modal || !content) return;
-  content.innerHTML = getInvoiceDocumentMarkup(invoice, { copyCount });
-  modal.dataset.invoiceId = invoice.id;
-  modal.classList.remove("hidden");
-  modal.setAttribute("aria-hidden", "false");
-  document.body.classList.add("modal-open");
-  document.body.classList.add("invoice-printing");
   const previousTitle = document.title;
-  document.title = String(invoice.invoiceNumber || "Invoice").trim() || "Invoice";
-
-  const cleanupAfterPrint = () => {
-    document.body.classList.remove("invoice-printing");
+  document.title = getInvoicePdfTitle(invoice);
+  try {
+    await printInvoiceDocument(invoice, copyCount);
+  } catch (error) {
+    showToast(error.message || "Unable to print invoice.");
+  } finally {
     document.title = previousTitle;
-    window.removeEventListener("afterprint", cleanupAfterPrint);
-  };
-
-  window.addEventListener("afterprint", cleanupAfterPrint, { once: true });
-  await waitForImagesToLoad(content);
-  window.print();
+  }
 }
 
 function findInvoiceUsingShow(showId, excludeInvoiceId = "") {
@@ -6337,7 +6409,11 @@ function renderInvoicesPanel() {
             quantityInput.value = selectedShows.length;
           }
           if (selectedShows.length && descriptionInput && !descriptionInput.value.trim()) {
-            descriptionInput.value = selectedShows.map((show) => show.showName).join(", ");
+            descriptionInput.value = DEFAULT_INVOICE_PARTICULARS;
+          }
+          const customDetailsInput = row?.querySelector('input[name="lineCustomDetails"]');
+          if (selectedShows.length && customDetailsInput && !customDetailsInput.value.trim()) {
+            customDetailsInput.value = selectedShows.map(defaultInvoiceLineCustomDetails).join("\n");
           }
           const duplicateWarning = row?.querySelector("[data-duplicate-warning]");
           const duplicates = selectedShows
@@ -6491,7 +6567,8 @@ function renderInvoicesPanel() {
     addLineItemRow({
       showId: show.id,
       description: defaultInvoiceLineDescription(show),
-      sac: state.ui.invoiceLineDefaults?.sac || "",
+      sac: state.ui.invoiceLineDefaults?.sac || DEFAULT_INVOICE_SAC,
+      customDetails: defaultInvoiceLineCustomDetails(show),
       discount: "",
       quantity: 1,
       unitRate: Number(show.amountShow || 0),
@@ -6669,7 +6746,8 @@ function renderInvoicesPanel() {
       id: uid("line"),
       showId: show.id,
       description: defaultInvoiceLineDescription(show),
-      sac: state.ui.invoiceLineDefaults?.sac || "",
+      sac: state.ui.invoiceLineDefaults?.sac || DEFAULT_INVOICE_SAC,
+      customDetails: defaultInvoiceLineCustomDetails(show),
       discount: "",
       quantity: 1,
       unitRate: Number(show.amountShow || 0),
@@ -7021,6 +7099,10 @@ function renderGoogleEntriesPanel(user) {
   const googleMissingConfigText = Array.isArray(googleStatus.missingConfig) && googleStatus.missingConfig.length
     ? googleStatus.missingConfig.join(", ")
     : "";
+  const googleConnectActionLabel = googleStatus.connected ? "Reconnect Google" : "Connect Google Calendar";
+  const googleConnectActionButton = googleStatus.configured
+    ? `<button type="button" class="secondary small" data-google-connect-action>${googleConnectActionLabel}</button>`
+    : `<button type="button" class="secondary small" disabled>Google Not Configured</button>`;
   const googleEntriesView = state.ui.googleEntriesView || "needsCompletion";
   const googleEntriesMap = {
     needsCompletion: {
@@ -7053,10 +7135,10 @@ function renderGoogleEntriesPanel(user) {
           <span class="pill">${activeGoogleShows.length} ${activeGoogleShows.length === 1 ? "entry" : "entries"}</span>
           ${googleStatus.connected
             ? `${googleStatus.sheetsConnected
-                ? ""
-                : `<button type="button" class="ghost small" id="googleReconnectButton">Reconnect For Sheets</button>`}
+                ? `<button type="button" class="ghost small" data-google-connect-action>Reconnect Google</button>`
+                : `<button type="button" class="ghost small" data-google-connect-action>Reconnect For Sheets</button>`}
                <button type="button" class="secondary small" id="googleSyncNowButton">Sync Now</button>`
-            : `<button type="button" class="secondary small" id="googleConnectButton" ${googleStatus.configured ? "" : "disabled"}>${googleStatus.configured ? "Connect Google Calendar" : "Google Not Configured"}</button>`}
+            : googleConnectActionButton}
         </div>
       </div>
       ${!googleStatus.configured ? `
@@ -7093,6 +7175,7 @@ function renderGoogleEntriesPanel(user) {
             <div class="meta"><strong>Status:</strong> ${googleStatus.connected ? "Connected" : googleStatus.configured ? "Ready to connect" : "Missing config"}</div>
             ${googleStatus.connected ? `<div class="meta"><strong>Sheets Export:</strong> ${googleStatus.sheetsConnected ? "Ready" : "Reconnect required"}</div>` : ""}
             ${googleStatus.calendarId ? `<div class="meta">Calendar: ${googleStatus.calendarId}</div>` : ""}
+            <div class="toolbar" style="margin-top: 8px;">${googleConnectActionButton}</div>
           </div>
         </div>
       ` : `
@@ -7102,6 +7185,7 @@ function renderGoogleEntriesPanel(user) {
             <div class="meta"><strong>Status:</strong> ${googleStatus.connected ? "Connected" : googleStatus.configured ? "Ready to connect" : "Missing config"}</div>
             ${googleStatus.connected ? `<div class="meta"><strong>Sheets Export:</strong> ${googleStatus.sheetsConnected ? "Ready" : "Reconnect required"}</div>` : ""}
             ${googleStatus.calendarId ? `<div class="meta">Calendar: ${googleStatus.calendarId}</div>` : ""}
+            <div class="toolbar" style="margin-top: 8px;">${googleConnectActionButton}</div>
           </div>
         </div>
       `}
@@ -7260,22 +7344,15 @@ function renderGoogleEntriesPanel(user) {
     render();
   });
 
-  document.getElementById("googleConnectButton")?.addEventListener("click", async () => {
-    try {
-      const payload = await apiRequest("/api/admin/google/auth");
-      window.location.href = payload.authUrl;
-    } catch (error) {
-      showToast(error.message);
-    }
-  });
-
-  document.getElementById("googleReconnectButton")?.addEventListener("click", async () => {
-    try {
-      const payload = await apiRequest("/api/admin/google/auth");
-      window.location.href = payload.authUrl;
-    } catch (error) {
-      showToast(error.message);
-    }
+  panel.querySelectorAll("[data-google-connect-action]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      try {
+        const payload = await apiRequest("/api/admin/google/auth");
+        window.location.href = payload.authUrl;
+      } catch (error) {
+        showToast(error.message);
+      }
+    });
   });
 
   document.getElementById("googleSyncNowButton")?.addEventListener("click", async () => {
