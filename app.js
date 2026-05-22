@@ -5031,8 +5031,14 @@ function renderShowsList(user, shows, sourceShows = shows) {
   const createInvoiceButton = document.getElementById("createInvoiceFromShowsButton");
   const clearInvoiceSelectionButton = document.getElementById("clearInvoiceShowSelectionButton");
   if (createInvoiceButton && isAdmin(user)) {
+    const getSelectedInvoiceShowIds = () => {
+      const validShowIds = new Set(state.shows.map((show) => show.id));
+      return [...new Set(state.ui.invoiceDraftShowIds || [])].filter((showId) => validShowIds.has(showId));
+    };
+
     const syncCreateButtonState = () => {
-      const selectedCount = panel.querySelectorAll('[data-select-show-for-invoice]:checked').length;
+      const selectedIds = getSelectedInvoiceShowIds();
+      const selectedCount = selectedIds.length;
       createInvoiceButton.disabled = selectedCount === 0;
       if (clearInvoiceSelectionButton) {
         clearInvoiceSelectionButton.disabled = selectedCount === 0;
@@ -5057,7 +5063,7 @@ function renderShowsList(user, shows, sourceShows = shows) {
     });
 
     createInvoiceButton.addEventListener("click", () => {
-      const selectedIds = [...panel.querySelectorAll('[data-select-show-for-invoice]:checked')].map((checkbox) => checkbox.dataset.showId).filter(Boolean);
+      const selectedIds = getSelectedInvoiceShowIds();
       if (!selectedIds.length) return;
       state.ui.invoiceDraftShowIds = selectedIds;
       state.ui.editingInvoiceId = null;
@@ -5369,6 +5375,44 @@ function defaultInvoiceLineCustomDetails(show) {
   ].filter(Boolean).join(" - ");
 }
 
+function getInvoiceDraftShowGroupKey(show) {
+  const clientId = String(show?.clientId || getClientByName(show?.client)?.id || show?.client || "").trim().toLowerCase();
+  const showName = String(show?.showName || "").trim().toLowerCase();
+  const unitRate = Number(show?.amountShow || 0);
+  return [
+    clientId,
+    showName,
+    DEFAULT_INVOICE_PARTICULARS.toLowerCase(),
+    DEFAULT_INVOICE_SAC,
+    unitRate
+  ].join("|");
+}
+
+function buildInvoiceLineItemsFromShows(shows = []) {
+  const groupedShows = new Map();
+  shows.forEach((show) => {
+    const key = getInvoiceDraftShowGroupKey(show);
+    const group = groupedShows.get(key) || [];
+    group.push(show);
+    groupedShows.set(key, group);
+  });
+  return [...groupedShows.values()].map((group) => {
+    const firstShow = group[0];
+    const unitRate = Number(firstShow?.amountShow || 0);
+    return {
+      id: uid("line"),
+      showId: serializeInvoiceShowIds(group.map((show) => show.id)),
+      description: defaultInvoiceLineDescription(firstShow),
+      sac: state.ui.invoiceLineDefaults?.sac || DEFAULT_INVOICE_SAC,
+      customDetails: group.map(defaultInvoiceLineCustomDetails).filter(Boolean).join("\n"),
+      discount: "",
+      quantity: group.length,
+      unitRate,
+      amount: group.length * unitRate
+    };
+  });
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -5396,13 +5440,26 @@ function normalizeInvoicePrintDetailText(value) {
 }
 
 function getInvoiceLinePrintDetailRows(item) {
+  const linkedShowIds = parseInvoiceShowIds(item?.showId || "");
+  const linkedShows = linkedShowIds.map((showId) => state.shows.find((show) => show.id === showId)).filter(Boolean);
   const customRows = String(item?.customDetails || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
   const linkedRows = getInvoiceLineShowLabels(item?.showId);
+  const autoDetailTokens = linkedShows
+    .flatMap((show) => [defaultInvoiceLineCustomDetails(show), getInvoiceLineShowLabel(show.id)])
+    .map(normalizeInvoicePrintDetailText)
+    .filter((token) => token.length > 10);
+  const manualRows = customRows.filter((line) => {
+    const normalized = normalizeInvoicePrintDetailText(line);
+    if (!normalized || !autoDetailTokens.length) return Boolean(normalized);
+    const exactAutoDetail = autoDetailTokens.some((token) => normalized === token);
+    const combinedAutoDetails = autoDetailTokens.filter((token) => normalized.includes(token)).length > 1;
+    return !exactAutoDetail && !combinedAutoDetails;
+  });
   const seenRows = new Set();
-  return [...customRows, ...linkedRows].filter((line) => {
+  return [...manualRows, ...linkedRows].filter((line) => {
     const normalized = normalizeInvoicePrintDetailText(line);
     if (!normalized || seenRows.has(normalized)) return false;
     seenRows.add(normalized);
@@ -6765,17 +6822,7 @@ function renderInvoicesPanel() {
     details: normalizeInvoiceDetails({
       lightDesignerId: getInvoiceLightDesignerIdFromShows(draftShows)
     }),
-    lineItems: draftShows.map((show) => ({
-      id: uid("line"),
-      showId: show.id,
-      description: defaultInvoiceLineDescription(show),
-      sac: state.ui.invoiceLineDefaults?.sac || DEFAULT_INVOICE_SAC,
-      customDetails: defaultInvoiceLineCustomDetails(show),
-      discount: "",
-      quantity: 1,
-      unitRate: Number(show.amountShow || 0),
-      amount: Number(show.amountShow || 0)
-    }))
+    lineItems: buildInvoiceLineItemsFromShows(draftShows)
   } : null;
   const initialInvoice = editingInvoice || templateInvoice || draftInvoice || {
     invoiceNumber: makeDefaultInvoiceNumber(),
