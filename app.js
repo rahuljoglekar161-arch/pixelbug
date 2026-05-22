@@ -5386,6 +5386,30 @@ function formatMultilineHtml(value, emptyText = "") {
   return escapeHtml(text).replace(/\n/g, "<br>");
 }
 
+function normalizeInvoicePrintDetailText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[·•|/\\,;:()[\]{}"'`]+/g, " ")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getInvoiceLinePrintDetailRows(item) {
+  const customRows = String(item?.customDetails || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const linkedRows = getInvoiceLineShowLabels(item?.showId);
+  const seenRows = new Set();
+  return [...customRows, ...linkedRows].filter((line) => {
+    const normalized = normalizeInvoicePrintDetailText(line);
+    if (!normalized || seenRows.has(normalized)) return false;
+    seenRows.add(normalized);
+    return true;
+  });
+}
+
 function numberToIndianWords(value) {
   const amount = Math.round(Number(value || 0));
   if (!amount) return "Zero rupees only";
@@ -5474,14 +5498,13 @@ function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
     : `<div class="invoice-print-empty-space"></div>`;
   const lineItemsMarkup = (invoice.lineItems || []).map((item, index) => {
     const grossLineAmount = Number(item.quantity || 1) * Number(item.unitRate || 0);
-    const linkedShowLines = getInvoiceLineShowLabels(item.showId);
+    const detailRows = getInvoiceLinePrintDetailRows(item);
     return `
       <tr>
         <td>${index + 1}</td>
         <td>
           <strong>${escapeHtml(item.description)}</strong>
-          ${item.customDetails ? `<div class="invoice-print-subtle">${escapeHtml(item.customDetails)}</div>` : ""}
-          ${linkedShowLines.map((label) => `<div class="invoice-print-subtle">${escapeHtml(label)}</div>`).join("")}
+          ${detailRows.map((label) => `<div class="invoice-print-subtle">${escapeHtml(label)}</div>`).join("")}
         </td>
         <td>${escapeHtml(item.sac || "")}</td>
         <td>${Number(item.quantity || 0)}</td>
