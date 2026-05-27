@@ -3467,15 +3467,17 @@ async function handleApi(req, res) {
     const clientIds = new Set(nextClients.map((client) => client.id));
     const nextShows = incomingShows.map(normalizeShow).map((show) => {
       const previousShow = existingShowsById.get(show.id);
+      const incomingClientStillExists = Boolean(show.clientId && clientIds.has(show.clientId));
       const previousClientStillExists = Boolean(previousShow?.clientId && clientIds.has(previousShow.clientId));
       const previousHasLegacyClient = Boolean(
         previousShow
         && !previousClientStillExists
         && String(previousShow.client || "").trim()
       );
-      const resolvedClientId = show.clientId
-        || clientIdsByName.get(String(show.client || "").trim().toLowerCase())
-        || (previousClientStillExists ? previousShow.clientId : "");
+      const resolvedClientId = incomingClientStillExists
+        ? show.clientId
+        : (clientIdsByName.get(String(show.client || "").trim().toLowerCase())
+          || (previousClientStillExists ? previousShow.clientId : ""));
       const shouldPreserveLegacyClient = !resolvedClientId
         && previousHasLegacyClient
         && !String(show.client || "").trim();

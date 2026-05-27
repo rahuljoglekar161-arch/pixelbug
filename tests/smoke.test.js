@@ -482,7 +482,7 @@ test("admins can update shows with stale client ids", async (t) => {
   const updatedShow = {
     ...bootstrapPayload.shows[0],
     location: "Pune",
-    clientId: "",
+    clientId: "client_missing_from_master",
     client: ""
   };
   const { response, payload } = await apiRequest(baseUrl, adminJar, "/api/admin/state", {
