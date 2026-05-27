@@ -3787,6 +3787,7 @@ function getTabIcon(icon) {
     invoice: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10l3 3v15H7z" ${common}/><path d="M14 3v5h5M9 13h6M9 17h4" ${common}/></svg>`,
     list: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13" ${common}/><path d="M3 6h.01M3 12h.01M3 18h.01" ${common}/></svg>`,
     payments: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z" ${common}/><path d="M2 10h20M7 15h.01M11 15h3" ${common}/></svg>`,
+    filter: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M7 12h10M10 19h4" ${common}/></svg>`,
     archive: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v5H3zM5 9v11h14V9" ${common}/><path d="M10 13h4" ${common}/></svg>`,
     clients: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" ${common}/><circle cx="9.5" cy="7" r="4" ${common}/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" ${common}/></svg>`,
     crew: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" ${common}/><circle cx="9" cy="7" r="4" ${common}/><path d="M23 21v-2a4 4 0 0 0-3-3.87" ${common}/></svg>`,
@@ -3807,6 +3808,15 @@ function renderIconTab({ active, dataset, value, icon, label }) {
 
 function renderCreateFab(label) {
   return `<button type="button" class="floating-create-button" data-floating-create title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">+</button>`;
+}
+
+function renderFilterToggle(label = "Filters") {
+  return `
+    <summary class="filter-toggle-button" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">
+      <span class="tab-icon" aria-hidden="true">${getTabIcon("filter")}</span>
+      <span>${escapeHtml(label)}</span>
+    </summary>
+  `;
 }
 
 function wireAuthForms() {
@@ -5074,32 +5084,34 @@ function renderShowsList(user, shows, sourceShows = shows) {
               <input type="search" id="showSearchInput" placeholder="Show, client, location, crew" value="${escapeHtml(state.ui.showSearchQuery || "")}" autocomplete="off">
             </label>
             <button type="button" class="secondary search-submit-button" id="applyShowSearchButton">Search</button>
+            ${isCrewUser ? "" : `<details class="filter-menu">${renderFilterToggle()}<div class="filter-menu-panel">
+              <div class="shows-toolbar-top">
+                ${renderCrewFilterControl("showsCrewFilter", { includeUnassigned: true })}
+                <label class="sort-control">
+                  <span>Year</span>
+                  <select id="showYearFilter">
+                    ${yearOptions.map((year) => `<option value="${year}" ${state.ui.selectedShowYear === year ? "selected" : ""}>${year === "all" ? "All Years" : year}</option>`).join("")}
+                  </select>
+                </label>
+                <label class="sort-control">
+                  <span>Month</span>
+                  <select id="showMonthFilter">
+                    ${monthOptions.map((option) => `<option value="${option.value}" ${state.ui.activeShowMonth === option.value ? "selected" : ""}>${option.label}</option>`).join("")}
+                  </select>
+                </label>
+                <label class="sort-control">
+                  <span>Sort By</span>
+                  <select id="showSortMode">
+                    <option value="date" ${state.ui.showSortMode === "date" ? "selected" : ""}>Date</option>
+                    <option value="crew" ${state.ui.showSortMode === "crew" ? "selected" : ""}>Crew</option>
+                    <option value="status" ${state.ui.showSortMode === "status" ? "selected" : ""}>Show Status</option>
+                    <option value="city" ${state.ui.showSortMode === "city" ? "selected" : ""}>City</option>
+                    <option value="client" ${state.ui.showSortMode === "client" ? "selected" : ""}>Client</option>
+                  </select>
+                </label>
+              </div>
+            </div></details>`}
           </div>
-          ${isCrewUser ? "" : `<div class="shows-toolbar-top">
-            ${renderCrewFilterControl("showsCrewFilter", { includeUnassigned: true })}
-            <label class="sort-control">
-              <span>Year</span>
-              <select id="showYearFilter">
-                ${yearOptions.map((year) => `<option value="${year}" ${state.ui.selectedShowYear === year ? "selected" : ""}>${year === "all" ? "All Years" : year}</option>`).join("")}
-              </select>
-            </label>
-            <label class="sort-control">
-              <span>Month</span>
-              <select id="showMonthFilter">
-                ${monthOptions.map((option) => `<option value="${option.value}" ${state.ui.activeShowMonth === option.value ? "selected" : ""}>${option.label}</option>`).join("")}
-              </select>
-            </label>
-            <label class="sort-control">
-              <span>Sort By</span>
-              <select id="showSortMode">
-                <option value="date" ${state.ui.showSortMode === "date" ? "selected" : ""}>Date</option>
-                <option value="crew" ${state.ui.showSortMode === "crew" ? "selected" : ""}>Crew</option>
-                <option value="status" ${state.ui.showSortMode === "status" ? "selected" : ""}>Show Status</option>
-                <option value="city" ${state.ui.showSortMode === "city" ? "selected" : ""}>City</option>
-                <option value="client" ${state.ui.showSortMode === "client" ? "selected" : ""}>Client</option>
-              </select>
-            </label>
-          </div>`}
           ${isAdmin(user) ? `
             <div class="shows-selection-toolbar">
               <button type="button" class="secondary" id="createInvoiceFromShowsButton">Create Invoice From Selected</button>
@@ -6351,63 +6363,63 @@ function renderInvoicesPanel() {
               <input type="search" id="invoiceSearchInput" placeholder="Invoice, client, show, line item" value="${escapeHtml(state.ui.invoiceSearchQuery || "")}" autocomplete="off">
             </label>
             <button type="button" class="secondary search-submit-button" id="applyInvoiceSearchButton">Search</button>
-          </div>
-          <div class="shows-toolbar-top">
-            <label class="sort-control">
-              <span>Status</span>
-              <select id="invoiceStatusFilter">
-                <option value="all" ${state.ui.invoiceStatusFilter === "all" ? "selected" : ""}>All Statuses</option>
-                <option value="draft" ${state.ui.invoiceStatusFilter === "draft" ? "selected" : ""}>Draft</option>
-                <option value="sent" ${state.ui.invoiceStatusFilter === "sent" ? "selected" : ""}>Sent</option>
-                <option value="overdue" ${state.ui.invoiceStatusFilter === "overdue" ? "selected" : ""}>Overdue</option>
-                <option value="cancelled" ${state.ui.invoiceStatusFilter === "cancelled" ? "selected" : ""}>Cancelled</option>
-              </select>
-            </label>
-            <label class="sort-control">
-              <span>Payment</span>
-              <select id="invoicePaymentFilter">
-                <option value="all" ${state.ui.invoicePaymentFilter === "all" ? "selected" : ""}>All Payments</option>
-                <option value="unpaid" ${state.ui.invoicePaymentFilter === "unpaid" ? "selected" : ""}>Unpaid</option>
-                <option value="paid" ${state.ui.invoicePaymentFilter === "paid" ? "selected" : ""}>Paid</option>
-                <option value="partiallyPaid" ${state.ui.invoicePaymentFilter === "partiallyPaid" ? "selected" : ""}>Partially Paid</option>
-              </select>
-            </label>
-            <label class="sort-control">
-              <span>Client</span>
-              <select id="invoiceClientFilter">
-                <option value="all" ${state.ui.invoiceClientFilter === "all" ? "selected" : ""}>All Clients</option>
-                ${clientOptions.map((client) => `<option value="${client}" ${state.ui.invoiceClientFilter === client ? "selected" : ""}>${client}</option>`).join("")}
-              </select>
-            </label>
-          </div>
-          <div class="shows-toolbar-top invoice-toolbar-secondary">
-            <label class="sort-control">
-              <span>Year</span>
-              <select id="invoiceYearFilter">
-                ${invoiceYearOptions.map((year) => `<option value="${year}" ${state.ui.invoiceExportYear === year ? "selected" : ""}>${year === "all" ? "All Years" : year}</option>`).join("")}
-              </select>
-            </label>
-            <label class="sort-control">
-              <span>Month</span>
-              <select id="invoiceMonthFilter">
-                ${invoiceMonthOptions.map((option) => `<option value="${option.value}" ${state.ui.invoiceExportMonth === option.value ? "selected" : ""}>${option.label}</option>`).join("")}
-              </select>
-            </label>
-            <label class="sort-control">
-              <span>Light Designer</span>
-              <select id="invoiceLightDesignerFilter">
-                ${lightDesignerOptions.map((name) => `<option value="${name}" ${state.ui.invoiceLightDesignerFilter === name ? "selected" : ""}>${name === "all" ? "All Light Designers" : name}</option>`).join("")}
-              </select>
-            </label>
-            <label class="sort-control">
-              <span>Sort By</span>
-              <select id="invoiceSortMode">
-                <option value="issueDate" ${state.ui.invoiceSortMode === "issueDate" ? "selected" : ""}>Issue Date</option>
-                <option value="dueDate" ${state.ui.invoiceSortMode === "dueDate" ? "selected" : ""}>Due Date</option>
-                <option value="client" ${state.ui.invoiceSortMode === "client" ? "selected" : ""}>Client</option>
-                <option value="lightDesigner" ${state.ui.invoiceSortMode === "lightDesigner" ? "selected" : ""}>Light Designer</option>
-              </select>
-            </label>
+            <details class="filter-menu">${renderFilterToggle()}<div class="filter-menu-panel">
+              <div class="shows-toolbar-top">
+                <label class="sort-control">
+                  <span>Status</span>
+                  <select id="invoiceStatusFilter">
+                    <option value="all" ${state.ui.invoiceStatusFilter === "all" ? "selected" : ""}>All Statuses</option>
+                    <option value="draft" ${state.ui.invoiceStatusFilter === "draft" ? "selected" : ""}>Draft</option>
+                    <option value="sent" ${state.ui.invoiceStatusFilter === "sent" ? "selected" : ""}>Sent</option>
+                    <option value="overdue" ${state.ui.invoiceStatusFilter === "overdue" ? "selected" : ""}>Overdue</option>
+                    <option value="cancelled" ${state.ui.invoiceStatusFilter === "cancelled" ? "selected" : ""}>Cancelled</option>
+                  </select>
+                </label>
+                <label class="sort-control">
+                  <span>Payment</span>
+                  <select id="invoicePaymentFilter">
+                    <option value="all" ${state.ui.invoicePaymentFilter === "all" ? "selected" : ""}>All Payments</option>
+                    <option value="unpaid" ${state.ui.invoicePaymentFilter === "unpaid" ? "selected" : ""}>Unpaid</option>
+                    <option value="paid" ${state.ui.invoicePaymentFilter === "paid" ? "selected" : ""}>Paid</option>
+                    <option value="partiallyPaid" ${state.ui.invoicePaymentFilter === "partiallyPaid" ? "selected" : ""}>Partially Paid</option>
+                  </select>
+                </label>
+                <label class="sort-control">
+                  <span>Client</span>
+                  <select id="invoiceClientFilter">
+                    <option value="all" ${state.ui.invoiceClientFilter === "all" ? "selected" : ""}>All Clients</option>
+                    ${clientOptions.map((client) => `<option value="${client}" ${state.ui.invoiceClientFilter === client ? "selected" : ""}>${client}</option>`).join("")}
+                  </select>
+                </label>
+                <label class="sort-control">
+                  <span>Year</span>
+                  <select id="invoiceYearFilter">
+                    ${invoiceYearOptions.map((year) => `<option value="${year}" ${state.ui.invoiceExportYear === year ? "selected" : ""}>${year === "all" ? "All Years" : year}</option>`).join("")}
+                  </select>
+                </label>
+                <label class="sort-control">
+                  <span>Month</span>
+                  <select id="invoiceMonthFilter">
+                    ${invoiceMonthOptions.map((option) => `<option value="${option.value}" ${state.ui.invoiceExportMonth === option.value ? "selected" : ""}>${option.label}</option>`).join("")}
+                  </select>
+                </label>
+                <label class="sort-control">
+                  <span>Light Designer</span>
+                  <select id="invoiceLightDesignerFilter">
+                    ${lightDesignerOptions.map((name) => `<option value="${name}" ${state.ui.invoiceLightDesignerFilter === name ? "selected" : ""}>${name === "all" ? "All Light Designers" : name}</option>`).join("")}
+                  </select>
+                </label>
+                <label class="sort-control">
+                  <span>Sort By</span>
+                  <select id="invoiceSortMode">
+                    <option value="issueDate" ${state.ui.invoiceSortMode === "issueDate" ? "selected" : ""}>Issue Date</option>
+                    <option value="dueDate" ${state.ui.invoiceSortMode === "dueDate" ? "selected" : ""}>Due Date</option>
+                    <option value="client" ${state.ui.invoiceSortMode === "client" ? "selected" : ""}>Client</option>
+                    <option value="lightDesigner" ${state.ui.invoiceSortMode === "lightDesigner" ? "selected" : ""}>Light Designer</option>
+                  </select>
+                </label>
+              </div>
+            </div></details>
           </div>
         </div>
         <div class="approval-list">
@@ -6501,28 +6513,30 @@ function renderInvoicesPanel() {
               <input type="search" id="paymentReconSearchInput" placeholder="Invoice, client, note, show" value="${escapeHtml(state.ui.paymentReconSearchQuery || "")}" autocomplete="off">
             </label>
             <button type="button" class="secondary search-submit-button" id="applyPaymentReconSearchButton">Search</button>
-          </div>
-          <div class="shows-toolbar-top">
-            <label class="sort-control">
-              <span>Client</span>
-              <select id="paymentReconClientFilter">
-                ${paymentReconClientOptions.map((option) => `<option value="${option}" ${state.ui.paymentReconClient === option ? "selected" : ""}>${option === "all" ? "All Clients" : escapeHtml(option)}</option>`).join("")}
-              </select>
-            </label>
-            <label class="sort-control">
-              <span>Year</span>
-              <select id="paymentReconYearFilter">
-                <option value="all" ${state.ui.paymentReconYear === "all" ? "selected" : ""}>All Years</option>
-                ${paymentReconYearOptions.map((year) => `<option value="${year}" ${state.ui.paymentReconYear === year ? "selected" : ""}>${year}</option>`).join("")}
-              </select>
-            </label>
-            <label class="sort-control">
-              <span>Month</span>
-              <select id="paymentReconMonthFilter">
-                <option value="all" ${state.ui.paymentReconMonth === "all" ? "selected" : ""}>All Months</option>
-                ${paymentReconMonthKeys.map((monthKey) => `<option value="${monthKey}" ${state.ui.paymentReconMonth === monthKey ? "selected" : ""}>${monthGroupLabel(`${monthKey}-01`).split(" ")[0]}</option>`).join("")}
-              </select>
-            </label>
+            <details class="filter-menu">${renderFilterToggle()}<div class="filter-menu-panel">
+              <div class="shows-toolbar-top">
+                <label class="sort-control">
+                  <span>Client</span>
+                  <select id="paymentReconClientFilter">
+                    ${paymentReconClientOptions.map((option) => `<option value="${option}" ${state.ui.paymentReconClient === option ? "selected" : ""}>${option === "all" ? "All Clients" : escapeHtml(option)}</option>`).join("")}
+                  </select>
+                </label>
+                <label class="sort-control">
+                  <span>Year</span>
+                  <select id="paymentReconYearFilter">
+                    <option value="all" ${state.ui.paymentReconYear === "all" ? "selected" : ""}>All Years</option>
+                    ${paymentReconYearOptions.map((year) => `<option value="${year}" ${state.ui.paymentReconYear === year ? "selected" : ""}>${year}</option>`).join("")}
+                  </select>
+                </label>
+                <label class="sort-control">
+                  <span>Month</span>
+                  <select id="paymentReconMonthFilter">
+                    <option value="all" ${state.ui.paymentReconMonth === "all" ? "selected" : ""}>All Months</option>
+                    ${paymentReconMonthKeys.map((monthKey) => `<option value="${monthKey}" ${state.ui.paymentReconMonth === monthKey ? "selected" : ""}>${monthGroupLabel(`${monthKey}-01`).split(" ")[0]}</option>`).join("")}
+                  </select>
+                </label>
+              </div>
+            </div></details>
           </div>
         </div>
         <div class="client-ledger-table-wrap">
@@ -7832,34 +7846,36 @@ function renderPayoutsPanel() {
             <span>Search</span>
             <input type="search" id="payoutSearchInput" placeholder="Show, client, crew, location" value="${escapeHtml(state.ui.payoutSearchQuery || "")}" autocomplete="off">
           </label>
-          <label class="sort-control">
-            <span>Crew</span>
-            <select id="payoutCrewFilter">
-              ${payoutCrewOptions.map((option) => `<option value="${option}" ${state.ui.payoutCrew === option ? "selected" : ""}>${option === "all" ? "All Crew" : escapeHtml(option)}</option>`).join("")}
-            </select>
-          </label>
-          <label class="sort-control">
-            <span>Client</span>
-            <select id="payoutClientFilter">
-              ${payoutClientOptions.map((option) => `<option value="${option}" ${state.ui.payoutClient === option ? "selected" : ""}>${option === "all" ? "All Clients" : escapeHtml(option)}</option>`).join("")}
-            </select>
-          </label>
-        </div>
-        <div class="shows-toolbar-top invoice-toolbar-secondary">
-          <label class="sort-control">
-            <span>Year</span>
-            <select id="payoutYearFilter">
-              <option value="all" ${state.ui.payoutYear === "all" ? "selected" : ""}>All Years</option>
-              ${payoutYearOptions.map((year) => `<option value="${year}" ${state.ui.payoutYear === year ? "selected" : ""}>${year}</option>`).join("")}
-            </select>
-          </label>
-          <label class="sort-control">
-            <span>Month</span>
-            <select id="payoutMonthFilter">
-              <option value="all" ${state.ui.payoutMonth === "all" ? "selected" : ""}>All Months</option>
-              ${payoutMonthKeys.map((monthKey) => `<option value="${monthKey}" ${state.ui.payoutMonth === monthKey ? "selected" : ""}>${monthGroupLabel(`${monthKey}-01`).split(" ")[0]}</option>`).join("")}
-            </select>
-          </label>
+          <details class="filter-menu">${renderFilterToggle()}<div class="filter-menu-panel">
+            <div class="shows-toolbar-top">
+              <label class="sort-control">
+                <span>Crew</span>
+                <select id="payoutCrewFilter">
+                  ${payoutCrewOptions.map((option) => `<option value="${option}" ${state.ui.payoutCrew === option ? "selected" : ""}>${option === "all" ? "All Crew" : escapeHtml(option)}</option>`).join("")}
+                </select>
+              </label>
+              <label class="sort-control">
+                <span>Client</span>
+                <select id="payoutClientFilter">
+                  ${payoutClientOptions.map((option) => `<option value="${option}" ${state.ui.payoutClient === option ? "selected" : ""}>${option === "all" ? "All Clients" : escapeHtml(option)}</option>`).join("")}
+                </select>
+              </label>
+              <label class="sort-control">
+                <span>Year</span>
+                <select id="payoutYearFilter">
+                  <option value="all" ${state.ui.payoutYear === "all" ? "selected" : ""}>All Years</option>
+                  ${payoutYearOptions.map((year) => `<option value="${year}" ${state.ui.payoutYear === year ? "selected" : ""}>${year}</option>`).join("")}
+                </select>
+              </label>
+              <label class="sort-control">
+                <span>Month</span>
+                <select id="payoutMonthFilter">
+                  <option value="all" ${state.ui.payoutMonth === "all" ? "selected" : ""}>All Months</option>
+                  ${payoutMonthKeys.map((monthKey) => `<option value="${monthKey}" ${state.ui.payoutMonth === monthKey ? "selected" : ""}>${monthGroupLabel(`${monthKey}-01`).split(" ")[0]}</option>`).join("")}
+                </select>
+              </label>
+            </div>
+          </div></details>
           <button type="button" class="secondary" id="exportPayoutsButton" ${filteredRows.length ? "" : "disabled"}>Export Excel</button>
         </div>
       </div>
@@ -8632,16 +8648,18 @@ function renderClientsPanel() {
             >
           </label>
           <button type="button" class="secondary search-submit-button" id="applyClientSearchButton">Search</button>
-        </div>
-        <div class="shows-toolbar-top clients-search-toolbar">
-          <label class="sort-control">
-            <span>GST Details</span>
-            <select id="clientGstFilter">
-              <option value="all" ${clientGstFilter === "all" ? "selected" : ""}>All Clients</option>
-              <option value="missing" ${clientGstFilter === "missing" ? "selected" : ""}>Empty GST Details</option>
-              <option value="available" ${clientGstFilter === "available" ? "selected" : ""}>With GST Details</option>
-            </select>
-          </label>
+          <details class="filter-menu">${renderFilterToggle()}<div class="filter-menu-panel">
+            <div class="shows-toolbar-top">
+              <label class="sort-control">
+                <span>GST Details</span>
+                <select id="clientGstFilter">
+                  <option value="all" ${clientGstFilter === "all" ? "selected" : ""}>All Clients</option>
+                  <option value="missing" ${clientGstFilter === "missing" ? "selected" : ""}>Empty GST Details</option>
+                  <option value="available" ${clientGstFilter === "available" ? "selected" : ""}>With GST Details</option>
+                </select>
+              </label>
+            </div>
+          </div></details>
         </div>
         ${selectedClientDetail ? `
           <section class="detail-card client-detail-panel">

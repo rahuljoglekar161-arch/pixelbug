@@ -2479,6 +2479,71 @@ button.danger {
   align-self: end;
 }
 
+.filter-menu {
+  position: relative;
+  align-self: end;
+  flex: 0 0 auto;
+}
+
+.filter-menu > summary {
+  list-style: none;
+}
+
+.filter-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.filter-toggle-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--ink);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.84rem;
+}
+
+.filter-toggle-button .tab-icon {
+  width: 17px;
+  height: 17px;
+}
+
+.filter-menu[open] .filter-toggle-button,
+.filter-toggle-button:hover {
+  background: var(--surface-strong);
+}
+
+.filter-menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 22;
+  width: min(560px, calc(100vw - 36px));
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(20, 24, 32, 0.96), rgba(15, 18, 24, 0.96));
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.24);
+}
+
+:root[data-theme="light"] .filter-menu-panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 250, 252, 0.98));
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.14);
+}
+
+.filter-menu-panel .shows-toolbar-top {
+  align-items: end;
+}
+
 .shows-selection-toolbar {
   display: flex;
   gap: 10px;
