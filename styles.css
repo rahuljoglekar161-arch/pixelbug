@@ -2544,6 +2544,37 @@ button.danger {
   align-items: end;
 }
 
+@media (max-width: 720px) {
+  .filter-menu[open] {
+    flex: 1 1 100%;
+    width: 100%;
+    align-self: stretch;
+  }
+
+  .filter-menu[open] .filter-toggle-button {
+    width: auto;
+  }
+
+  .filter-menu-panel {
+    position: static;
+    width: 100%;
+    max-width: none;
+    margin-top: 8px;
+    box-sizing: border-box;
+  }
+
+  .filter-menu-panel .shows-toolbar-top {
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .filter-menu-panel .shows-toolbar-top .sort-control,
+  .filter-menu-panel .shows-toolbar-top .compact-control {
+    flex: 1 1 calc(50% - 4px);
+    width: calc(50% - 4px);
+  }
+}
+
 .shows-selection-toolbar {
   display: flex;
   gap: 10px;
