@@ -478,7 +478,8 @@ textarea {
 }
 
 .topbar-brand h2 {
-  font-size: 1.05rem;
+  font-size: clamp(1.28rem, 2.2vw, 1.7rem);
+  line-height: 1.05;
   white-space: nowrap;
 }
 
@@ -588,6 +589,30 @@ textarea {
   justify-content: flex-end;
   margin-left: auto;
   flex: 0 0 auto;
+}
+
+.topbar-logout-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border-radius: 14px;
+  color: var(--ink);
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.1);
+}
+
+.topbar-logout-button svg {
+  width: 20px;
+  height: 20px;
+}
+
+.topbar-logout-button:hover {
+  background: var(--surface-strong);
+  transform: translateY(-1px);
 }
 
 .profile-menu-wrap {
@@ -725,6 +750,33 @@ textarea {
 
 .app-shell.logged-in .single-view > .panel {
   padding: 0;
+}
+
+.app-shell.logged-in .stack {
+  gap: 12px;
+}
+
+.app-shell.logged-in .form-header {
+  gap: 8px;
+  margin-bottom: 2px;
+}
+
+.app-shell.logged-in .form-header h3,
+.app-shell.logged-in .form-header h4 {
+  margin-bottom: 2px;
+}
+
+.app-shell.logged-in .form-header .muted-note {
+  margin-top: 2px;
+  line-height: 1.35;
+}
+
+.app-shell.logged-in input,
+.app-shell.logged-in select,
+.app-shell.logged-in textarea,
+.app-shell.logged-in .custom-select-trigger {
+  border-radius: 12px;
+  padding: 9px 12px;
 }
 
 .panel > .stack {
@@ -1068,9 +1120,9 @@ button.danger {
 }
 
 #invoicesPanel .summary-card {
-  min-width: 132px;
-  padding: 10px 12px;
-  border-radius: 16px;
+  min-width: 118px;
+  padding: 8px 10px;
+  border-radius: 12px;
   background:
     linear-gradient(160deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015)),
     rgba(17, 21, 29, 0.72);
@@ -1079,7 +1131,7 @@ button.danger {
 
 #invoicesPanel .summary-card strong {
   margin: 2px 0 1px;
-  font-size: 1.28rem;
+  font-size: 1.08rem;
   font-weight: 600;
   text-shadow: none;
 }
@@ -1105,9 +1157,9 @@ button.danger {
 .invoice-subtabs {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: fit-content;
-  padding: 6px;
+  padding: 4px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--surface-soft);
@@ -1118,19 +1170,19 @@ button.danger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   border: 0;
   border-radius: 999px;
   background: transparent;
   color: var(--muted);
   box-shadow: none;
-  min-height: 38px;
-  padding-inline: 14px;
+  min-height: 34px;
+  padding-inline: 11px;
 }
 
 .invoice-subtabs .section-tab .tab-icon {
-  width: 19px;
-  height: 19px;
+  width: 17px;
+  height: 17px;
 }
 
 .invoice-subtabs .section-tab strong {
@@ -1152,21 +1204,21 @@ button.danger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 64px;
-  height: 64px;
+  width: 58px;
+  height: 58px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.72);
-  background: #a52613;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  background: linear-gradient(135deg, #1f2937, #364253);
   color: #fff;
-  font-size: 2.5rem;
+  font-size: 2.25rem;
   line-height: 1;
-  font-weight: 500;
-  box-shadow: 0 14px 32px rgba(165, 38, 19, 0.32), 0 6px 16px rgba(0, 0, 0, 0.18);
+  font-weight: 600;
+  box-shadow: 0 16px 34px rgba(31, 41, 55, 0.28), 0 6px 16px rgba(0, 0, 0, 0.16);
 }
 
 .floating-create-button:hover {
   transform: translateY(-1px);
-  background: #8f1f10;
+  background: linear-gradient(135deg, #111827, #2f3a49);
 }
 
 .dirty-tab-badge {
@@ -1376,23 +1428,25 @@ button.danger {
   border: 1px solid var(--line);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.03);
+  flex-wrap: nowrap;
 }
 
 .pagination-nav button {
-  min-height: 34px;
+  min-height: 32px;
+  padding-inline: 10px;
 }
 
 .pagination-page-range {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .pagination-page-range button {
-  min-width: 36px;
-  min-height: 34px;
-  padding-inline: 10px;
+  min-width: 32px;
+  min-height: 32px;
+  padding-inline: 8px;
 }
 
 .pagination-page-range button.is-active {
@@ -2391,7 +2445,7 @@ button.danger {
 .shows-toolbar {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 8px;
 }
 
 .invoice-toolbar .shows-toolbar-top {
@@ -2403,25 +2457,25 @@ button.danger {
 }
 
 .invoice-search-control {
-  flex: 1 1 280px;
-  min-width: 220px;
+  flex: 1 1 220px;
+  min-width: 180px;
 }
 
 .shows-toolbar-top {
   display: flex;
   justify-content: flex-start;
   align-items: end;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .shows-toolbar .invoice-search-control {
-  flex: 1 1 320px;
-  min-width: 260px;
+  flex: 1 1 240px;
+  min-width: 180px;
 }
 
 .search-submit-button {
-  min-width: 108px;
+  min-width: 96px;
   align-self: end;
 }
 
@@ -2434,14 +2488,14 @@ button.danger {
 
 .sort-control {
   min-width: 128px;
-  flex: 0 1 160px;
+  flex: 0 1 150px;
 }
 
 .sort-control > span {
   display: block;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
   color: var(--muted);
-  font-size: 0.81rem;
+  font-size: 0.76rem;
 }
 
 .compact-control {
@@ -2472,17 +2526,17 @@ button.danger {
 }
 
 .shows-toolbar-top .sort-control {
-  min-width: 118px;
+  min-width: 110px;
 }
 
 .shows-toolbar-top select {
-  padding: 9px 11px;
-  font-size: 0.89rem;
+  padding: 8px 10px;
+  font-size: 0.86rem;
 }
 
 .shows-toolbar-top button {
-  padding: 9px 13px;
-  font-size: 0.87rem;
+  padding: 8px 12px;
+  font-size: 0.84rem;
   white-space: nowrap;
 }
 
@@ -3580,7 +3634,7 @@ button.danger {
   }
 
   .topbar-brand h2 {
-    font-size: 0.95rem;
+    font-size: 1.32rem;
   }
 
   .hero-banner {
@@ -3812,7 +3866,7 @@ button.danger {
   }
 
   .topbar-brand h2 {
-    font-size: 0.86rem;
+    font-size: 1.15rem;
   }
 
   .floating-create-button {
@@ -3954,5 +4008,52 @@ button.danger {
   .invoice-print-totals {
     min-width: 0;
     max-width: none;
+  }
+}
+
+.app-shell.logged-in .shows-toolbar-top {
+  row-gap: 6px;
+}
+
+.app-shell.logged-in .shows-toolbar-top .invoice-search-control {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.app-shell.logged-in .shows-toolbar-top .sort-control,
+.app-shell.logged-in .shows-toolbar-top .compact-control {
+  flex: 0 1 132px;
+  min-width: 104px;
+}
+
+.app-shell.logged-in .shows-toolbar-top .search-submit-button {
+  flex: 0 0 92px;
+  min-width: 92px;
+  width: auto;
+}
+
+.app-shell.logged-in .clients-search-toolbar {
+  max-width: 560px;
+}
+
+.app-shell.logged-in .editor-actions {
+  gap: 8px;
+}
+
+@media (max-width: 520px) {
+  .app-shell.logged-in .shows-toolbar-top .sort-control,
+  .app-shell.logged-in .shows-toolbar-top .compact-control {
+    flex: 0 1 calc(50% - 4px);
+    width: calc(50% - 4px);
+  }
+
+  .app-shell.logged-in .shows-toolbar-top .invoice-search-control {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .app-shell.logged-in .shows-toolbar-top .search-submit-button {
+    flex: 0 0 92px;
+    width: auto;
   }
 }

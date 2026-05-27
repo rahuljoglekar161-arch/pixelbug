@@ -3149,18 +3149,10 @@ function renderPaginationControls(id, pagination, label = "entries") {
 }
 
 function getPaginationRange(currentPage, totalPages) {
-  if (totalPages <= 7) {
+  if (totalPages <= 3) {
     return Array.from({ length: totalPages }, (_, index) => index + 1);
   }
-  const pages = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1].filter((page) => page >= 1 && page <= totalPages));
-  const sortedPages = [...pages].sort((a, b) => a - b);
-  return sortedPages.flatMap((page, index) => {
-    const previous = sortedPages[index - 1];
-    if (index > 0 && page - previous > 1) {
-      return ["ellipsis", page];
-    }
-    return [page];
-  });
+  return [1, 2, "ellipsis", totalPages];
 }
 
 function getStateFromGstin(gstin) {
@@ -3791,14 +3783,15 @@ function getTabIcon(icon) {
   const common = `fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"`;
   const icons = {
     calendar: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="3" ${common}/><path d="M16 2v4M8 2v4M3 10h18" ${common}/></svg>`,
-    shows: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z" ${common}/><path d="M8 5v14M16 5v14M4 9h4M16 9h4M4 15h4M16 15h4" ${common}/></svg>`,
+    shows: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h16M8 3v4M16 3v4" ${common}/><path d="M6 7h4l1 4H5zM14 7h4l1 4h-6z" ${common}/><path d="M6 11 3 21h8L8 11M16 11l-3 10h8l-3-10" ${common}/></svg>`,
     invoice: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10l3 3v15H7z" ${common}/><path d="M14 3v5h5M9 13h6M9 17h4" ${common}/></svg>`,
     list: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13" ${common}/><path d="M3 6h.01M3 12h.01M3 18h.01" ${common}/></svg>`,
     payments: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z" ${common}/><path d="M2 10h20M7 15h.01M11 15h3" ${common}/></svg>`,
     archive: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v5H3zM5 9v11h14V9" ${common}/><path d="M10 13h4" ${common}/></svg>`,
     clients: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" ${common}/><circle cx="9.5" cy="7" r="4" ${common}/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" ${common}/></svg>`,
     crew: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" ${common}/><circle cx="9" cy="7" r="4" ${common}/><path d="M23 21v-2a4 4 0 0 0-3-3.87" ${common}/></svg>`,
-    settings: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5z" ${common}/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.08a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.08a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.08a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.16.6.69 1 1.55 1H21a2 2 0 1 1 0 4h-.08a1.7 1.7 0 0 0-1.52 1z" ${common}/></svg>`
+    settings: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5z" ${common}/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.08a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.08a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.08a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.16.6.69 1 1.55 1H21a2 2 0 1 1 0 4h-.08a1.7 1.7 0 0 0-1.52 1z" ${common}/></svg>`,
+    logout: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 17l5-5-5-5M15 12H3" ${common}/><path d="M14 4h4a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3h-4" ${common}/></svg>`
   };
   return icons[icon] || icons.settings;
 }
@@ -4040,6 +4033,25 @@ function renderSessionActions() {
     profileMenuOutsideHandler = null;
   }
   if (node) node.innerHTML = "";
+  const user = getCurrentUser();
+  if (!node || !user) return;
+  node.innerHTML = `
+    <button type="button" class="topbar-logout-button" id="topbarLogoutButton" title="Logout" aria-label="Logout">
+      ${getTabIcon("logout")}
+    </button>
+  `;
+  document.getElementById("topbarLogoutButton")?.addEventListener("click", logoutCurrentUser);
+}
+
+function logoutCurrentUser() {
+  apiRequest("/api/logout", { method: "POST" })
+    .then(() => {
+      state.currentUserId = null;
+      resetUiForNewSession();
+      saveState(state);
+      render();
+    })
+    .catch((error) => showToast(error.message));
 }
 
 function renderProfileSettingsPanel(user) {
@@ -4075,7 +4087,7 @@ function renderProfileSettingsPanel(user) {
             </select>
           </label>
           <p class="muted-note">These are used as defaults in the Travel Master export.</p>
-          <button type="submit" class="secondary">Save Preferences</button>
+          <button type="submit" class="secondary">Save</button>
           <div id="profilePreferencesMessage" class="message"></div>
         </form>
     </div>
@@ -4148,7 +4160,7 @@ function renderPasswordSettingsPanel(user) {
     <div class="detail-card profile-settings-card">
       <div>
         <h4>Password Reset</h4>
-        <p class="muted-note">Update your password or logout from this device.</p>
+        <p class="muted-note">Update your password for this account.</p>
       </div>
       <form id="changePasswordForm" class="stack tight profile-menu-form">
         <label>
@@ -4167,7 +4179,6 @@ function renderPasswordSettingsPanel(user) {
         <button type="submit" class="secondary">Update Password</button>
         <div id="changePasswordMessage" class="message"></div>
       </form>
-      <button type="button" class="ghost small" id="logoutButton">Logout</button>
     </div>
   `;
 
@@ -4198,17 +4209,6 @@ function renderPasswordSettingsPanel(user) {
       }
     });
   }
-
-  document.getElementById("logoutButton")?.addEventListener("click", () => {
-    apiRequest("/api/logout", { method: "POST" })
-      .then(() => {
-        state.currentUserId = null;
-        resetUiForNewSession();
-        saveState(state);
-        render();
-      })
-      .catch((error) => showToast(error.message));
-  });
 }
 
 function getSettingsTabs(user) {
@@ -4312,12 +4312,12 @@ function renderDashboard() {
 
   if (!user) {
     dashboard.classList.add("hidden");
-    title.textContent = "Crew Calendar";
+    title.textContent = "PixelBug Show Planner";
     return;
   }
 
   dashboard.classList.remove("hidden");
-  title.textContent = isAdmin(user) ? "Admin Operations Board" : isAccounts(user) ? "Accounts Desk" : user.role === "viewer" ? "Calendar View" : "My Crew Schedule";
+  title.textContent = "PixelBug Show Planner";
   ensureActiveSidebarTab(user);
 
   dashboard.innerHTML = `<div class="single-view" id="singleView"></div>`;
@@ -6331,6 +6331,7 @@ function renderInvoicesPanel() {
           <div class="toolbar editor-actions">
             <button type="submit">${editingInvoice ? "Update Invoice" : "Save Invoice"}</button>
             <button type="button" class="ghost" id="cancelInvoiceEdit">${editingInvoice ? "Cancel Edit" : "Clear"}</button>
+            <button type="button" class="ghost" id="cancelInvoiceCreate">Cancel</button>
             ${editingInvoice ? '<button type="button" class="danger" id="deleteInvoiceButton">Delete Invoice</button>' : ""}
           </div>
           <div id="invoiceFormMessage" class="message"></div>
@@ -6888,6 +6889,15 @@ function renderInvoicesPanel() {
     clearDirtyForm("invoice");
     resetInvoiceEditingState();
     state.ui.invoiceSubtab = "create";
+    saveState(state);
+    renderDashboard();
+  });
+
+  document.getElementById("cancelInvoiceCreate")?.addEventListener("click", () => {
+    if (!confirmDiscardDirtyForm("leave this invoice form")) return;
+    clearDirtyForm("invoice");
+    resetInvoiceEditingState();
+    state.ui.invoiceSubtab = "register";
     saveState(state);
     renderDashboard();
   });
@@ -7677,9 +7687,6 @@ function renderActivityPanel() {
     return !query || haystack.includes(query);
   });
   const activityPagination = getPaginationSlice(filteredActivities, "activityPage", "activityPageSize");
-  const loggedInCount = activities.filter((activity) => activity.action === "Logged in").length;
-  const invoiceCount = activities.filter((activity) => String(activity.action || "").toLowerCase().includes("invoice")).length;
-  const dashboardCount = activities.filter((activity) => String(activity.action || "").toLowerCase().includes("dashboard")).length;
 
   panel.innerHTML = `
     <div class="stack">
@@ -7689,23 +7696,6 @@ function renderActivityPanel() {
           <p class="muted-note">Track sign-ins and key dashboard changes made by each user.</p>
         </div>
         <span class="pill">${activities.length} events</span>
-      </div>
-      <div class="summary-grid">
-        <div class="summary-card">
-          <span class="summary-kicker">Logins</span>
-          <strong>${loggedInCount}</strong>
-          <span class="summary-foot">Successful dashboard sign-ins.</span>
-        </div>
-        <div class="summary-card">
-          <span class="summary-kicker">Invoices</span>
-          <strong>${invoiceCount}</strong>
-          <span class="summary-foot">Invoice creation, update, deletion, and payments.</span>
-        </div>
-        <div class="summary-card">
-          <span class="summary-kicker">Dashboard</span>
-          <strong>${dashboardCount}</strong>
-          <span class="summary-foot">Show, crew, client, or admin state changes.</span>
-        </div>
       </div>
       <div class="shows-toolbar">
         <div class="shows-toolbar-top">
@@ -8805,6 +8795,7 @@ function renderClientsPanel() {
         <div class="toolbar editor-actions">
           <button type="submit">Save Client</button>
           <button type="button" class="ghost" id="resetClientForm">Clear</button>
+          <button type="button" class="ghost" id="cancelClientCreate">Cancel</button>
         </div>
         <div id="clientFormMessage" class="message"></div>
       </form>
@@ -8859,6 +8850,16 @@ function renderClientsPanel() {
     if (!confirmDiscardDirtyForm("clear this client form")) return;
     clearDirtyForm("client");
     clearClientForm();
+  });
+
+  document.getElementById("cancelClientCreate")?.addEventListener("click", () => {
+    if (!confirmDiscardDirtyForm("leave this client form")) return;
+    clearDirtyForm("client");
+    clearClientForm();
+    state.ui.clientsSubtab = "list";
+    state.ui.selectedClientDetailId = null;
+    saveState(state);
+    renderClientsPanel();
   });
 
   form.elements.namedItem("clientGstin")?.addEventListener("input", (event) => {
@@ -9179,6 +9180,7 @@ function renderShowForm() {
         <div class="toolbar editor-actions">
           <button type="submit">${isEditing ? "Update Show" : "Save Show"}</button>
           <button type="button" class="ghost" id="resetShowForm">${isEditing ? "Cancel Edit" : "Clear"}</button>
+          <button type="button" class="ghost" id="cancelShowCreate">Cancel</button>
           ${isEditing ? '<button type="button" class="danger" id="deleteShowButton">Delete Show</button>' : ""}
         </div>
       </form>
@@ -9693,6 +9695,14 @@ function renderShowForm() {
     saveState(state);
     renderDashboard();
     restoreShowReturnContext();
+  });
+  document.getElementById("cancelShowCreate").addEventListener("click", () => {
+    if (!confirmDiscardDirtyForm("leave this show form")) return;
+    clearDirtyForm("show");
+    resetEditingState();
+    state.ui.showSubtab = "list";
+    saveState(state);
+    renderDashboard();
   });
 
   if (isEditing) {
