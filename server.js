@@ -574,7 +574,9 @@ function ensureDatabase() {
   `);
 
   migrateLegacyJsonToDatabase();
+  migrateLegacyInvoicesToDatabase(db);
   purgeShowsBeforeGoogleSyncStart(db);
+  backfillArchivedInvoiceShowLinks(db);
   syncClientMasterFromExistingRecords(db);
   return db;
 }
@@ -1514,6 +1516,91 @@ function migrateLegacyJsonToDatabase() {
   }
 }
 
+function migrateLegacyInvoicesToDatabase(database) {
+  const invoiceCount = database.prepare("SELECT COUNT(*) AS count FROM invoices").get().count;
+  if (invoiceCount || !fs.existsSync(DATA_FILE)) return;
+
+  const parsed = JSON.parse(fs.readFileSync(DATA_FILE, "utf8"));
+  const invoices = Array.isArray(parsed.invoices) ? parsed.invoices : [];
+  if (!invoices.length) return;
+
+  const insertInvoice = database.prepare(`
+    INSERT OR IGNORE INTO invoices (
+      id, invoice_number, client_name, client_id, issue_date, due_date, status, notes, details_json, tax_percent, subtotal, tax_amount, total_amount, amount_paid, currency, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertLineItem = database.prepare(`
+    INSERT OR IGNORE INTO invoice_line_items (
+      id, invoice_id, show_id, description, sac, custom_details, discount, discount_amount, quantity, unit_rate, amount, line_order
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertPayment = database.prepare(`
+    INSERT OR IGNORE INTO invoice_payments (
+      id, invoice_id, payment_date, amount, note, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?)
+  `);
+
+  database.exec("BEGIN");
+  try {
+    invoices.forEach((invoiceInput) => {
+      const invoice = normalizeInvoice(invoiceInput);
+      if (!invoice.id || !invoice.invoiceNumber || !invoice.clientName || !invoice.issueDate) return;
+
+      insertInvoice.run(
+        invoice.id,
+        invoice.invoiceNumber,
+        invoice.clientName,
+        invoice.clientId || null,
+        invoice.issueDate,
+        invoice.dueDate || null,
+        invoice.status,
+        invoice.notes || null,
+        JSON.stringify(invoice.details || {}),
+        invoice.taxPercent,
+        invoice.subtotal,
+        invoice.taxAmount,
+        invoice.totalAmount,
+        invoice.amountPaid,
+        invoice.currency,
+        invoice.createdAt,
+        invoice.updatedAt
+      );
+
+      invoice.lineItems.forEach((item, index) => {
+        insertLineItem.run(
+          item.id,
+          invoice.id,
+          item.showId || null,
+          item.description,
+          item.sac || null,
+          item.customDetails || null,
+          item.discount || null,
+          item.discountAmount || 0,
+          item.quantity,
+          item.unitRate,
+          item.amount,
+          index
+        );
+      });
+
+      invoice.paymentEntries.forEach((payment) => {
+        insertPayment.run(
+          payment.id || uid("payment"),
+          invoice.id,
+          payment.paymentDate || dateKey(new Date()),
+          roundMoney(payment.amount || 0),
+          payment.note || null,
+          payment.createdAt || new Date().toISOString()
+        );
+      });
+    });
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 function purgeShowsBeforeGoogleSyncStart(database) {
   const alreadyPurged = database.prepare("SELECT value FROM app_settings WHERE key = ?").get(GOOGLE_SYNC_START_PURGE_SETTING_KEY);
   if (alreadyPurged) return;
@@ -1541,6 +1628,57 @@ function purgeShowsBeforeGoogleSyncStart(database) {
       deleteShows.run(GOOGLE_SYNC_START_DATE_KEY);
     }
     markPurged.run(GOOGLE_SYNC_START_PURGE_SETTING_KEY, new Date().toISOString());
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function backfillArchivedInvoiceShowLinks(database) {
+  const showExists = database.prepare("SELECT id FROM shows WHERE id = ?");
+  const updateLineItem = database.prepare("UPDATE invoice_line_items SET show_id = ? WHERE id = ?");
+  const lineItems = database.prepare(`
+    SELECT li.id, li.show_id, inv.invoice_number
+    FROM invoice_line_items li
+    JOIN invoices inv ON inv.id = li.invoice_id
+  `).all();
+  const lineItemMap = new Map(lineItems.map((item) => [item.id, item]));
+  const backfillByLineId = new Map([
+    ["line_i2ob9twm", "show_dfdb45d6623b"],
+    ["line_yyjcp4hw", "show_a6am9gdx"],
+    ["line_teyb5y26", "show_85bb3723808f"],
+    ["line_tmodkrrj", "show_85bb3723808f"],
+    ["line_cuyim7ob", "show_f1c64fffcbb4"],
+    ["line_p8xe5s3k", "show_1f0e8fe8a786"],
+    ["line_lp96zta3", "show_a554735e75bc"],
+    ["line_9tsw0wfg", "show_a554735e75bc"],
+    ["line_clljwkd4", "show_495673b4c81f"],
+    ["line_2mz41f45", "show_7a8d449e686b"],
+    ["line_xrzpl0vo", "show_b23d0ff966b0"],
+    ["line_8icgzm9p", "show_ae234de92c24"],
+    ["line_2deh2q2z", "show_l60ztm4q,show_80fb12ad29de,show_188b87e2b336"],
+    ["line_77b2tebh", "show_bdc37ad276d9,show_ba7dcc598857,show_7ba119b76c32"],
+    ["line_zoh5ebua", "show_xz7zds75"],
+    ["line_c8m1c0c6", "show_f4f4046bb67c"],
+    ["line_3cq14gjq", "show_8cb5d2d62de8"],
+    ["line_312jxyv7", "show_4i7ggjb0"],
+    ["line_z8dnkyz3", "show_13a7554b926b,show_2e115df39051,show_a97c5865d826,show_c4c2f1b6c348,show_28549fa7d57e,show_81ef734fbce4,show_30eca4ba975a,show_f32b421ecb49,show_d4665e72b574,show_244bba2dfa82,show_77a5a0145100"]
+  ]);
+
+  database.exec("BEGIN");
+  try {
+    backfillByLineId.forEach((rawShowIds, lineItemId) => {
+      const item = lineItemMap.get(lineItemId);
+      if (!item || String(item.show_id || "").trim()) return;
+      const validShowIds = rawShowIds
+        .split(",")
+        .map((showId) => showId.trim())
+        .filter((showId) => showId && showExists.get(showId));
+      if (validShowIds.length) {
+        updateLineItem.run(validShowIds.join(","), lineItemId);
+      }
+    });
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");
