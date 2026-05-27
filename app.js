@@ -1963,6 +1963,12 @@ function seedState() {
   };
 }
 
+function buildFreshSessionState(savedThemePreference = "system") {
+  const freshState = seedState();
+  freshState.ui.themePreference = savedThemePreference || "system";
+  return freshState;
+}
+
 function loadLocalUiState() {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) {
@@ -1971,17 +1977,18 @@ function loadLocalUiState() {
 
   try {
     const parsed = JSON.parse(raw);
-    return {
-      ...seedState(),
-      view: parsed.view || seedState().view,
-      ui: parsed.ui || seedState().ui,
-      google: seedState().google,
-      clients: [],
-      invoices: []
-    };
+    const savedThemePreference = parsed?.ui?.themePreference || parsed?.themePreference || "system";
+    return buildFreshSessionState(savedThemePreference);
   } catch (error) {
     return seedState();
   }
+}
+
+function resetUiForNewSession() {
+  const themePreference = state.ui?.themePreference || "system";
+  const freshState = buildFreshSessionState(themePreference);
+  state.view = freshState.view;
+  state.ui = freshState.ui;
 }
 
 function normalizeStoredFlightSelection(flight) {
@@ -2121,14 +2128,10 @@ function normalizeState() {
 }
 
 function saveState(nextState) {
-  const persistedUi = {
-    ...nextState.ui,
-    authPanelOpen: false,
-    authPanelMode: "profile"
-  };
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
-    view: nextState.view,
-    ui: persistedUi
+    ui: {
+      themePreference: nextState.ui?.themePreference || "system"
+    }
   }));
 }
 
@@ -3811,6 +3814,7 @@ function wireAuthForms() {
           method: "POST",
           body: JSON.stringify({ email, password })
         });
+        resetUiForNewSession();
         applyServerState(payload);
         saveState(state);
         render();
@@ -4147,7 +4151,7 @@ function renderSessionActions(user) {
     apiRequest("/api/logout", { method: "POST" })
       .then(() => {
         state.currentUserId = null;
-        state.ui.authPanelOpen = false;
+        resetUiForNewSession();
         saveState(state);
         render();
       })
