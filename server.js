@@ -44,6 +44,7 @@ const GOOGLE_LAST_SYNC_SETTING_KEY = "google_last_sync_at";
 const GOOGLE_LAST_ERROR_SETTING_KEY = "google_last_sync_error";
 const GOOGLE_SHEET_EXPORT_MAP_SETTING_KEY = "google_sheet_export_map";
 const GOOGLE_SYNC_START_DATE_KEY = "2026-04-01";
+const GOOGLE_SYNC_START_PURGE_SETTING_KEY = "google_sync_start_purge_2026_04_01";
 const GOOGLE_SYNC_DEBOUNCE_MS = 1000 * 30;
 const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
 const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
@@ -573,6 +574,7 @@ function ensureDatabase() {
   `);
 
   migrateLegacyJsonToDatabase();
+  purgeShowsBeforeGoogleSyncStart(db);
   syncClientMasterFromExistingRecords(db);
   return db;
 }
@@ -1505,6 +1507,40 @@ function migrateLegacyJsonToDatabase() {
         JSON.stringify(normalized.assignments)
       );
     });
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+function purgeShowsBeforeGoogleSyncStart(database) {
+  const alreadyPurged = database.prepare("SELECT value FROM app_settings WHERE key = ?").get(GOOGLE_SYNC_START_PURGE_SETTING_KEY);
+  if (alreadyPurged) return;
+
+  const staleShows = database.prepare("SELECT id FROM shows WHERE show_date_from < ?").all(GOOGLE_SYNC_START_DATE_KEY);
+  const staleShowIds = new Set(staleShows.map((show) => show.id));
+  const linkedLineItems = database.prepare("SELECT id, show_id FROM invoice_line_items WHERE COALESCE(show_id, '') <> ''").all();
+  const updateLineItem = database.prepare("UPDATE invoice_line_items SET show_id = ? WHERE id = ?");
+  const deleteShows = database.prepare("DELETE FROM shows WHERE show_date_from < ?");
+  const markPurged = database.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)");
+
+  database.exec("BEGIN");
+  try {
+    if (staleShowIds.size) {
+      linkedLineItems.forEach((item) => {
+        const nextShowIds = String(item.show_id || "")
+          .split(",")
+          .map((showId) => showId.trim())
+          .filter((showId) => showId && !staleShowIds.has(showId));
+        const nextShowId = nextShowIds.join(",") || null;
+        if ((item.show_id || null) !== nextShowId) {
+          updateLineItem.run(nextShowId, item.id);
+        }
+      });
+      deleteShows.run(GOOGLE_SYNC_START_DATE_KEY);
+    }
+    markPurged.run(GOOGLE_SYNC_START_PURGE_SETTING_KEY, new Date().toISOString());
     database.exec("COMMIT");
   } catch (error) {
     database.exec("ROLLBACK");
