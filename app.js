@@ -4860,13 +4860,18 @@ function renderShowsList(user, shows, sourceShows = shows) {
     const searchMatch = !showSearchQuery || searchableValues.some((value) => String(value || "").toLowerCase().includes(showSearchQuery));
     return yearMatch && monthMatch && searchMatch;
   });
-  const currentShows = filteredShows.filter((show) => getShowStartDate(show) <= todayKey && getShowEndDate(show) >= todayKey);
-  const upcomingShows = filteredShows.filter((show) => getShowStartDate(show) > todayKey);
-  const pastShows = filteredShows.filter((show) => getShowEndDate(show) < todayKey);
+  const invoicedShowIds = getShowsLinkedToInvoices();
+  const archivedShows = filteredShows.filter((show) => invoicedShowIds.has(show.id));
+  const uninvoicedShows = filteredShows.filter((show) => !invoicedShowIds.has(show.id));
+  const currentShows = uninvoicedShows.filter((show) => getShowStartDate(show) <= todayKey && getShowEndDate(show) >= todayKey);
+  const upcomingShows = uninvoicedShows.filter((show) => getShowStartDate(show) > todayKey);
+  const pastShows = uninvoicedShows.filter((show) => getShowEndDate(show) < todayKey);
   const timelineMode = state.ui.showTimelineMode || "active";
-  const visibleShows = timelineMode === "past"
-    ? sortShows(pastShows, state.ui.showSortMode)
-    : sortShows([...currentShows, ...upcomingShows], state.ui.showSortMode);
+  const visibleShows = timelineMode === "archived"
+    ? sortShows(archivedShows, state.ui.showSortMode)
+    : timelineMode === "past"
+      ? sortShows(pastShows, state.ui.showSortMode)
+      : sortShows([...currentShows, ...upcomingShows], state.ui.showSortMode);
   const activeMonthLabel = state.ui.activeShowMonth !== "all"
     ? monthGroupLabel(`${state.ui.activeShowMonth}-01`)
     : state.ui.selectedShowYear !== "all"
@@ -4877,6 +4882,11 @@ function renderShowsList(user, shows, sourceShows = shows) {
   const pagedCurrentShows = showPagination.items.filter((show) => getShowStartDate(show) <= todayKey && getShowEndDate(show) >= todayKey);
   const pagedUpcomingShows = showPagination.items.filter((show) => getShowStartDate(show) > todayKey);
   const pagedPastShows = showPagination.items.filter((show) => getShowEndDate(show) < todayKey);
+  const timelineTitle = timelineMode === "archived"
+    ? `Archived · ${activeMonthLabel}`
+    : timelineMode === "past"
+      ? `Past Shows · ${activeMonthLabel}`
+      : `Current & Upcoming · ${activeMonthLabel}`;
 
   panel.innerHTML = `
     <div class="stack">
@@ -4928,12 +4938,17 @@ function renderShowsList(user, shows, sourceShows = shows) {
           <div class="invoice-subtabs" role="tablist" aria-label="Show timeline">
             <button type="button" class="${timelineMode === "active" ? "is-active" : ""}" data-show-timeline="active">Current & Upcoming</button>
             <button type="button" class="${timelineMode === "past" ? "is-active" : ""}" data-show-timeline="past">Past Shows</button>
+            <button type="button" class="${timelineMode === "archived" ? "is-active" : ""}" data-show-timeline="archived">Archived</button>
           </div>
           <header class="month-group-header">
-            <h4>${timelineMode === "past" ? `Past Shows · ${activeMonthLabel}` : `Current & Upcoming · ${activeMonthLabel}`}</h4>
+            <h4>${timelineTitle}</h4>
             <span class="pill">${visibleShows.length} ${visibleShows.length === 1 ? "show" : "shows"}</span>
           </header>
-          ${timelineMode === "past" ? `
+          ${timelineMode === "archived" ? `
+            <div class="show-list">
+              ${showPagination.items.length ? showPagination.items.map((show) => renderShowCard(show, user, false, { hideInvoiceAction: true })).join("") : "<p>No archived shows match the current filters.</p>"}
+            </div>
+          ` : timelineMode === "past" ? `
             <div class="show-list">
               ${pagedPastShows.length ? pagedPastShows.map((show) => renderShowCard(show, user, selectedDraftShowIds.has(show.id))).join("") : "<p>No past shows match the current filters.</p>"}
             </div>
@@ -5251,7 +5266,7 @@ function getFlightTicketMarkup(flight, sector = "", travelDate = "") {
   `;
 }
 
-function renderShowCard(show, user, selectedForInvoice = false) {
+function renderShowCard(show, user, selectedForInvoice = false, options = {}) {
   const assignments = show.assignments.map((assignment) => {
     const crewUser = getUserById(assignment.crewId);
     const crewName = getAssignmentCrewName(assignment);
@@ -5303,10 +5318,12 @@ function renderShowCard(show, user, selectedForInvoice = false) {
         </div>
         ${isAdmin(user) ? `
           <div class="toolbar">
-            <label class="show-select-chip">
-              <input type="checkbox" data-select-show-for-invoice data-show-id="${show.id}" ${selectedForInvoice ? "checked" : ""}>
-              <span>Bill</span>
-            </label>
+            ${options.hideInvoiceAction ? "" : `
+              <label class="show-select-chip">
+                <input type="checkbox" data-select-show-for-invoice data-show-id="${show.id}" ${selectedForInvoice ? "checked" : ""}>
+                <span>Bill</span>
+              </label>
+            `}
             <button type="button" class="ghost small" data-duplicate-show="${show.id}">Duplicate</button>
             <button type="button" class="secondary small" data-edit-show="${show.id}">Edit</button>
           </div>
