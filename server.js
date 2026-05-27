@@ -1664,6 +1664,10 @@ function readStore() {
 
 function writeStore(store) {
   const database = ensureDatabase();
+  const clients = Array.isArray(store.clients) ? store.clients.map(normalizeClient) : [];
+  const clientIds = new Set(clients.map((client) => client.id));
+  const clientIdsByName = new Map(clients.map((client) => [String(client.name || "").trim().toLowerCase(), client.id]));
+  const clientNamesById = new Map(clients.map((client) => [client.id, client.name]));
   const replaceUser = database.prepare(`
     INSERT OR REPLACE INTO users (
       id, name, email, phone, role, approved, color, meal_preference, seat_preference, email_verified, verification_token, reset_token, reset_token_expires_at, password_hash
@@ -1708,8 +1712,7 @@ function writeStore(store) {
       );
     });
 
-    (store.clients || []).forEach((client) => {
-      const normalizedClient = normalizeClient(client);
+    clients.forEach((normalizedClient) => {
       replaceClient.run(
         normalizedClient.id,
         normalizedClient.name,
@@ -1727,6 +1730,9 @@ function writeStore(store) {
 
     store.shows.forEach((show) => {
       const normalized = normalizeShow(show);
+      const resolvedClientId = normalized.clientId && clientIds.has(normalized.clientId)
+        ? normalized.clientId
+        : clientIdsByName.get(String(normalized.client || "").trim().toLowerCase()) || "";
       replaceShow.run(
         normalized.id,
         normalized.showDate,
@@ -1743,8 +1749,8 @@ function writeStore(store) {
         normalized.googleArchivedAt,
         normalized.googlePinned ? 1 : 0,
         normalized.showName,
-        normalized.clientId || null,
-        normalized.client,
+        resolvedClientId || null,
+        resolvedClientId ? (clientNamesById.get(resolvedClientId) || normalized.client) : normalized.client,
         normalized.venue,
         normalized.location,
         normalized.showTime,

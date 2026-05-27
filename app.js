@@ -7248,7 +7248,6 @@ function renderGoogleEntriesPanel(user) {
             <div class="meta"><strong>Status:</strong> ${googleStatus.connected ? "Connected" : googleStatus.configured ? "Ready to connect" : "Missing config"}</div>
             ${googleStatus.connected ? `<div class="meta"><strong>Sheets Export:</strong> ${googleStatus.sheetsConnected ? "Ready" : "Reconnect required"}</div>` : ""}
             ${googleStatus.calendarId ? `<div class="meta">Calendar: ${googleStatus.calendarId}</div>` : ""}
-            <div class="toolbar" style="margin-top: 8px;">${googleConnectActionButton}</div>
           </div>
         </div>
       ` : `
@@ -7258,7 +7257,6 @@ function renderGoogleEntriesPanel(user) {
             <div class="meta"><strong>Status:</strong> ${googleStatus.connected ? "Connected" : googleStatus.configured ? "Ready to connect" : "Missing config"}</div>
             ${googleStatus.connected ? `<div class="meta"><strong>Sheets Export:</strong> ${googleStatus.sheetsConnected ? "Ready" : "Reconnect required"}</div>` : ""}
             ${googleStatus.calendarId ? `<div class="meta">Calendar: ${googleStatus.calendarId}</div>` : ""}
-            <div class="toolbar" style="margin-top: 8px;">${googleConnectActionButton}</div>
           </div>
         </div>
       `}
