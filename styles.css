@@ -308,10 +308,10 @@ textarea {
 
 .horizontal-tabs .sidebar-tab {
   width: auto;
-  min-width: 136px;
+  min-width: 112px;
   flex: 0 0 auto;
-  padding: 10px 12px;
-  border-radius: 14px;
+  padding: 8px 10px;
+  border-radius: 12px;
 }
 
 .horizontal-tabs .sidebar-tab strong {
@@ -329,6 +329,8 @@ textarea {
   justify-content: center;
   margin: 0;
   padding: 0;
+  gap: 8px;
+  min-width: 0;
 }
 
 .app-top-tabs .sidebar-tab {
@@ -336,13 +338,13 @@ textarea {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
   width: auto;
-  min-width: 76px;
-  min-height: 62px;
-  padding: 8px 12px;
+  min-width: 68px;
+  min-height: 52px;
+  padding: 7px 10px;
   text-align: center;
-  border-radius: 18px;
+  border-radius: 14px;
   background: var(--surface-soft);
   border-color: var(--line);
   color: var(--ink);
@@ -358,8 +360,8 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   margin: 0;
   color: currentColor;
 }
@@ -370,7 +372,7 @@ textarea {
 }
 
 .app-top-tabs .tab-label {
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   line-height: 1.1;
 }
 
@@ -449,7 +451,8 @@ textarea {
 
 .app-shell.logged-in .main-content {
   min-height: 100vh;
-  padding: 18px 24px 24px;
+  padding: 14px 18px 18px;
+  overflow-x: hidden;
 }
 
 :root[data-theme="light"] .main-content {
@@ -461,24 +464,29 @@ textarea {
 .topbar {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
+  gap: 10px;
   align-items: center;
-  margin-bottom: 20px;
-  padding: 6px 2px 4px;
+  margin-bottom: 12px;
+  padding: 4px 2px;
 }
 
 .topbar-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
 }
 
+.topbar-brand h2 {
+  font-size: 1.05rem;
+  white-space: nowrap;
+}
+
 .topbar-logo {
-  width: 68px;
-  height: 68px;
+  width: 46px;
+  height: 46px;
   object-fit: cover;
-  border-radius: 16px;
+  border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow: 0 10px 22px rgba(0, 0, 0, 0.24);
   flex: 0 0 auto;
@@ -503,12 +511,12 @@ textarea {
 }
 
 .app-shell.logged-in .hero-banner {
-  padding: 12px 18px;
-  margin-bottom: 14px;
+  padding: 8px 14px;
+  margin-bottom: 12px;
 }
 
 .app-shell.logged-in .hero-banner h3 {
-  font-size: 1.55rem;
+  font-size: 1.25rem;
 }
 
 :root[data-theme="light"] .hero-banner {
@@ -3388,9 +3396,14 @@ button.danger {
     order: 2;
     width: 100%;
     justify-content: flex-start;
-    overflow-x: auto;
-    flex-wrap: nowrap;
-    padding-bottom: 4px;
+    overflow-x: visible;
+    flex-wrap: wrap;
+    padding-bottom: 0;
+  }
+
+  .app-top-tabs .sidebar-tab {
+    flex: 1 1 78px;
+    min-width: 0;
   }
 
   .hero-banner {
@@ -3457,10 +3470,25 @@ button.danger {
     padding: 10px 12px;
   }
 
+  .app-top-tabs .sidebar-tab {
+    flex: 1 1 58px;
+    padding: 6px 6px;
+    min-height: 48px;
+  }
+
+  .app-top-tabs .tab-label {
+    font-size: 0.66rem;
+  }
+
+  .app-top-tabs .tab-icon {
+    width: 18px;
+    height: 18px;
+  }
+
   .topbar-logo {
-    width: 56px;
-    height: 56px;
-    border-radius: 14px;
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
   }
 
   .weekday {
@@ -3475,11 +3503,15 @@ button.danger {
 
   .topbar {
     flex-wrap: wrap;
-    align-items: flex-start;
+    align-items: center;
   }
 
   .topbar-brand {
-    width: 100%;
+    width: auto;
+  }
+
+  .topbar-brand h2 {
+    font-size: 0.95rem;
   }
 
   .hero-banner {
@@ -3689,11 +3721,29 @@ button.danger {
 
 @media (max-width: 520px) {
   .main-content {
-    padding: 12px;
+    padding: 10px;
   }
 
-  .horizontal-tabs .sidebar-tab {
+  .horizontal-tabs:not(.app-top-tabs) .sidebar-tab {
     flex: 1 1 100%;
+  }
+
+  .app-top-tabs {
+    gap: 5px;
+  }
+
+  .app-top-tabs .sidebar-tab {
+    flex: 1 1 calc(20% - 5px);
+    min-width: 0;
+    padding-inline: 4px;
+  }
+
+  .app-top-tabs .tab-label {
+    font-size: 0.6rem;
+  }
+
+  .topbar-brand h2 {
+    font-size: 0.86rem;
   }
 
   .google-calendar-actions .pill,
