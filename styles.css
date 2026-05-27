@@ -1115,6 +1115,10 @@ button.danger {
 }
 
 .invoice-subtabs button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border: 0;
   border-radius: 999px;
   background: transparent;
@@ -1124,10 +1128,45 @@ button.danger {
   padding-inline: 14px;
 }
 
+.invoice-subtabs .section-tab .tab-icon {
+  width: 19px;
+  height: 19px;
+}
+
+.invoice-subtabs .section-tab strong {
+  font: inherit;
+  font-weight: 700;
+}
+
 .invoice-subtabs button.is-active {
   background: var(--panel-strong);
   color: var(--ink);
   box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
+}
+
+.floating-create-button {
+  position: fixed;
+  right: clamp(18px, 3vw, 34px);
+  bottom: clamp(18px, 3vw, 34px);
+  z-index: 24;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.72);
+  background: #a52613;
+  color: #fff;
+  font-size: 2.5rem;
+  line-height: 1;
+  font-weight: 500;
+  box-shadow: 0 14px 32px rgba(165, 38, 19, 0.32), 0 6px 16px rgba(0, 0, 0, 0.18);
+}
+
+.floating-create-button:hover {
+  transform: translateY(-1px);
+  background: #8f1f10;
 }
 
 .dirty-tab-badge {
@@ -3509,6 +3548,18 @@ button.danger {
     border-radius: 10px;
   }
 
+  .invoice-subtabs {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    border-radius: 18px;
+  }
+
+  .invoice-subtabs button {
+    flex: 1 1 130px;
+    min-width: 0;
+  }
+
   .weekday {
     padding: 2px 4px;
     font-size: 0.68rem;
@@ -3762,6 +3813,14 @@ button.danger {
 
   .topbar-brand h2 {
     font-size: 0.86rem;
+  }
+
+  .floating-create-button {
+    width: 56px;
+    height: 56px;
+    right: 16px;
+    bottom: 16px;
+    font-size: 2.2rem;
   }
 
   .google-calendar-actions .pill,

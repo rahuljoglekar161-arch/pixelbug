@@ -1935,7 +1935,7 @@ function seedState() {
       documentPayoutClient: "all",
       invoiceDraftShowIds: [],
       invoiceDraftTemplate: null,
-      invoiceSubtab: "create",
+      invoiceSubtab: "register",
       markPaymentInvoiceId: null,
       clientsPage: 1,
       clientsPageSize: 10,
@@ -2549,7 +2549,7 @@ function ensureUiState() {
   }
 
   if (!state.ui.invoiceSubtab) {
-    state.ui.invoiceSubtab = "create";
+    state.ui.invoiceSubtab = "register";
   }
 
   if (!Object.prototype.hasOwnProperty.call(state.ui, "markPaymentInvoiceId")) {
@@ -2846,6 +2846,10 @@ function canSeeOperatorAmount(user, assignment) {
 }
 
 function filterShowsBySelectedCrew(shows) {
+  const user = getCurrentUser();
+  if (user?.role === "crew") {
+    return shows;
+  }
   if (!state.ui.selectedCrewFilter || state.ui.selectedCrewFilter === "all") {
     return shows;
   }
@@ -3789,11 +3793,27 @@ function getTabIcon(icon) {
     calendar: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="3" ${common}/><path d="M16 2v4M8 2v4M3 10h18" ${common}/></svg>`,
     shows: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z" ${common}/><path d="M8 5v14M16 5v14M4 9h4M16 9h4M4 15h4M16 15h4" ${common}/></svg>`,
     invoice: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10l3 3v15H7z" ${common}/><path d="M14 3v5h5M9 13h6M9 17h4" ${common}/></svg>`,
+    list: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13" ${common}/><path d="M3 6h.01M3 12h.01M3 18h.01" ${common}/></svg>`,
+    payments: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z" ${common}/><path d="M2 10h20M7 15h.01M11 15h3" ${common}/></svg>`,
+    archive: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v5H3zM5 9v11h14V9" ${common}/><path d="M10 13h4" ${common}/></svg>`,
     clients: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" ${common}/><circle cx="9.5" cy="7" r="4" ${common}/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" ${common}/></svg>`,
     crew: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" ${common}/><circle cx="9" cy="7" r="4" ${common}/><path d="M23 21v-2a4 4 0 0 0-3-3.87" ${common}/></svg>`,
     settings: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5z" ${common}/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.08a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.08a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.08a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.16.6.69 1 1.55 1H21a2 2 0 1 1 0 4h-.08a1.7 1.7 0 0 0-1.52 1z" ${common}/></svg>`
   };
   return icons[icon] || icons.settings;
+}
+
+function renderIconTab({ active, dataset, value, icon, label }) {
+  return `
+    <button type="button" class="section-tab ${active ? "is-active" : ""}" ${dataset}="${value}">
+      <span class="tab-icon" aria-hidden="true">${getTabIcon(icon)}</span>
+      <strong>${label}</strong>
+    </button>
+  `;
+}
+
+function renderCreateFab(label) {
+  return `<button type="button" class="floating-create-button" data-floating-create title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">+</button>`;
 }
 
 function wireAuthForms() {
@@ -4026,27 +4046,22 @@ function renderProfileSettingsPanel(user) {
   const panel = document.getElementById("profileSettingsPanel");
   if (!panel || !user) return;
 
-  const themePreference = state.ui.themePreference || DEFAULT_THEME_PREFERENCE;
-  const themeButtonLabel = themePreference === "light"
-    ? "Light Mode"
-    : themePreference === "dark"
-      ? "Dark Mode"
-      : "Auto Theme";
-
   panel.innerHTML = `
-    <div class="settings-profile-grid">
-      <div class="detail-card profile-settings-card">
-        <div class="toolbar spread">
-          <div>
-            <h4>${escapeHtml(user.name)}</h4>
-            <p class="muted-note">${escapeHtml(user.email)} - ${getRoleLabel(user.role)}</p>
-          </div>
-          <button type="button" class="ghost small" id="themeCycleButton">Theme: ${themeButtonLabel}</button>
-        </div>
-        <div class="profile-menu-info">
-          <div class="meta-line">Phone: ${escapeHtml(user.phone || "-")}</div>
-        </div>
+    <div class="detail-card profile-settings-card">
+      <div>
+        <h4>${escapeHtml(user.name)}</h4>
+        <p class="muted-note">Role: ${getRoleLabel(user.role)}</p>
+      </div>
         <form id="profilePreferencesForm" class="stack tight profile-menu-form">
+          <label>
+            <span>Email</span>
+            <input type="email" name="email" value="${escapeHtml(user.email || "")}" required autocomplete="email">
+          </label>
+          <p class="muted-note">Changing email will sign this account out and send it back for admin approval.</p>
+          <label>
+            <span>Phone</span>
+            <input type="text" name="phone" value="${escapeHtml(user.phone || "")}" autocomplete="tel">
+          </label>
           <label>
             <span>Meal Preference</span>
             <select name="mealPreference">
@@ -4063,64 +4078,98 @@ function renderProfileSettingsPanel(user) {
           <button type="submit" class="secondary">Save Preferences</button>
           <div id="profilePreferencesMessage" class="message"></div>
         </form>
-      </div>
-      <div class="detail-card profile-settings-card">
-        <div class="profile-menu-tabs">
-          <button type="button" class="ghost small ${state.ui.authPanelMode === "profile" ? "is-active" : ""}" id="profilePanelButton">Info</button>
-          <button type="button" class="ghost small ${state.ui.authPanelMode === "password" ? "is-active" : ""}" id="passwordPanelButton">Password</button>
-        </div>
-        ${state.ui.authPanelMode === "password" ? `
-          <form id="changePasswordForm" class="stack tight profile-menu-form">
-            <label>
-              <span>Current Password</span>
-              <input type="password" name="currentPassword" required>
-            </label>
-            <label>
-              <span>New Password</span>
-              <input type="password" name="newPassword" minlength="8" required>
-            </label>
-            <label>
-              <span>Confirm New Password</span>
-              <input type="password" name="confirmPassword" minlength="8" required>
-            </label>
-            <p class="muted-note">Use 8+ characters with uppercase, lowercase, and a number.</p>
-            <button type="submit" class="secondary">Update Password</button>
-            <div id="changePasswordMessage" class="message"></div>
-          </form>
-        ` : `
-          <div class="stack tight">
-            <p class="muted-note">Profile, password, theme, and logout now live here in Settings.</p>
-            <button type="button" class="secondary small" id="logoutButton">Logout</button>
-          </div>
-        `}
-      </div>
     </div>
   `;
 
-  document.getElementById("profilePanelButton")?.addEventListener("click", () => {
-    state.ui.authPanelMode = "profile";
-    saveState(state);
-    renderProfileSettingsPanel(user);
-  });
+  const profilePreferencesForm = document.getElementById("profilePreferencesForm");
+  if (profilePreferencesForm) {
+    profilePreferencesForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(profilePreferencesForm);
+      const message = document.getElementById("profilePreferencesMessage");
+      const nextEmail = form.get("email").toString().trim().toLowerCase();
+      const emailChanged = nextEmail !== String(user.email || "").toLowerCase();
+      try {
+        const payload = await apiRequest("/api/profile", {
+          method: "POST",
+          body: JSON.stringify({
+            email: nextEmail,
+            phone: form.get("phone").toString(),
+            mealPreference: form.get("mealPreference").toString(),
+            seatPreference: form.get("seatPreference").toString()
+          })
+        });
+        applyServerState(payload);
+        saveState(state);
+        render();
+        showToast(emailChanged ? "Email updated. Please wait for admin approval before logging in again." : "Preferences saved.");
+      } catch (error) {
+        message.textContent = error.message;
+      }
+    });
+  }
+}
 
-  document.getElementById("passwordPanelButton")?.addEventListener("click", () => {
-    state.ui.authPanelMode = "password";
-    saveState(state);
-    renderProfileSettingsPanel(user);
+function renderThemeSettingsPanel() {
+  const panel = document.getElementById("themeSettingsPanel");
+  if (!panel) return;
+  const themePreference = state.ui.themePreference || DEFAULT_THEME_PREFERENCE;
+  panel.innerHTML = `
+    <div class="detail-card profile-settings-card">
+      <div>
+        <h4>Theme</h4>
+        <p class="muted-note">Choose how the dashboard should look on this device.</p>
+      </div>
+      <div class="invoice-subtabs theme-choice-row" role="tablist" aria-label="Theme">
+        ${["light", "system", "dark"].map((theme) => renderIconTab({
+          active: themePreference === theme,
+          dataset: "data-theme-choice",
+          value: theme,
+          icon: theme === "dark" ? "settings" : "calendar",
+          label: theme === "light" ? "Light Mode" : theme === "dark" ? "Dark Mode" : "Auto Theme"
+        })).join("")}
+      </div>
+    </div>
+  `;
+  panel.querySelectorAll("[data-theme-choice]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ui.themePreference = button.dataset.themeChoice || DEFAULT_THEME_PREFERENCE;
+      saveState(state);
+      applyThemeFromState();
+      renderThemeSettingsPanel();
+    });
   });
+}
 
-  document.getElementById("themeCycleButton")?.addEventListener("click", () => {
-    const current = state.ui.themePreference || DEFAULT_THEME_PREFERENCE;
-    const next = current === "light"
-      ? "system"
-      : current === "system"
-        ? "dark"
-        : "light";
-    state.ui.themePreference = next;
-    saveState(state);
-    applyThemeFromState();
-    renderProfileSettingsPanel(user);
-  });
+function renderPasswordSettingsPanel(user) {
+  const panel = document.getElementById("passwordSettingsPanel");
+  if (!panel || !user) return;
+  panel.innerHTML = `
+    <div class="detail-card profile-settings-card">
+      <div>
+        <h4>Password Reset</h4>
+        <p class="muted-note">Update your password or logout from this device.</p>
+      </div>
+      <form id="changePasswordForm" class="stack tight profile-menu-form">
+        <label>
+          <span>Current Password</span>
+          <input type="password" name="currentPassword" required>
+        </label>
+        <label>
+          <span>New Password</span>
+          <input type="password" name="newPassword" minlength="8" required>
+        </label>
+        <label>
+          <span>Confirm New Password</span>
+          <input type="password" name="confirmPassword" minlength="8" required>
+        </label>
+        <p class="muted-note">Use 8+ characters with uppercase, lowercase, and a number.</p>
+        <button type="submit" class="secondary">Update Password</button>
+        <div id="changePasswordMessage" class="message"></div>
+      </form>
+      <button type="button" class="ghost small" id="logoutButton">Logout</button>
+    </div>
+  `;
 
   const changePasswordForm = document.getElementById("changePasswordForm");
   if (changePasswordForm) {
@@ -4150,31 +4199,6 @@ function renderProfileSettingsPanel(user) {
     });
   }
 
-  const profilePreferencesForm = document.getElementById("profilePreferencesForm");
-  if (profilePreferencesForm) {
-    profilePreferencesForm.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const form = new FormData(profilePreferencesForm);
-      const message = document.getElementById("profilePreferencesMessage");
-      try {
-        const payload = await apiRequest("/api/profile", {
-          method: "POST",
-          body: JSON.stringify({
-            mealPreference: form.get("mealPreference").toString(),
-            seatPreference: form.get("seatPreference").toString()
-          })
-        });
-        applyServerState(payload);
-        saveState(state);
-        renderProfileSettingsPanel(getCurrentUser());
-        const nextMessage = document.getElementById("profilePreferencesMessage");
-        if (nextMessage) nextMessage.textContent = "Preferences saved.";
-      } catch (error) {
-        message.textContent = error.message;
-      }
-    });
-  }
-
   document.getElementById("logoutButton")?.addEventListener("click", () => {
     apiRequest("/api/logout", { method: "POST" })
       .then(() => {
@@ -4190,6 +4214,8 @@ function renderProfileSettingsPanel(user) {
 function getSettingsTabs(user) {
   return [
     { id: "profile", label: "Profile", icon: "settings" },
+    { id: "theme", label: "Theme", icon: "settings" },
+    { id: "password", label: "Password Reset", icon: "settings" },
     ...(canAccessInvoices(user) ? [{ id: "documents", label: "Documents", icon: "invoice" }] : []),
     ...(isAdmin(user) ? [
       { id: "google", label: "Google Calendar", icon: "calendar" },
@@ -4260,6 +4286,18 @@ function renderSettingsPanel(user) {
   if (state.ui.settingsSubtab === "activity" && isAdmin(user)) {
     subpanel.innerHTML = `<div id="activityPanel"></div>`;
     renderActivityPanel();
+    return;
+  }
+
+  if (state.ui.settingsSubtab === "theme") {
+    subpanel.innerHTML = `<div id="themeSettingsPanel"></div>`;
+    renderThemeSettingsPanel();
+    return;
+  }
+
+  if (state.ui.settingsSubtab === "password") {
+    subpanel.innerHTML = `<div id="passwordSettingsPanel"></div>`;
+    renderPasswordSettingsPanel(user);
     return;
   }
 
@@ -4345,7 +4383,8 @@ function renderDashboard() {
   renderLegend(user);
 }
 
-function renderCalendarToolbarControls() {
+function renderCalendarToolbarControls(user) {
+  const showCrewFilter = user?.role !== "crew";
   return `
     <div class="calendar-toolbar-controls">
       <div class="calendar-left-group">
@@ -4360,9 +4399,9 @@ function renderCalendarToolbarControls() {
         <button type="button" class="ghost small calendar-nav-button" data-range-nav="today">Today</button>
         <button type="button" class="ghost small calendar-nav-button" data-range-nav="next">Next</button>
       </div>
-      <div class="calendar-filter-group">
+      ${showCrewFilter ? `<div class="calendar-filter-group">
         ${renderCrewFilterControl("calendarCrewFilter", { label: "Crew", allLabel: "All Crew", compact: true, includeUnassigned: true })}
-      </div>
+      </div>` : ""}
     </div>
   `;
 }
@@ -4446,7 +4485,7 @@ function renderCalendar(user, shows) {
         <h3>${monthLabel(state.view.year, state.view.month)}</h3>
         <p class="muted-note">Shows are tinted by assigned crew color. Switch to week or day for time lanes.</p>
       </div>
-      ${renderCalendarToolbarControls()}
+      ${renderCalendarToolbarControls(user)}
     </div>
     <div class="calendar-grid">
       ${weekdayLabels.map((day) => `<div class="weekday">${day}</div>`).join("")}
@@ -4648,7 +4687,7 @@ function renderWeekCalendar(user, shows) {
         <h3>${getVisibleRangeLabel()}</h3>
         <p class="muted-note">Week view shows one shared weekly board with broader strips for assigned entries.</p>
       </div>
-      ${renderCalendarToolbarControls()}
+      ${renderCalendarToolbarControls(user)}
     </div>
     <section class="week-board">
       <div class="week-board-headers">
@@ -4752,7 +4791,7 @@ function renderDayCalendar(user, shows) {
         <h3>${getVisibleRangeLabel()}</h3>
         <p class="muted-note">Day view shows all entries for the selected date in a list.</p>
       </div>
-      ${renderCalendarToolbarControls()}
+      ${renderCalendarToolbarControls(user)}
     </div>
     <section class="panel day-list-panel">
       <div class="lane-day-header single day-view-header ${focusKey === dateKey(new Date()) ? "today" : ""}">
@@ -4930,6 +4969,7 @@ function renderLegend(user) {
 
 function renderShowsList(user, shows, sourceShows = shows) {
   const panel = document.getElementById("showsListPanel") || document.getElementById("showsPanel");
+  const isCrewUser = user?.role === "crew";
   const showSearchQuery = String(state.ui.showSearchQuery || "").trim().toLowerCase();
   const todayKey = dateKey(new Date());
   const groupedShows = shows.reduce((groups, show) => {
@@ -4991,7 +5031,12 @@ function renderShowsList(user, shows, sourceShows = shows) {
   const uninvoicedShows = filteredShows.filter((show) => !invoicedShowIds.has(show.id));
   const currentShows = uninvoicedShows.filter((show) => getShowStartDate(show) <= todayKey && getShowEndDate(show) >= todayKey);
   const upcomingShows = uninvoicedShows.filter((show) => getShowStartDate(show) > todayKey);
-  const pastShows = uninvoicedShows.filter((show) => getShowEndDate(show) < todayKey);
+  const pastShows = isCrewUser
+    ? filteredShows.filter((show) => getShowEndDate(show) < todayKey || invoicedShowIds.has(show.id))
+    : uninvoicedShows.filter((show) => getShowEndDate(show) < todayKey);
+  if (isCrewUser && state.ui.showTimelineMode === "archived") {
+    state.ui.showTimelineMode = "past";
+  }
   const timelineMode = state.ui.showTimelineMode || "active";
   const visibleShows = timelineMode === "archived"
     ? sortShows(archivedShows, state.ui.showSortMode)
@@ -5007,7 +5052,9 @@ function renderShowsList(user, shows, sourceShows = shows) {
   const showPagination = getPaginationSlice(visibleShows, "showsPage", "showsPageSize");
   const pagedCurrentShows = showPagination.items.filter((show) => getShowStartDate(show) <= todayKey && getShowEndDate(show) >= todayKey);
   const pagedUpcomingShows = showPagination.items.filter((show) => getShowStartDate(show) > todayKey);
-  const pagedPastShows = showPagination.items.filter((show) => getShowEndDate(show) < todayKey);
+  const pagedPastShows = timelineMode === "past"
+    ? showPagination.items
+    : showPagination.items.filter((show) => getShowEndDate(show) < todayKey);
   const timelineTitle = timelineMode === "archived"
     ? `Archived · ${activeMonthLabel}`
     : timelineMode === "past"
@@ -5028,7 +5075,7 @@ function renderShowsList(user, shows, sourceShows = shows) {
             </label>
             <button type="button" class="secondary search-submit-button" id="applyShowSearchButton">Search</button>
           </div>
-          <div class="shows-toolbar-top">
+          ${isCrewUser ? "" : `<div class="shows-toolbar-top">
             ${renderCrewFilterControl("showsCrewFilter", { includeUnassigned: true })}
             <label class="sort-control">
               <span>Year</span>
@@ -5052,7 +5099,7 @@ function renderShowsList(user, shows, sourceShows = shows) {
                 <option value="client" ${state.ui.showSortMode === "client" ? "selected" : ""}>Client</option>
               </select>
             </label>
-          </div>
+          </div>`}
           ${isAdmin(user) ? `
             <div class="shows-selection-toolbar">
               <button type="button" class="secondary" id="createInvoiceFromShowsButton">Create Invoice From Selected</button>
@@ -5061,10 +5108,10 @@ function renderShowsList(user, shows, sourceShows = shows) {
           ` : ""}
         </div>
         <section class="month-group">
-          <div class="invoice-subtabs" role="tablist" aria-label="Show timeline">
-            <button type="button" class="${timelineMode === "active" ? "is-active" : ""}" data-show-timeline="active">Current & Upcoming</button>
-            <button type="button" class="${timelineMode === "past" ? "is-active" : ""}" data-show-timeline="past">Past Shows</button>
-            <button type="button" class="${timelineMode === "archived" ? "is-active" : ""}" data-show-timeline="archived">Archived</button>
+      <div class="invoice-subtabs" role="tablist" aria-label="Show timeline">
+            ${renderIconTab({ active: timelineMode === "active", dataset: "data-show-timeline", value: "active", icon: "calendar", label: "Current & Upcoming" })}
+            ${renderIconTab({ active: timelineMode === "past", dataset: "data-show-timeline", value: "past", icon: "shows", label: "Past Shows" })}
+            ${isCrewUser ? "" : renderIconTab({ active: timelineMode === "archived", dataset: "data-show-timeline", value: "archived", icon: "archive", label: "Archived" })}
           </div>
           <header class="month-group-header">
             <h4>${timelineTitle}</h4>
@@ -5271,11 +5318,11 @@ function renderShowsPanel(user, shows, sourceShows = shows) {
         </div>
       </div>
       <div class="invoice-subtabs" role="tablist" aria-label="Show sections">
-        <button type="button" class="${activeShowSubtab === "create" ? "is-active" : ""}" data-show-subtab="create">${getDirtyTabLabel("Create Show", "show")}</button>
-        <button type="button" class="${activeShowSubtab === "list" ? "is-active" : ""}" data-show-subtab="list">All Shows</button>
+        ${renderIconTab({ active: activeShowSubtab === "list", dataset: "data-show-subtab", value: "list", icon: "list", label: "All Shows" })}
       </div>
       <section id="showFormPanel" class="${activeShowSubtab === "create" ? "" : "hidden"}"></section>
       <section id="showsListPanel" class="${activeShowSubtab === "list" ? "" : "hidden"}"></section>
+      ${renderCreateFab(isEditing ? "New Show" : "Create Show")}
     </div>
   `;
 
@@ -5295,6 +5342,17 @@ function renderShowsPanel(user, shows, sourceShows = shows) {
       saveState(state);
       renderDashboard();
     });
+  });
+
+  panel.querySelector("[data-floating-create]")?.addEventListener("click", () => {
+    if (!confirmDiscardDirtyForm(activeShowSubtab === "create" ? "start a new show" : "create a show")) {
+      return;
+    }
+    clearDirtyForm();
+    resetEditingState();
+    state.ui.showSubtab = "create";
+    saveState(state);
+    renderDashboard();
   });
 }
 
@@ -6197,9 +6255,8 @@ function renderInvoicesPanel() {
         </div>
       </div>
       <div class="invoice-subtabs" role="tablist" aria-label="Invoice sections">
-        <button type="button" class="${activeInvoiceSubtab === "create" ? "is-active" : ""}" data-invoice-subtab="create">${getDirtyTabLabel("Create Invoice", "invoice")}</button>
-        <button type="button" class="${activeInvoiceSubtab === "register" ? "is-active" : ""}" data-invoice-subtab="register">Invoice Register</button>
-        <button type="button" class="${activeInvoiceSubtab === "payments" ? "is-active" : ""}" data-invoice-subtab="payments">Payments</button>
+        ${renderIconTab({ active: activeInvoiceSubtab === "register", dataset: "data-invoice-subtab", value: "register", icon: "invoice", label: "Invoice Register" })}
+        ${renderIconTab({ active: activeInvoiceSubtab === "payments", dataset: "data-invoice-subtab", value: "payments", icon: "payments", label: "Payments" })}
       </div>
       <div class="stack ${activeInvoiceSubtab === "create" ? "" : "hidden"}" data-invoice-section="create">
         <div class="form-header">
@@ -6504,6 +6561,7 @@ function renderInvoicesPanel() {
         </div>
         ${renderPaginationControls("invoice-payments", paymentReconPagination, "payments")}
       </div>
+      ${renderCreateFab(editingInvoice ? "New Invoice" : "Create Invoice")}
     </div>
   `;
 
@@ -7268,6 +7326,20 @@ function renderInvoicesPanel() {
       saveState(state);
       renderDashboard();
     });
+  });
+
+  panel.querySelector("[data-floating-create]")?.addEventListener("click", () => {
+    if (!confirmDiscardDirtyForm(activeInvoiceSubtab === "create" ? "start a new invoice" : "create an invoice")) {
+      return;
+    }
+    clearDirtyForm();
+    state.ui.editingInvoiceId = null;
+    state.ui.invoiceDraftTemplate = null;
+    state.ui.invoiceDraftShowIds = [];
+    state.ui.invoiceSubtab = "create";
+    state.ui.markPaymentInvoiceId = null;
+    saveState(state);
+    renderDashboard();
   });
 
   const invoicePreviewModal = document.getElementById("invoicePreviewModal");
@@ -8555,8 +8627,7 @@ function renderClientsPanel() {
       </div>
       <div class="clients-subtab-row">
         <div class="invoice-subtabs" role="tablist" aria-label="Client sections">
-          <button type="button" class="${activeClientsSubtab === "create" ? "is-active" : ""}" data-clients-subtab="create">${getDirtyTabLabel("Add Client", "client")}</button>
-          <button type="button" class="${activeClientsSubtab === "list" ? "is-active" : ""}" data-clients-subtab="list">Client List</button>
+          ${renderIconTab({ active: activeClientsSubtab === "list", dataset: "data-clients-subtab", value: "list", icon: "clients", label: "Client List" })}
         </div>
       </div>
       ${activeClientsSubtab === "list" ? `
@@ -8765,6 +8836,7 @@ function renderClientsPanel() {
         </div>
         ${renderPaginationControls("clients", clientPagination, "clients")}
       </div>
+      ${renderCreateFab(selectedClientDetail ? "New Client" : "Add Client")}
     </div>
   `;
 
@@ -8873,6 +8945,18 @@ function renderClientsPanel() {
       saveState(state);
       renderClientsPanel();
     });
+  });
+
+  panel.querySelector("[data-floating-create]")?.addEventListener("click", () => {
+    if (!confirmDiscardDirtyForm(activeClientsSubtab === "create" ? "start a new client" : "add a client")) {
+      return;
+    }
+    clearDirtyForm();
+    clearClientForm();
+    state.ui.selectedClientDetailId = null;
+    state.ui.clientsSubtab = "create";
+    saveState(state);
+    renderClientsPanel();
   });
 
   form.addEventListener("submit", async (event) => {

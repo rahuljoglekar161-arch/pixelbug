@@ -3544,10 +3544,32 @@ async function handleApi(req, res) {
       return true;
     }
 
+    const nextEmail = String(body.email || storedUser.email || "").trim().toLowerCase();
+    const nextPhone = String(body.phone || "").trim().slice(0, 40);
+    const emailChanged = nextEmail && nextEmail !== String(storedUser.email || "").toLowerCase();
+    if (emailChanged && store.users.some((user) => user.id !== storedUser.id && user.email.toLowerCase() === nextEmail)) {
+      sendJson(res, 409, { error: "That email already exists." });
+      return true;
+    }
+
+    if (emailChanged) {
+      storedUser.email = nextEmail;
+      storedUser.emailVerified = false;
+      storedUser.verificationToken = uid("verify");
+      storedUser.approved = false;
+    }
+    storedUser.phone = nextPhone;
     storedUser.mealPreference = String(body.mealPreference || "").trim().slice(0, 80);
     storedUser.seatPreference = String(body.seatPreference || "").trim().slice(0, 120);
     writeStore(store);
-    recordActivity(storedUser, "Updated profile", "Changed meal or seat preferences.");
+    recordActivity(storedUser, "Updated profile", emailChanged ? "Changed email; account requires admin approval again." : "Changed profile preferences.");
+    if (emailChanged) {
+      clearSession(req, res);
+      sendBootstrap(res, store, null, {
+        "Set-Cookie": buildSessionCookie("", 0)
+      }, req);
+      return true;
+    }
     sendBootstrap(res, store, storedUser, {}, req);
     return true;
   }
