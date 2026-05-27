@@ -3467,13 +3467,17 @@ async function handleApi(req, res) {
     const clientIds = new Set(nextClients.map((client) => client.id));
     const nextShows = incomingShows.map(normalizeShow).map((show) => {
       const previousShow = existingShowsById.get(show.id);
+      const previousClientStillExists = Boolean(previousShow?.clientId && clientIds.has(previousShow.clientId));
+      const previousHasLegacyClient = Boolean(
+        previousShow
+        && !previousClientStillExists
+        && String(previousShow.client || "").trim()
+      );
       const resolvedClientId = show.clientId
         || clientIdsByName.get(String(show.client || "").trim().toLowerCase())
-        || (previousShow?.clientId && clientIds.has(previousShow.clientId) ? previousShow.clientId : "");
+        || (previousClientStillExists ? previousShow.clientId : "");
       const shouldPreserveLegacyClient = !resolvedClientId
-        && previousShow
-        && !previousShow.clientId
-        && String(previousShow.client || "").trim()
+        && previousHasLegacyClient
         && !String(show.client || "").trim();
       const filteredShow = {
         ...show,
@@ -3503,9 +3507,15 @@ async function handleApi(req, res) {
       if (show.clientId && clientIds.has(show.clientId)) return false;
       const previousShow = existingShowsById.get(show.id);
       const isLegacyBlankClientShow = previousShow && !show.clientId && !String(show.client || "").trim();
+      const previousClientStillExists = Boolean(previousShow?.clientId && clientIds.has(previousShow.clientId));
+      const previousHasLegacyClient = Boolean(
+        previousShow
+        && !previousClientStillExists
+        && String(previousShow.client || "").trim()
+      );
       const isUnchangedLegacyClientShow = previousShow
         && !show.clientId
-        && !previousShow.clientId
+        && previousHasLegacyClient
         && String(show.client || "").trim()
         && String(show.client || "").trim().toLowerCase() === String(previousShow.client || "").trim().toLowerCase();
       return !(isLegacyBlankClientShow || isUnchangedLegacyClientShow);

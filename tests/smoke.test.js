@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const net = require("node:net");
 const { spawn } = require("node:child_process");
+const { DatabaseSync } = require("node:sqlite");
 
 function getFreePort() {
   return new Promise((resolve, reject) => {
@@ -390,4 +391,111 @@ test("admins can update legacy shows that predate the client master", async (t) 
     assert.equal(payload.shows[0].client, "Legacy Promoter");
     assert.equal(payload.shows[0].clientId, "");
   }
+});
+
+test("admins can update shows with stale client ids", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pixelbug-stale-client-"));
+  const port = await getFreePort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const child = spawn(process.execPath, ["server.js"], {
+    cwd: path.resolve(__dirname, ".."),
+    env: {
+      ...process.env,
+      HOST: "127.0.0.1",
+      PORT: String(port),
+      PIXELBUG_DATA_DIR: tmpRoot,
+      PIXELBUG_STORE_PATH: path.join(tmpRoot, "store.json"),
+      PIXELBUG_DB_PATH: path.join(tmpRoot, "pixelbug.db"),
+      PIXELBUG_OUTBOX_PATH: path.join(tmpRoot, "email-outbox.log")
+    },
+    stdio: "pipe"
+  });
+
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString("utf8");
+  });
+
+  await waitForServer(baseUrl, child);
+
+  t.after(async () => {
+    if (child.exitCode === null) {
+      child.kill("SIGTERM");
+      await new Promise((resolve) => child.once("exit", resolve));
+    }
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  const adminJar = createCookieJar();
+
+  await apiRequest(baseUrl, adminJar, "/api/setup-admin", {
+    method: "POST",
+    body: {
+      name: "Admin User",
+      email: "admin@example.com",
+      phone: "9999999999",
+      password: "AdminPass1",
+      color: "#4285f4"
+    }
+  });
+
+  const staleShow = {
+    id: "show_stale_client",
+    showDate: "2026-05-27",
+    showDateFrom: "2026-05-27",
+    showDateTo: "2026-05-27",
+    showStatus: "confirmed",
+    showName: "Saregama UN40 Music Festival",
+    clientId: "client_missing_from_master",
+    client: "Saregama",
+    venue: "",
+    location: "Mumbai",
+    showTime: "",
+    amountShow: 1000,
+    assignments: []
+  };
+
+  const database = new DatabaseSync(path.join(tmpRoot, "pixelbug.db"));
+  database.prepare(`
+    INSERT INTO shows (
+      id, show_date, show_date_from, show_date_to, show_status, show_name, client_id,
+      client, venue, location, show_time, amount_show, assignments_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    staleShow.id,
+    staleShow.showDate,
+    staleShow.showDateFrom,
+    staleShow.showDateTo,
+    staleShow.showStatus,
+    staleShow.showName,
+    staleShow.clientId,
+    staleShow.client,
+    staleShow.venue,
+    staleShow.location,
+    staleShow.showTime,
+    staleShow.amountShow,
+    JSON.stringify(staleShow.assignments)
+  );
+  database.close();
+
+  const { payload: bootstrapPayload } = await apiRequest(baseUrl, adminJar, "/api/bootstrap");
+  const updatedShow = {
+    ...bootstrapPayload.shows[0],
+    location: "Pune",
+    clientId: "",
+    client: ""
+  };
+  const { response, payload } = await apiRequest(baseUrl, adminJar, "/api/admin/state", {
+    method: "POST",
+    body: {
+      users: bootstrapPayload.users,
+      shows: [updatedShow],
+      clients: bootstrapPayload.clients
+    }
+  });
+
+  assert.equal(response.status, 200, stderr);
+  assert.equal(payload.shows[0].location, "Pune");
+  assert.equal(payload.shows[0].client, "Saregama");
+  assert.equal(payload.shows[0].clientId, "");
 });

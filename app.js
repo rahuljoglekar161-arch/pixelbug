@@ -8765,8 +8765,10 @@ function renderShowForm() {
   const defaultShowDate = !isEditing && state.ui.newShowDate ? state.ui.newShowDate : "";
   const showDateFromValue = isEditing ? getShowStartDate(editingShow) : (draftShow?.showDateFrom || defaultShowDate);
   const showDateToValue = isEditing ? getShowEndDate(editingShow) : (draftShow?.showDateTo || defaultShowDate);
+  const editingClientById = isEditing ? getClientById(editingShow.clientId) : null;
+  const editingClientByName = isEditing ? getClientByName(editingShow.client) : null;
   const selectedClientId = isEditing
-    ? (editingShow.clientId || getClientByName(editingShow.client)?.id || "")
+    ? (editingClientById?.id || editingClientByName?.id || "")
     : (draftShow?.clientId || "");
   const legacyClientName = isEditing && !selectedClientId && String(editingShow.client || "").trim()
     ? String(editingShow.client || "").trim()
