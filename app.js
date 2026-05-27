@@ -2145,7 +2145,10 @@ async function apiRequest(path, options = {}) {
     payload = {};
   }
   if (!response.ok) {
-    throw new Error(payload.error || rawText || "Request failed.");
+    const fallbackMessage = response.status >= 500
+      ? "Server error while saving. Please try again."
+      : `Request failed (${response.status}).`;
+    throw new Error(payload.error || fallbackMessage);
   }
   return payload;
 }
@@ -9197,8 +9200,8 @@ function renderShowForm() {
     const row = document.createElement("div");
     row.className = "assignment-editor-card";
     row.dataset.assignmentRow = "true";
-    const onwardFlightValue = assignment?.onwardFlight ? escapeHtml(JSON.stringify(assignment.onwardFlight)) : "";
-    const returnFlightValue = assignment?.returnFlight ? escapeHtml(JSON.stringify(assignment.returnFlight)) : "";
+    const onwardFlightValue = assignment?.onwardFlight ? JSON.stringify(assignment.onwardFlight) : "";
+    const returnFlightValue = assignment?.returnFlight ? JSON.stringify(assignment.returnFlight) : "";
     const onwardFromCity = deriveInitialLocationChoice(assignment, "onward", "from");
     const onwardToCity = deriveInitialLocationChoice(assignment, "onward", "to");
     const returnFromCity = deriveInitialLocationChoice(assignment, "return", "from");
@@ -9209,7 +9212,7 @@ function renderShowForm() {
           <span>Crew</span>
           <select name="assignmentCrew">
             <option value="">Select crew</option>
-            ${crewOptions.map((crewUser) => `<option value="${crewUser.id}" ${assignment?.crewId === crewUser.id ? "selected" : ""}>${crewUser.name}</option>`).join("")}
+            ${crewOptions.map((crewUser) => `<option value="${escapeHtml(crewUser.id)}" ${assignment?.crewId === crewUser.id ? "selected" : ""}>${escapeHtml(crewUser.name)}</option>`).join("")}
           </select>
         </label>
         <label class="field">
@@ -9218,7 +9221,7 @@ function renderShowForm() {
         </label>
         <label class="field">
           <span>Notes</span>
-          <input type="text" name="assignmentNotes" value="${assignment?.notes ?? ""}" autocomplete="off" data-form-type="other">
+          <input type="text" name="assignmentNotes" value="${escapeHtml(assignment?.notes ?? "")}" autocomplete="off" data-form-type="other">
         </label>
         <div class="assignment-remove-slot">
           <button type="button" class="ghost small remove-assignment">Remove</button>
@@ -9252,10 +9255,10 @@ function renderShowForm() {
             </label>
             <label class="field assignment-sector-field">
               <span>Sector</span>
-              <input type="text" name="assignmentOnwardTravelSector" value="${assignment?.onwardTravelSector ?? ""}" autocomplete="off" data-form-type="other" readonly>
+              <input type="text" name="assignmentOnwardTravelSector" value="${escapeHtml(assignment?.onwardTravelSector ?? "")}" autocomplete="off" data-form-type="other" readonly>
             </label>
           </div>
-          <input type="hidden" name="assignmentOnwardFlight" value="${onwardFlightValue}">
+          <input type="hidden" name="assignmentOnwardFlight">
           <div class="assignment-flight-selected" data-flight-selected="onward"></div>
           <div class="assignment-flight-results" data-flight-results="onward"></div>
         </section>
@@ -9286,16 +9289,18 @@ function renderShowForm() {
             </label>
             <label class="field assignment-sector-field">
               <span>Sector</span>
-              <input type="text" name="assignmentReturnTravelSector" value="${assignment?.returnTravelSector ?? ""}" autocomplete="off" data-form-type="other" readonly>
+              <input type="text" name="assignmentReturnTravelSector" value="${escapeHtml(assignment?.returnTravelSector ?? "")}" autocomplete="off" data-form-type="other" readonly>
             </label>
           </div>
-          <input type="hidden" name="assignmentReturnFlight" value="${returnFlightValue}">
+          <input type="hidden" name="assignmentReturnFlight">
           <div class="assignment-flight-selected" data-flight-selected="return"></div>
           <div class="assignment-flight-results" data-flight-results="return"></div>
         </section>
       </div>
     `;
     assignmentEditor.append(row);
+    row.querySelector('input[name="assignmentOnwardFlight"]').value = onwardFlightValue;
+    row.querySelector('input[name="assignmentReturnFlight"]').value = returnFlightValue;
     enhanceCustomSelects(row);
     row.querySelector(".remove-assignment").addEventListener("click", () => {
       const confirmed = window.confirm("Remove this crew assignment?");
