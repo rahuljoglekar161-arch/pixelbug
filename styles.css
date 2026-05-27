@@ -2387,6 +2387,21 @@ button.danger {
   accent-color: #79afea;
 }
 
+.show-select-chip.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: color-mix(in srgb, var(--surface-soft), #8b93a5 18%);
+}
+
+.show-select-chip.is-disabled input,
+.show-select-chip.is-disabled span {
+  cursor: not-allowed;
+}
+
+.activity-table td {
+  vertical-align: top;
+}
+
 .invoice-line-item-row {
   align-items: end;
 }

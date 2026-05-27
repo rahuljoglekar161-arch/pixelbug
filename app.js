@@ -1853,6 +1853,7 @@ function seedState() {
     shows: [],
     clients: [],
     invoices: [],
+    activities: [],
     currentUserId: null,
     google: {
       configured: false,
@@ -1887,6 +1888,9 @@ function seedState() {
       googleEntriesView: "needsCompletion",
       googleEntriesPage: 1,
       googleEntriesPageSize: 10,
+      activitySearchQuery: "",
+      activityPage: 1,
+      activityPageSize: 25,
       invoiceSearchQuery: "",
       invoiceStatusFilter: "all",
       invoicePaymentFilter: "all",
@@ -2102,6 +2106,18 @@ function normalizeState() {
           : []
       }))
     : [];
+  state.activities = Array.isArray(state.activities)
+    ? state.activities.map((activity) => ({
+        ...activity,
+        id: String(activity.id || "").trim(),
+        userId: String(activity.userId || "").trim(),
+        userName: String(activity.userName || "System").trim() || "System",
+        userRole: String(activity.userRole || "system").trim(),
+        action: String(activity.action || "Activity").trim(),
+        detail: String(activity.detail || "").trim(),
+        createdAt: String(activity.createdAt || "").trim()
+      }))
+    : [];
 }
 
 function saveState(nextState) {
@@ -2121,6 +2137,7 @@ function applyServerState(payload) {
   state.shows = payload.shows || [];
   state.clients = payload.clients || [];
   state.invoices = payload.invoices || [];
+  state.activities = payload.activities || [];
   state.currentUserId = payload.currentUserId || null;
   state.google = payload.google || seedState().google;
   normalizeState();
@@ -2756,7 +2773,8 @@ function getSidebarTabs(user) {
       { id: "clientsPanel", label: "Clients", meta: "Client master and billing info" },
       { id: "documentsPanel", label: "Document Center", meta: "Exports and ledgers" },
       { id: "googleEntriesPanel", label: "Google Calendar", meta: "Imported and synced shows" },
-      { id: "crewAdminPanel", label: "Crew Management", meta: "Add or remove crew" }
+      { id: "crewAdminPanel", label: "Crew Management", meta: "Add or remove crew" },
+      { id: "activityPanel", label: "Activity", meta: "Logins and dashboard changes" }
     ];
   }
 
@@ -4215,6 +4233,12 @@ function renderDashboard() {
     return;
   }
 
+  if (state.ui.activeSidebarTab === "activityPanel" && isAdmin(user)) {
+    singleView.innerHTML = `<section class="panel" id="activityPanel"></section>`;
+    renderActivityPanel();
+    return;
+  }
+
   singleView.innerHTML = `<section class="panel" id="legendPanel"></section>`;
   renderLegend(user);
 }
@@ -5049,9 +5073,10 @@ function renderShowsList(user, shows, sourceShows = shows) {
   const createInvoiceButton = document.getElementById("createInvoiceFromShowsButton");
   const clearInvoiceSelectionButton = document.getElementById("clearInvoiceShowSelectionButton");
   if (createInvoiceButton && isAdmin(user)) {
+    const invoicedShowIdsForSelection = getShowsLinkedToInvoices();
     const getSelectedInvoiceShowIds = () => {
       const validShowIds = new Set(state.shows.map((show) => show.id));
-      return [...new Set(state.ui.invoiceDraftShowIds || [])].filter((showId) => validShowIds.has(showId));
+      return [...new Set(state.ui.invoiceDraftShowIds || [])].filter((showId) => validShowIds.has(showId) && !invoicedShowIdsForSelection.has(showId));
     };
 
     const syncCreateButtonState = () => {
@@ -5068,6 +5093,11 @@ function renderShowsList(user, shows, sourceShows = shows) {
       checkbox.addEventListener("change", () => {
         const { showId } = checkbox.dataset;
         if (!showId) return;
+        if (invoicedShowIdsForSelection.has(showId)) {
+          checkbox.checked = false;
+          showToast("This show has already been billed.");
+          return;
+        }
         const next = new Set(state.ui.invoiceDraftShowIds || []);
         if (checkbox.checked) {
           next.add(showId);
@@ -5086,6 +5116,7 @@ function renderShowsList(user, shows, sourceShows = shows) {
       state.ui.invoiceDraftShowIds = selectedIds;
       state.ui.editingInvoiceId = null;
       state.ui.activeSidebarTab = "invoicesPanel";
+      state.ui.invoiceSubtab = "create";
       saveState(state);
       renderSidebarTabs();
       renderDashboard();
@@ -5267,6 +5298,7 @@ function getFlightTicketMarkup(flight, sector = "", travelDate = "") {
 }
 
 function renderShowCard(show, user, selectedForInvoice = false, options = {}) {
+  const isInvoiced = getShowsLinkedToInvoices().has(show.id);
   const assignments = show.assignments.map((assignment) => {
     const crewUser = getUserById(assignment.crewId);
     const crewName = getAssignmentCrewName(assignment);
@@ -5319,9 +5351,9 @@ function renderShowCard(show, user, selectedForInvoice = false, options = {}) {
         ${isAdmin(user) ? `
           <div class="toolbar">
             ${options.hideInvoiceAction ? "" : `
-              <label class="show-select-chip">
-                <input type="checkbox" data-select-show-for-invoice data-show-id="${show.id}" ${selectedForInvoice ? "checked" : ""}>
-                <span>Bill</span>
+              <label class="show-select-chip ${isInvoiced ? "is-disabled" : ""}" ${isInvoiced ? 'title="Already billed"' : ""}>
+                <input type="checkbox" data-select-show-for-invoice data-show-id="${show.id}" ${selectedForInvoice && !isInvoiced ? "checked" : ""} ${isInvoiced ? "disabled" : ""}>
+                <span>${isInvoiced ? "Billed" : "Bill"}</span>
               </label>
             `}
             <button type="button" class="ghost small" data-duplicate-show="${show.id}">Duplicate</button>
@@ -7454,6 +7486,110 @@ function renderGoogleEntriesPanel(user) {
       showToast(error.message);
     }
   });
+}
+
+function renderActivityPanel() {
+  const panel = document.getElementById("activityPanel");
+  const query = String(state.ui.activitySearchQuery || "").trim().toLowerCase();
+  const activities = [...(state.activities || [])].sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  const filteredActivities = activities.filter((activity) => {
+    const haystack = [
+      activity.userName,
+      activity.userRole,
+      activity.action,
+      activity.detail,
+      activity.createdAt
+    ].join(" ").toLowerCase();
+    return !query || haystack.includes(query);
+  });
+  const activityPagination = getPaginationSlice(filteredActivities, "activityPage", "activityPageSize");
+  const loggedInCount = activities.filter((activity) => activity.action === "Logged in").length;
+  const invoiceCount = activities.filter((activity) => String(activity.action || "").toLowerCase().includes("invoice")).length;
+  const dashboardCount = activities.filter((activity) => String(activity.action || "").toLowerCase().includes("dashboard")).length;
+
+  panel.innerHTML = `
+    <div class="stack">
+      <div class="form-header">
+        <div>
+          <h3>Activity</h3>
+          <p class="muted-note">Track sign-ins and key dashboard changes made by each user.</p>
+        </div>
+        <span class="pill">${activities.length} events</span>
+      </div>
+      <div class="summary-grid">
+        <div class="summary-card">
+          <span class="summary-kicker">Logins</span>
+          <strong>${loggedInCount}</strong>
+          <span class="summary-foot">Successful dashboard sign-ins.</span>
+        </div>
+        <div class="summary-card">
+          <span class="summary-kicker">Invoices</span>
+          <strong>${invoiceCount}</strong>
+          <span class="summary-foot">Invoice creation, update, deletion, and payments.</span>
+        </div>
+        <div class="summary-card">
+          <span class="summary-kicker">Dashboard</span>
+          <strong>${dashboardCount}</strong>
+          <span class="summary-foot">Show, crew, client, or admin state changes.</span>
+        </div>
+      </div>
+      <div class="shows-toolbar">
+        <div class="shows-toolbar-top">
+          <label class="sort-control invoice-search-control">
+            <span>Search Activity</span>
+            <input type="search" id="activitySearchInput" placeholder="User, action, detail" value="${escapeHtml(state.ui.activitySearchQuery || "")}" autocomplete="off">
+          </label>
+          <button type="button" class="secondary search-submit-button" id="applyActivitySearchButton">Search</button>
+        </div>
+      </div>
+      <div class="client-ledger-table-wrap">
+        <table class="client-ledger-table activity-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>User</th>
+              <th>Action</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${activityPagination.items.length ? activityPagination.items.map((activity) => `
+              <tr>
+                <td>${escapeHtml(activity.createdAt ? new Date(activity.createdAt).toLocaleString("en-IN") : "-")}</td>
+                <td>
+                  <strong>${escapeHtml(activity.userName || "System")}</strong>
+                  <div class="meta">${escapeHtml(activity.userRole || "system")}</div>
+                </td>
+                <td><span class="pill">${escapeHtml(activity.action || "Activity")}</span></td>
+                <td>${escapeHtml(activity.detail || "-")}</td>
+              </tr>
+            `).join("") : `
+              <tr>
+                <td colspan="4">No activity found.</td>
+              </tr>
+            `}
+          </tbody>
+        </table>
+      </div>
+      ${renderPaginationControls("activity", activityPagination, "events")}
+    </div>
+  `;
+
+  const activitySearchInput = document.getElementById("activitySearchInput");
+  const applyActivitySearch = () => {
+    state.ui.activitySearchQuery = activitySearchInput?.value || "";
+    state.ui.activityPage = 1;
+    saveState(state);
+    renderActivityPanel();
+  };
+  activitySearchInput?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    applyActivitySearch();
+  });
+  wireReactiveSearchInput(activitySearchInput, applyActivitySearch);
+  document.getElementById("applyActivitySearchButton")?.addEventListener("click", applyActivitySearch);
+  wirePaginationControls(panel, "activity", "activityPage", "activityPageSize", () => renderActivityPanel());
 }
 
 function renderPayoutsPanel() {

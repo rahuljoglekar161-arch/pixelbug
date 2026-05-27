@@ -404,6 +404,16 @@ function ensureDatabase() {
       created_at TEXT NOT NULL,
       FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS activity_log (
+      id TEXT PRIMARY KEY,
+      user_id TEXT,
+      user_name TEXT,
+      user_role TEXT,
+      action TEXT NOT NULL,
+      detail TEXT,
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL
+    );
   `);
 
   const existingTables = new Set(
@@ -485,6 +495,20 @@ function ensureDatabase() {
         note TEXT,
         created_at TEXT NOT NULL,
         FOREIGN KEY(invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+      )
+    `);
+  }
+  if (!existingTables.has("activity_log")) {
+    db.exec(`
+      CREATE TABLE activity_log (
+        id TEXT PRIMARY KEY,
+        user_id TEXT,
+        user_name TEXT,
+        user_role TEXT,
+        action TEXT NOT NULL,
+        detail TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
       )
     `);
   }
@@ -1122,6 +1146,52 @@ function setJsonSetting(key, value) {
     return;
   }
   setSetting(key, JSON.stringify(value));
+}
+
+function getSafeJson(raw, fallback = null) {
+  try {
+    return raw ? JSON.parse(raw) : fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function recordActivity(user, action, detail = "", metadata = {}) {
+  const database = ensureDatabase();
+  const actor = user || {};
+  database.prepare(`
+    INSERT INTO activity_log (
+      id, user_id, user_name, user_role, action, detail, metadata_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    uid("activity"),
+    actor.id || null,
+    actor.name || "System",
+    actor.role || "system",
+    String(action || "Activity").trim(),
+    String(detail || "").trim() || null,
+    JSON.stringify(metadata || {}),
+    new Date().toISOString()
+  );
+}
+
+function readActivities(limit = 250) {
+  const database = ensureDatabase();
+  return database.prepare(`
+    SELECT id, user_id, user_name, user_role, action, detail, metadata_json, created_at
+    FROM activity_log
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(Math.max(1, Math.min(500, Number(limit || 250)))).map((activity) => ({
+    id: activity.id,
+    userId: activity.user_id || "",
+    userName: activity.user_name || "System",
+    userRole: activity.user_role || "system",
+    action: activity.action,
+    detail: activity.detail || "",
+    metadata: getSafeJson(activity.metadata_json, {}),
+    createdAt: activity.created_at
+  }));
 }
 
 function getGoogleTokens() {
@@ -3000,6 +3070,7 @@ function sendBootstrap(res, store, currentUser, extraHeaders = {}, req = null) {
     shows: store.shows,
     clients: store.clients || [],
     invoices: canAccessInvoices(currentUser) ? readInvoices() : [],
+    activities: currentUser?.role === "admin" ? readActivities() : [],
     currentUserId: currentUser?.id || null,
     hasAdmin: hasApprovedAdmin(store),
     google: getGoogleStatus(req)
@@ -3059,6 +3130,7 @@ async function handleApi(req, res) {
     store.users.push(admin);
     writeStore(store);
     const sessionId = createSession(admin.id);
+    recordActivity(admin, "Logged in", "Initial admin account created and signed in.");
     sendBootstrap(res, store, admin, {
       "Set-Cookie": buildSessionCookie(sessionId)
     }, req);
@@ -3082,6 +3154,7 @@ async function handleApi(req, res) {
     }
 
     const sessionId = createSession(user.id);
+    recordActivity(user, "Logged in", "Signed in to the dashboard.");
     sendBootstrap(res, store, user, {
       "Set-Cookie": buildSessionCookie(sessionId)
     }, req);
@@ -3089,6 +3162,9 @@ async function handleApi(req, res) {
   }
 
   if (req.method === "POST" && pathname === "/api/logout") {
+    if (currentUser) {
+      recordActivity(currentUser, "Logged out", "Signed out of the dashboard.");
+    }
     clearSession(req, res);
     sendJson(res, 200, { ok: true }, {
       "Set-Cookie": buildSessionCookie("", 0)
@@ -3273,6 +3349,7 @@ async function handleApi(req, res) {
       const pushedStore = await pushPixelbugShowsToGoogle(req, store);
       const syncedStore = await pullGoogleCalendarIntoStore(req, pushedStore);
       writeStore(syncedStore);
+      recordActivity(currentUser, "Synced Google Calendar", "Pulled and pushed Google Calendar entries.");
       sendBootstrap(res, syncedStore, currentUser, {}, req);
     } catch (error) {
       setSetting(GOOGLE_LAST_ERROR_SETTING_KEY, error.message || "Google sync failed.");
@@ -3470,13 +3547,21 @@ async function handleApi(req, res) {
     storedUser.mealPreference = String(body.mealPreference || "").trim().slice(0, 80);
     storedUser.seatPreference = String(body.seatPreference || "").trim().slice(0, 120);
     writeStore(store);
+    recordActivity(storedUser, "Updated profile", "Changed meal or seat preferences.");
     sendBootstrap(res, store, storedUser, {}, req);
     return true;
   }
 
   if (req.method === "POST" && pathname === "/api/admin/invoices") {
     const body = await readJson(req);
-    saveInvoice(body || {});
+    const isExistingInvoice = Boolean(body?.id && readInvoices().some((invoice) => invoice.id === body.id));
+    const invoiceId = saveInvoice(body || {});
+    recordActivity(
+      currentUser,
+      isExistingInvoice ? "Updated invoice" : "Created invoice",
+      String(body?.invoiceNumber || invoiceId || "").trim(),
+      { invoiceId }
+    );
     sendBootstrap(res, readStore(), currentUser, {}, req);
     return true;
   }
@@ -3489,6 +3574,7 @@ async function handleApi(req, res) {
     }
     const body = await readJson(req);
     addInvoicePayment(invoiceId, body || {});
+    recordActivity(currentUser, "Recorded invoice payment", `Invoice ID ${invoiceId}`, { invoiceId, amount: body?.amount || 0 });
     sendBootstrap(res, readStore(), currentUser, {}, req);
     return true;
   }
@@ -3504,6 +3590,7 @@ async function handleApi(req, res) {
       sendJson(res, 404, { error: "Invoice not found." });
       return true;
     }
+    recordActivity(currentUser, "Deleted invoice", `Invoice ID ${invoiceId}`, { invoiceId });
     sendBootstrap(res, readStore(), currentUser, {}, req);
     return true;
   }
@@ -3567,7 +3654,9 @@ async function handleApi(req, res) {
 
   if (req.method === "POST" && pathname === "/api/admin/clients") {
     const body = await readJson(req);
+    const isExistingClient = Boolean(body?.id && store.clients.some((client) => client.id === body.id));
     saveClient(body || {});
+    recordActivity(currentUser, isExistingClient ? "Updated client" : "Created client", String(body?.name || body?.clientName || "").trim());
     sendBootstrap(res, readStore(), currentUser, {}, req);
     return true;
   }
@@ -3583,6 +3672,7 @@ async function handleApi(req, res) {
       sendJson(res, 404, { error: "Client not found." });
       return true;
     }
+    recordActivity(currentUser, "Deleted client", `Client ID ${clientId}`);
     sendBootstrap(res, readStore(), currentUser, {}, req);
     return true;
   }
@@ -3713,6 +3803,7 @@ async function handleApi(req, res) {
 
     let nextStore = { users: nextUsers, shows: nextShows, clients: nextClients };
     writeStore(nextStore);
+    recordActivity(currentUser, "Updated dashboard data", "Saved users, shows, clients, or assignments.");
 
     const googleStatus = getGoogleStatus(req);
     if (googleStatus.configured && googleStatus.connected) {
