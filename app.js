@@ -1951,6 +1951,7 @@ function seedState() {
         description: "",
         sac: ""
       },
+      settingsSubtab: "profile",
       googleArchiveYear: "all",
       googleArchiveMonth: "all",
       expandedCalendarWeeks: {},
@@ -2596,6 +2597,10 @@ function ensureUiState() {
   state.ui.invoiceLineDefaults.description = String(state.ui.invoiceLineDefaults.description || DEFAULT_INVOICE_PARTICULARS);
   state.ui.invoiceLineDefaults.sac = String(state.ui.invoiceLineDefaults.sac || DEFAULT_INVOICE_SAC);
 
+  if (!state.ui.settingsSubtab) {
+    state.ui.settingsSubtab = "profile";
+  }
+
   if (!state.ui.googleArchiveYear) {
     state.ui.googleArchiveYear = "all";
   }
@@ -2770,31 +2775,29 @@ function showToast(message) {
 function getSidebarTabs(user) {
   if (user && isAdmin(user)) {
     return [
-      { id: "calendarPanel", label: "Calendar", meta: "Month, week, day" },
-      { id: "showsPanel", label: "Shows", meta: "Create and view shows" },
-      { id: "invoicesPanel", label: "Invoices", meta: "Create and track billing" },
-      { id: "clientsPanel", label: "Clients", meta: "Client master and billing info" },
-      { id: "documentsPanel", label: "Document Center", meta: "Exports and ledgers" },
-      { id: "googleEntriesPanel", label: "Google Calendar", meta: "Imported and synced shows" },
-      { id: "crewAdminPanel", label: "Crew Management", meta: "Add or remove crew" },
-      { id: "activityPanel", label: "Activity", meta: "Logins and dashboard changes" }
+      { id: "calendarPanel", label: "Calendar", icon: "calendar" },
+      { id: "showsPanel", label: "Shows", icon: "shows" },
+      { id: "invoicesPanel", label: "Invoices", icon: "invoice" },
+      { id: "clientsPanel", label: "Clients", icon: "clients" },
+      { id: "settingsPanel", label: "Settings", icon: "settings" }
     ];
   }
 
   if (user && isAccounts(user)) {
     return [
-      { id: "calendarPanel", label: "Calendar", meta: "Month, week, day" },
-      { id: "showsPanel", label: "Shows", meta: "View show register" },
-      { id: "invoicesPanel", label: "Invoices", meta: "Billing and collections" },
-      { id: "clientsPanel", label: "Clients", meta: "Client master and billing info" },
-      { id: "documentsPanel", label: "Document Center", meta: "Exports and ledgers" }
+      { id: "calendarPanel", label: "Calendar", icon: "calendar" },
+      { id: "showsPanel", label: "Shows", icon: "shows" },
+      { id: "invoicesPanel", label: "Invoices", icon: "invoice" },
+      { id: "clientsPanel", label: "Clients", icon: "clients" },
+      { id: "settingsPanel", label: "Settings", icon: "settings" }
     ];
   }
 
   return [
-    { id: "calendarPanel", label: "Calendar", meta: "Shared schedule" },
-    { id: "showsPanel", label: "Shows", meta: "Visible entries" },
-    ...(user?.role === "viewer" ? [{ id: "legendPanel", label: "Crew", meta: "Colors and teams" }] : [])
+    { id: "calendarPanel", label: "Calendar", icon: "calendar" },
+    { id: "showsPanel", label: "Shows", icon: "shows" },
+    ...(user?.role === "viewer" ? [{ id: "legendPanel", label: "Crew", icon: "crew" }] : []),
+    { id: "settingsPanel", label: "Settings", icon: "settings" }
   ];
 }
 
@@ -2802,6 +2805,16 @@ function ensureActiveSidebarTab(user) {
   if (state.ui.activeSidebarTab === "showFormPanel") {
     state.ui.activeSidebarTab = "showsPanel";
     state.ui.showSubtab = "create";
+  }
+  const movedSettingsTabs = {
+    documentsPanel: "documents",
+    googleEntriesPanel: "google",
+    crewAdminPanel: "crew",
+    activityPanel: "activity"
+  };
+  if (movedSettingsTabs[state.ui.activeSidebarTab]) {
+    state.ui.settingsSubtab = movedSettingsTabs[state.ui.activeSidebarTab];
+    state.ui.activeSidebarTab = "settingsPanel";
   }
   const tabs = getSidebarTabs(user);
   if (!tabs.some((tab) => tab.id === state.ui.activeSidebarTab)) {
@@ -3741,9 +3754,9 @@ function renderSidebarTabs() {
   ensureActiveSidebarTab(user);
   const tabs = getSidebarTabs(user);
   const markup = tabs.map((tab) => `
-    <button type="button" class="sidebar-tab ${state.ui.activeSidebarTab === tab.id ? "active" : ""}" data-target-panel="${tab.id}">
-      <strong>${tab.label}</strong>
-      <span>${tab.meta}</span>
+    <button type="button" class="sidebar-tab ${state.ui.activeSidebarTab === tab.id ? "active" : ""}" data-target-panel="${tab.id}" title="${escapeHtml(tab.label)}">
+      <span class="tab-icon" aria-hidden="true">${getTabIcon(tab.icon)}</span>
+      <strong class="tab-label">${tab.label}</strong>
     </button>
   `).join("");
 
@@ -3767,6 +3780,19 @@ function renderSidebarTabs() {
       });
     });
   });
+}
+
+function getTabIcon(icon) {
+  const common = `fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"`;
+  const icons = {
+    calendar: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="3" ${common}/><path d="M16 2v4M8 2v4M3 10h18" ${common}/></svg>`,
+    shows: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z" ${common}/><path d="M8 5v14M16 5v14M4 9h4M16 9h4M4 15h4M16 15h4" ${common}/></svg>`,
+    invoice: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10l3 3v15H7z" ${common}/><path d="M14 3v5h5M9 13h6M9 17h4" ${common}/></svg>`,
+    clients: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" ${common}/><circle cx="9.5" cy="7" r="4" ${common}/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" ${common}/></svg>`,
+    crew: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" ${common}/><circle cx="9" cy="7" r="4" ${common}/><path d="M23 21v-2a4 4 0 0 0-3-3.87" ${common}/></svg>`,
+    settings: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5z" ${common}/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.08a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.08a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.08a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.16.6.69 1 1.55 1H21a2 2 0 1 1 0 4h-.08a1.7 1.7 0 0 0-1.52 1z" ${common}/></svg>`
+  };
+  return icons[icon] || icons.settings;
 }
 
 function wireAuthForms() {
@@ -3986,14 +4012,18 @@ function renderColorChoices(selected = null, containerId = "colorChoices", exclu
   });
 }
 
-function renderSessionActions(user) {
+function renderSessionActions() {
   const node = document.getElementById("sessionActions");
   if (profileMenuOutsideHandler) {
     document.removeEventListener("click", profileMenuOutsideHandler);
     profileMenuOutsideHandler = null;
   }
-  node.innerHTML = "";
-  if (!user) return;
+  if (node) node.innerHTML = "";
+}
+
+function renderProfileSettingsPanel(user) {
+  const panel = document.getElementById("profileSettingsPanel");
+  if (!panel || !user) return;
 
   const themePreference = state.ui.themePreference || "system";
   const themeButtonLabel = themePreference === "light"
@@ -4002,83 +4032,80 @@ function renderSessionActions(user) {
       ? "Dark Mode"
       : "Auto Theme";
 
-  node.innerHTML = `
-    <div class="profile-menu-wrap">
-      <button type="button" class="ghost small ${state.ui.authPanelOpen ? "is-active" : ""}" id="profileMenuButton">Hey, ${user.name}</button>
-      ${state.ui.authPanelOpen ? `
-        <div class="profile-menu-panel">
-          <div class="profile-menu-tabs">
-            <button type="button" class="ghost small ${state.ui.authPanelMode === "profile" ? "is-active" : ""}" id="profilePanelButton">Info</button>
-            <button type="button" class="ghost small ${state.ui.authPanelMode === "password" ? "is-active" : ""}" id="passwordPanelButton">Password</button>
-            <button type="button" class="ghost small" id="themeCycleButton">Theme: ${themeButtonLabel}</button>
+  panel.innerHTML = `
+    <div class="settings-profile-grid">
+      <div class="detail-card profile-settings-card">
+        <div class="toolbar spread">
+          <div>
+            <h4>${escapeHtml(user.name)}</h4>
+            <p class="muted-note">${escapeHtml(user.email)} - ${getRoleLabel(user.role)}</p>
           </div>
-          ${state.ui.authPanelMode === "password" ? `
-            <form id="changePasswordForm" class="stack tight profile-menu-form">
-              <label>
-                <span>Current Password</span>
-                <input type="password" name="currentPassword" required>
-              </label>
-              <label>
-                <span>New Password</span>
-                <input type="password" name="newPassword" minlength="8" required>
-              </label>
-              <label>
-                <span>Confirm New Password</span>
-                <input type="password" name="confirmPassword" minlength="8" required>
-              </label>
-              <p class="muted-note">Use 8+ characters with uppercase, lowercase, and a number.</p>
-              <button type="submit" class="secondary">Update Password</button>
-              <div id="changePasswordMessage" class="message"></div>
-            </form>
-          ` : `
-            <form id="profilePreferencesForm" class="stack tight profile-menu-form">
-              <div class="profile-menu-info">
-                <div><strong>${user.name}</strong></div>
-                <div class="meta-line">${user.email}</div>
-                <div class="meta-line">Role: ${getRoleLabel(user.role)}</div>
-                <div class="meta-line">Phone: ${user.phone}</div>
-              </div>
-              <label>
-                <span>Meal Preference</span>
-                <select name="mealPreference">
-                  ${TRAVEL_MEAL_OPTIONS.map((option) => `<option value="${escapeHtml(option)}" ${String(user.mealPreference || "") === option ? "selected" : ""}>${option || "Select meal"}</option>`).join("")}
-                </select>
-              </label>
-              <label>
-                <span>Seat Preference</span>
-                <select name="seatPreference">
-                  ${TRAVEL_SEAT_OPTIONS.map((option) => `<option value="${escapeHtml(option)}" ${String(user.seatPreference || "") === option ? "selected" : ""}>${option || "Select seat"}</option>`).join("")}
-                </select>
-              </label>
-              <p class="muted-note">These are used as defaults in the Travel Master export.</p>
-              <button type="submit" class="secondary">Save Preferences</button>
-              <div id="profilePreferencesMessage" class="message"></div>
-            </form>
-          `}
-          <button type="button" class="secondary small" id="logoutButton">Logout</button>
+          <button type="button" class="ghost small" id="themeCycleButton">Theme: ${themeButtonLabel}</button>
         </div>
-      ` : ""}
+        <div class="profile-menu-info">
+          <div class="meta-line">Phone: ${escapeHtml(user.phone || "-")}</div>
+        </div>
+        <form id="profilePreferencesForm" class="stack tight profile-menu-form">
+          <label>
+            <span>Meal Preference</span>
+            <select name="mealPreference">
+              ${TRAVEL_MEAL_OPTIONS.map((option) => `<option value="${escapeHtml(option)}" ${String(user.mealPreference || "") === option ? "selected" : ""}>${option || "Select meal"}</option>`).join("")}
+            </select>
+          </label>
+          <label>
+            <span>Seat Preference</span>
+            <select name="seatPreference">
+              ${TRAVEL_SEAT_OPTIONS.map((option) => `<option value="${escapeHtml(option)}" ${String(user.seatPreference || "") === option ? "selected" : ""}>${option || "Select seat"}</option>`).join("")}
+            </select>
+          </label>
+          <p class="muted-note">These are used as defaults in the Travel Master export.</p>
+          <button type="submit" class="secondary">Save Preferences</button>
+          <div id="profilePreferencesMessage" class="message"></div>
+        </form>
+      </div>
+      <div class="detail-card profile-settings-card">
+        <div class="profile-menu-tabs">
+          <button type="button" class="ghost small ${state.ui.authPanelMode === "profile" ? "is-active" : ""}" id="profilePanelButton">Info</button>
+          <button type="button" class="ghost small ${state.ui.authPanelMode === "password" ? "is-active" : ""}" id="passwordPanelButton">Password</button>
+        </div>
+        ${state.ui.authPanelMode === "password" ? `
+          <form id="changePasswordForm" class="stack tight profile-menu-form">
+            <label>
+              <span>Current Password</span>
+              <input type="password" name="currentPassword" required>
+            </label>
+            <label>
+              <span>New Password</span>
+              <input type="password" name="newPassword" minlength="8" required>
+            </label>
+            <label>
+              <span>Confirm New Password</span>
+              <input type="password" name="confirmPassword" minlength="8" required>
+            </label>
+            <p class="muted-note">Use 8+ characters with uppercase, lowercase, and a number.</p>
+            <button type="submit" class="secondary">Update Password</button>
+            <div id="changePasswordMessage" class="message"></div>
+          </form>
+        ` : `
+          <div class="stack tight">
+            <p class="muted-note">Profile, password, theme, and logout now live here in Settings.</p>
+            <button type="button" class="secondary small" id="logoutButton">Logout</button>
+          </div>
+        `}
+      </div>
     </div>
   `;
 
-  document.getElementById("profileMenuButton")?.addEventListener("click", () => {
-    state.ui.authPanelOpen = !state.ui.authPanelOpen;
-    saveState(state);
-    renderSessionActions(user);
-  });
-
   document.getElementById("profilePanelButton")?.addEventListener("click", () => {
     state.ui.authPanelMode = "profile";
-    state.ui.authPanelOpen = true;
     saveState(state);
-    renderSessionActions(user);
+    renderProfileSettingsPanel(user);
   });
 
   document.getElementById("passwordPanelButton")?.addEventListener("click", () => {
     state.ui.authPanelMode = "password";
-    state.ui.authPanelOpen = true;
     saveState(state);
-    renderSessionActions(user);
+    renderProfileSettingsPanel(user);
   });
 
   document.getElementById("themeCycleButton")?.addEventListener("click", () => {
@@ -4091,7 +4118,7 @@ function renderSessionActions(user) {
     state.ui.themePreference = next;
     saveState(state);
     applyThemeFromState();
-    renderSessionActions(user);
+    renderProfileSettingsPanel(user);
   });
 
   const changePasswordForm = document.getElementById("changePasswordForm");
@@ -4138,7 +4165,7 @@ function renderSessionActions(user) {
         });
         applyServerState(payload);
         saveState(state);
-        renderSessionActions(getCurrentUser());
+        renderProfileSettingsPanel(getCurrentUser());
         const nextMessage = document.getElementById("profilePreferencesMessage");
         if (nextMessage) nextMessage.textContent = "Preferences saved.";
       } catch (error) {
@@ -4157,21 +4184,86 @@ function renderSessionActions(user) {
       })
       .catch((error) => showToast(error.message));
   });
+}
 
-  if (state.ui.authPanelOpen) {
-    profileMenuOutsideHandler = (event) => {
-      if (!node.contains(event.target)) {
-        state.ui.authPanelOpen = false;
-        saveState(state);
-        renderSessionActions(user);
-      }
-    };
-    window.setTimeout(() => {
-      if (profileMenuOutsideHandler) {
-        document.addEventListener("click", profileMenuOutsideHandler);
-      }
-    }, 0);
+function getSettingsTabs(user) {
+  return [
+    { id: "profile", label: "Profile", icon: "settings" },
+    ...(canAccessInvoices(user) ? [{ id: "documents", label: "Documents", icon: "invoice" }] : []),
+    ...(isAdmin(user) ? [
+      { id: "google", label: "Google Calendar", icon: "calendar" },
+      { id: "crew", label: "Crew Management", icon: "crew" },
+      { id: "activity", label: "Activity", icon: "shows" }
+    ] : [])
+  ];
+}
+
+function renderSettingsPanel(user) {
+  const singleView = document.getElementById("singleView");
+  if (!singleView || !user) return;
+
+  const settingsTabs = getSettingsTabs(user);
+  if (!settingsTabs.some((tab) => tab.id === state.ui.settingsSubtab)) {
+    state.ui.settingsSubtab = settingsTabs[0].id;
   }
+
+  singleView.innerHTML = `
+    <section class="panel settings-panel" id="settingsPanel">
+      <div class="toolbar spread">
+        <div>
+          <h3>Settings</h3>
+          <p class="muted-note">Profile and admin tools are grouped here to keep the main workspace clean.</p>
+        </div>
+      </div>
+      <div class="settings-nav">
+        ${settingsTabs.map((tab) => `
+          <button type="button" class="settings-tab ${state.ui.settingsSubtab === tab.id ? "active" : ""}" data-settings-subtab="${tab.id}">
+            <span class="tab-icon" aria-hidden="true">${getTabIcon(tab.icon)}</span>
+            <strong>${tab.label}</strong>
+          </button>
+        `).join("")}
+      </div>
+      <section class="settings-subpanel" id="settingsSubpanel"></section>
+    </section>
+  `;
+
+  document.querySelectorAll("[data-settings-subtab]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.ui.settingsSubtab = button.dataset.settingsSubtab;
+      saveState(state);
+      renderSettingsPanel(user);
+    });
+  });
+
+  const subpanel = document.getElementById("settingsSubpanel");
+  if (!subpanel) return;
+
+  if (state.ui.settingsSubtab === "documents" && canAccessInvoices(user)) {
+    subpanel.innerHTML = `<div id="documentsPanel"></div>`;
+    renderDocumentCenterPanel();
+    return;
+  }
+
+  if (state.ui.settingsSubtab === "google" && isAdmin(user)) {
+    subpanel.innerHTML = `<div id="googleEntriesPanel"></div>`;
+    renderGoogleEntriesPanel(user);
+    return;
+  }
+
+  if (state.ui.settingsSubtab === "crew" && isAdmin(user)) {
+    subpanel.innerHTML = `<div id="crewAdminPanel"></div>`;
+    renderCrewAdminPanel();
+    return;
+  }
+
+  if (state.ui.settingsSubtab === "activity" && isAdmin(user)) {
+    subpanel.innerHTML = `<div id="activityPanel"></div>`;
+    renderActivityPanel();
+    return;
+  }
+
+  subpanel.innerHTML = `<div id="profileSettingsPanel"></div>`;
+  renderProfileSettingsPanel(user);
 }
 
 function renderDashboard() {
@@ -4216,6 +4308,11 @@ function renderDashboard() {
   if (state.ui.activeSidebarTab === "invoicesPanel" && canAccessInvoices(user)) {
     singleView.innerHTML = `<section class="panel" id="invoicesPanel"></section>`;
     renderInvoicesPanel();
+    return;
+  }
+
+  if (state.ui.activeSidebarTab === "settingsPanel") {
+    renderSettingsPanel(user);
     return;
   }
 

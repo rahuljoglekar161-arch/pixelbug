@@ -158,7 +158,11 @@ textarea {
 }
 
 .app-shell.logged-in {
-  grid-template-columns: 360px 1fr;
+  grid-template-columns: 1fr;
+}
+
+.app-shell.logged-in .sidebar {
+  display: none;
 }
 
 .sidebar {
@@ -254,6 +258,10 @@ textarea {
   display: none;
 }
 
+.app-shell.logged-in .app-top-tabs {
+  display: flex;
+}
+
 .sidebar-tab {
   width: 100%;
   text-align: left;
@@ -270,7 +278,7 @@ textarea {
   display: block;
 }
 
-.sidebar-tab span {
+.sidebar-tab span:not(.tab-icon) {
   margin-top: 4px;
   font-size: 0.82rem;
   color: rgba(245, 248, 252, 0.68);
@@ -288,7 +296,7 @@ textarea {
   color: #1b2633;
 }
 
-:root[data-theme="light"] .sidebar-tab span {
+:root[data-theme="light"] .sidebar-tab span:not(.tab-icon) {
   color: rgba(27, 38, 51, 0.65);
 }
 
@@ -310,9 +318,60 @@ textarea {
   font-size: 0.95rem;
 }
 
-.horizontal-tabs .sidebar-tab span {
+.horizontal-tabs .sidebar-tab span:not(.tab-icon) {
   margin-top: 2px;
   font-size: 0.74rem;
+}
+
+.app-top-tabs {
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+}
+
+.app-top-tabs .sidebar-tab {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: auto;
+  min-width: 76px;
+  min-height: 62px;
+  padding: 8px 12px;
+  text-align: center;
+  border-radius: 18px;
+  background: var(--surface-soft);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+.app-top-tabs .sidebar-tab.active,
+.app-top-tabs .sidebar-tab:hover {
+  background: var(--surface-strong);
+  color: var(--ink);
+}
+
+.tab-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  color: currentColor;
+}
+
+.tab-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.app-top-tabs .tab-label {
+  font-size: 0.78rem;
+  line-height: 1.1;
 }
 
 .sidebar-card,
@@ -388,6 +447,11 @@ textarea {
     radial-gradient(circle at top right, rgba(255, 255, 255, 0.06), transparent 20%);
 }
 
+.app-shell.logged-in .main-content {
+  min-height: 100vh;
+  padding: 18px 24px 24px;
+}
+
 :root[data-theme="light"] .main-content {
   background:
     linear-gradient(180deg, rgba(247, 249, 252, 0.96), rgba(238, 242, 248, 0.94)),
@@ -398,7 +462,7 @@ textarea {
   display: flex;
   justify-content: space-between;
   gap: 16px;
-  align-items: start;
+  align-items: center;
   margin-bottom: 20px;
   padding: 6px 2px 4px;
 }
@@ -421,7 +485,7 @@ textarea {
 }
 
 .app-shell.logged-in .topbar-brand {
-  display: none;
+  display: flex;
 }
 
 .hero-banner {
@@ -436,6 +500,15 @@ textarea {
     rgba(15, 18, 24, 0.88);
   overflow: hidden;
   position: relative;
+}
+
+.app-shell.logged-in .hero-banner {
+  padding: 12px 18px;
+  margin-bottom: 14px;
+}
+
+.app-shell.logged-in .hero-banner h3 {
+  font-size: 1.55rem;
 }
 
 :root[data-theme="light"] .hero-banner {
@@ -506,7 +579,7 @@ textarea {
   align-items: flex-start;
   justify-content: flex-end;
   margin-left: auto;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
 }
 
 .profile-menu-wrap {
@@ -548,6 +621,64 @@ textarea {
 .meta-line {
   color: var(--muted);
   font-size: 0.92rem;
+}
+
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.settings-nav {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 6px;
+  border-radius: 18px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+}
+
+.settings-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 9px 12px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink);
+}
+
+.settings-tab.active,
+.settings-tab:hover {
+  background: var(--surface-strong);
+  border-color: var(--line);
+}
+
+.settings-tab .tab-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.settings-subpanel {
+  min-width: 0;
+}
+
+.settings-subpanel > [id$="Panel"] {
+  min-width: 0;
+}
+
+.settings-profile-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+  gap: 16px;
+}
+
+.profile-settings-card {
+  padding: 18px;
+  min-width: 0;
 }
 
 .view-switch {
@@ -3249,6 +3380,19 @@ button.danger {
     display: flex;
   }
 
+  .topbar {
+    flex-wrap: wrap;
+  }
+
+  .app-top-tabs {
+    order: 2;
+    width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+  }
+
   .hero-banner {
     flex-direction: column;
     align-items: start;
@@ -3256,6 +3400,10 @@ button.danger {
 
   .topbar {
     align-items: center;
+  }
+
+  .settings-profile-grid {
+    grid-template-columns: 1fr;
   }
 
   .form-header {
