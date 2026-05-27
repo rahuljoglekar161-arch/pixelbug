@@ -1,4 +1,5 @@
 const STORAGE_KEY = "pixelbug-calendar-ui-v1";
+const DEFAULT_THEME_PREFERENCE = "light";
 const COLOR_OPTIONS = [
   "#d93025",
   "#f29900",
@@ -1957,16 +1958,16 @@ function seedState() {
       expandedCalendarWeeks: {},
       selectedCalendarShowId: null,
       calendarReturnMode: "month",
-      themePreference: "system",
+      themePreference: DEFAULT_THEME_PREFERENCE,
       authPanelMode: "profile",
       authPanelOpen: false
     }
   };
 }
 
-function buildFreshSessionState(savedThemePreference = "system") {
+function buildFreshSessionState(savedThemePreference = DEFAULT_THEME_PREFERENCE) {
   const freshState = seedState();
-  freshState.ui.themePreference = savedThemePreference || "system";
+  freshState.ui.themePreference = savedThemePreference || DEFAULT_THEME_PREFERENCE;
   return freshState;
 }
 
@@ -1978,7 +1979,7 @@ function loadLocalUiState() {
 
   try {
     const parsed = JSON.parse(raw);
-    const savedThemePreference = parsed?.ui?.themePreference || parsed?.themePreference || "system";
+    const savedThemePreference = parsed?.ui?.themePreference || parsed?.themePreference || DEFAULT_THEME_PREFERENCE;
     return buildFreshSessionState(savedThemePreference);
   } catch (error) {
     return seedState();
@@ -1986,7 +1987,7 @@ function loadLocalUiState() {
 }
 
 function resetUiForNewSession() {
-  const themePreference = state.ui?.themePreference || "system";
+  const themePreference = state.ui?.themePreference || DEFAULT_THEME_PREFERENCE;
   const freshState = buildFreshSessionState(themePreference);
   state.view = freshState.view;
   state.ui = freshState.ui;
@@ -2131,7 +2132,7 @@ function normalizeState() {
 function saveState(nextState) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify({
     ui: {
-      themePreference: nextState.ui?.themePreference || "system"
+      themePreference: nextState.ui?.themePreference || DEFAULT_THEME_PREFERENCE
     }
   }));
 }
@@ -2218,7 +2219,7 @@ function getSystemTheme() {
 }
 
 function applyThemeFromState() {
-  const preference = state.ui?.themePreference || "system";
+  const preference = state.ui?.themePreference || DEFAULT_THEME_PREFERENCE;
   const resolved = preference === "system" ? getSystemTheme() : preference;
   document.documentElement.dataset.theme = resolved;
 }
@@ -2353,7 +2354,7 @@ function ensureUiState() {
       expandedCalendarWeeks: {},
       selectedCalendarShowId: null,
       calendarReturnMode: "month",
-      themePreference: "system",
+      themePreference: DEFAULT_THEME_PREFERENCE,
       authPanelMode: "profile",
       authPanelOpen: false
     };
@@ -2622,7 +2623,7 @@ function ensureUiState() {
   }
 
   if (!state.ui.themePreference) {
-    state.ui.themePreference = "system";
+    state.ui.themePreference = DEFAULT_THEME_PREFERENCE;
   }
 
   if (!state.ui.authPanelMode) {
@@ -4025,7 +4026,7 @@ function renderProfileSettingsPanel(user) {
   const panel = document.getElementById("profileSettingsPanel");
   if (!panel || !user) return;
 
-  const themePreference = state.ui.themePreference || "system";
+  const themePreference = state.ui.themePreference || DEFAULT_THEME_PREFERENCE;
   const themeButtonLabel = themePreference === "light"
     ? "Light Mode"
     : themePreference === "dark"
@@ -4109,7 +4110,7 @@ function renderProfileSettingsPanel(user) {
   });
 
   document.getElementById("themeCycleButton")?.addEventListener("click", () => {
-    const current = state.ui.themePreference || "system";
+    const current = state.ui.themePreference || DEFAULT_THEME_PREFERENCE;
     const next = current === "light"
       ? "system"
       : current === "system"
