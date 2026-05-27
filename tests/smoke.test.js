@@ -271,3 +271,123 @@ test("accounts users can manage invoices but not admin-only routes", async (t) =
     assert.equal(payload.error, "Accounts access is limited to calendar view, shows view, clients, and invoicing.");
   }
 });
+
+test("admins can update legacy shows that predate the client master", async (t) => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pixelbug-legacy-show-"));
+  const port = await getFreePort();
+  const baseUrl = `http://127.0.0.1:${port}`;
+  const child = spawn(process.execPath, ["server.js"], {
+    cwd: path.resolve(__dirname, ".."),
+    env: {
+      ...process.env,
+      HOST: "127.0.0.1",
+      PORT: String(port),
+      PIXELBUG_DATA_DIR: tmpRoot,
+      PIXELBUG_STORE_PATH: path.join(tmpRoot, "store.json"),
+      PIXELBUG_DB_PATH: path.join(tmpRoot, "pixelbug.db"),
+      PIXELBUG_OUTBOX_PATH: path.join(tmpRoot, "email-outbox.log")
+    },
+    stdio: "pipe"
+  });
+
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += chunk.toString("utf8");
+  });
+
+  await waitForServer(baseUrl, child);
+
+  t.after(async () => {
+    if (child.exitCode === null) {
+      child.kill("SIGTERM");
+      await new Promise((resolve) => child.once("exit", resolve));
+    }
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  const adminJar = createCookieJar();
+
+  {
+    const { response } = await apiRequest(baseUrl, adminJar, "/api/setup-admin", {
+      method: "POST",
+      body: {
+        name: "Admin User",
+        email: "admin@example.com",
+        phone: "9999999999",
+        password: "AdminPass1",
+        color: "#4285f4"
+      }
+    });
+    assert.equal(response.status, 200, stderr);
+  }
+
+  const { payload: bootstrapPayload } = await apiRequest(baseUrl, adminJar, "/api/bootstrap");
+  const legacyClientId = "client_legacy_promoter";
+  const legacyShow = {
+    id: "show_legacy_client",
+    showDate: "2026-05-27",
+    showDateFrom: "2026-05-27",
+    showDateTo: "2026-05-27",
+    showStatus: "confirmed",
+    showName: "Krishna",
+    clientId: legacyClientId,
+    client: "Legacy Promoter",
+    venue: "",
+    location: "Mumbai",
+    showTime: "",
+    amountShow: 1000,
+    assignments: []
+  };
+
+  {
+    const { response, payload } = await apiRequest(baseUrl, adminJar, "/api/admin/state", {
+      method: "POST",
+      body: {
+        users: bootstrapPayload.users,
+        shows: [legacyShow],
+        clients: [
+          {
+            id: legacyClientId,
+            name: "Legacy Promoter",
+            billingAddress: "",
+            gstin: "",
+            contactName: "",
+            contactEmail: "",
+            contactPhone: "",
+            notes: ""
+          }
+        ]
+      }
+    });
+    assert.equal(response.status, 200, stderr);
+    assert.equal(payload.shows[0].client, "Legacy Promoter");
+  }
+
+  {
+    const { response } = await apiRequest(baseUrl, adminJar, `/api/admin/clients/${encodeURIComponent(legacyClientId)}?keepHistory=true`, {
+      method: "DELETE"
+    });
+    assert.equal(response.status, 200, stderr);
+  }
+
+  {
+    const { payload: nextBootstrapPayload } = await apiRequest(baseUrl, adminJar, "/api/bootstrap");
+    const updatedShow = {
+      ...nextBootstrapPayload.shows[0],
+      location: "Pune",
+      client: ""
+    };
+    const { response, payload } = await apiRequest(baseUrl, adminJar, "/api/admin/state", {
+      method: "POST",
+      body: {
+        users: nextBootstrapPayload.users,
+        shows: [updatedShow],
+        clients: nextBootstrapPayload.clients
+      }
+    });
+    assert.equal(response.status, 200, stderr);
+    assert.equal(payload.shows[0].location, "Pune");
+    assert.equal(payload.shows[0].client, "Legacy Promoter");
+    assert.equal(payload.shows[0].clientId, "");
+  }
+});

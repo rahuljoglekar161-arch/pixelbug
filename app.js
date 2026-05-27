@@ -2760,7 +2760,7 @@ function getSidebarTabs(user) {
   if (user && isAccounts(user)) {
     return [
       { id: "calendarPanel", label: "Calendar", meta: "Month, week, day" },
-      { id: "showsPanel", label: "Shows", meta: "Create and view shows" },
+      { id: "showsPanel", label: "Shows", meta: "View show register" },
       { id: "invoicesPanel", label: "Invoices", meta: "Billing and collections" },
       { id: "clientsPanel", label: "Clients", meta: "Client master and billing info" },
       { id: "documentsPanel", label: "Document Center", meta: "Exports and ledgers" }
@@ -4878,7 +4878,7 @@ function renderShowsList(user, shows, sourceShows = shows) {
   panel.innerHTML = `
     <div class="stack">
       <div>
-        <h3>${isAdmin(user) ? "All Show Entries" : "Visible Show Entries"}</h3>
+        <h3>${isAdmin(user) ? "All Show Entries" : "Show Register"}</h3>
       </div>
       ${sourceShows.length ? `
         <div class="shows-toolbar">
@@ -8299,8 +8299,8 @@ function renderClientsPanel() {
       </div>
       <div class="clients-subtab-row">
         <div class="invoice-subtabs" role="tablist" aria-label="Client sections">
-          <button type="button" class="${activeClientsSubtab === "create" ? "is-active" : ""}" data-clients-subtab="create">${getDirtyTabLabel("Create Clients", "client")}</button>
-          <button type="button" class="${activeClientsSubtab === "list" ? "is-active" : ""}" data-clients-subtab="list">Clients</button>
+          <button type="button" class="${activeClientsSubtab === "create" ? "is-active" : ""}" data-clients-subtab="create">${getDirtyTabLabel("Add Client", "client")}</button>
+          <button type="button" class="${activeClientsSubtab === "list" ? "is-active" : ""}" data-clients-subtab="list">Client List</button>
         </div>
       </div>
       ${activeClientsSubtab === "list" ? `
@@ -8505,7 +8505,7 @@ function renderClientsPanel() {
                 ${client.notes ? `<div class="meta">${client.notes}</div>` : ""}
               </div>
             </article>
-          `).join("") : `<p>${clients.length ? "No clients match the current search or GST filter." : "No clients yet. Create the first client above."}</p>`}
+          `).join("") : `<p>${clients.length ? "No clients match the current search or GST filter." : "No clients yet. Use Add Client to create the first one."}</p>`}
         </div>
         ${renderPaginationControls("clients", clientPagination, "clients")}
       </div>
@@ -8768,6 +8768,11 @@ function renderShowForm() {
   const selectedClientId = isEditing
     ? (editingShow.clientId || getClientByName(editingShow.client)?.id || "")
     : (draftShow?.clientId || "");
+  const legacyClientName = isEditing && !selectedClientId && String(editingShow.client || "").trim()
+    ? String(editingShow.client || "").trim()
+    : "";
+  const legacyClientOptionValue = legacyClientName ? `legacy:${editingShow.id}` : "";
+  const selectedClientValue = selectedClientId || legacyClientOptionValue;
   const selectedShowStatus = isEditing
     ? (editingShow.showStatus === "tentative" ? "tentative" : "confirmed")
     : (draftShow?.showStatus === "tentative" ? "tentative" : "confirmed");
@@ -8796,7 +8801,8 @@ function renderShowForm() {
             <span>Client</span>
             <select name="clientId" ${clientOptions.length ? "required" : ""} data-searchable="true" data-search-placeholder="Search clients">
               <option value="">${clientOptions.length ? "Select client" : "No clients yet"}</option>
-              ${clientOptions.map((client) => `<option value="${client.id}" ${selectedClientId === client.id ? "selected" : ""}>${escapeHtml(getClientDisplayName(client))}</option>`).join("")}
+              ${legacyClientName ? `<option value="${escapeHtml(legacyClientOptionValue)}" selected>${escapeHtml(`${legacyClientName} (legacy client)`)}</option>` : ""}
+              ${clientOptions.map((client) => `<option value="${client.id}" ${selectedClientValue === client.id ? "selected" : ""}>${escapeHtml(getClientDisplayName(client))}</option>`).join("")}
             </select>
           </label>
           <label class="field">
@@ -9450,12 +9456,18 @@ function renderShowForm() {
       return;
     }
 
-    const selectedClient = getClientById(payload.clientId);
-    if (!selectedClient) {
+    const isLegacyClientSelection = payload.clientId.startsWith("legacy:");
+    const selectedClient = isLegacyClientSelection ? null : getClientById(payload.clientId);
+    if (!selectedClient && !(isLegacyClientSelection && editingShow?.client)) {
       alert("Please select a client from the Clients tab.");
       return;
     }
-    payload.client = selectedClient.name;
+    if (selectedClient) {
+      payload.client = selectedClient.name;
+    } else {
+      payload.clientId = "";
+      payload.client = editingShow.client;
+    }
 
     const existingIndex = state.shows.findIndex((show) => show.id === payload.id);
     if (existingIndex >= 0) {

@@ -3470,10 +3470,19 @@ async function handleApi(req, res) {
       const resolvedClientId = show.clientId
         || clientIdsByName.get(String(show.client || "").trim().toLowerCase())
         || (previousShow?.clientId && clientIds.has(previousShow.clientId) ? previousShow.clientId : "");
+      const shouldPreserveLegacyClient = !resolvedClientId
+        && previousShow
+        && !previousShow.clientId
+        && String(previousShow.client || "").trim()
+        && !String(show.client || "").trim();
       const filteredShow = {
         ...show,
         clientId: resolvedClientId,
-        client: resolvedClientId ? (clientNamesById.get(resolvedClientId) || show.client) : show.client,
+        client: resolvedClientId
+          ? (clientNamesById.get(resolvedClientId) || show.client)
+          : shouldPreserveLegacyClient
+            ? previousShow.client
+            : show.client,
         assignments: show.assignments.filter((assignment) => allowedUserIds.has(assignment.crewId) || assignment.manualCrewName)
       };
       const isNewGoogleEligibleShow = !previousShow && shouldSyncShowWithGoogle(filteredShow);
@@ -3494,7 +3503,12 @@ async function handleApi(req, res) {
       if (show.clientId && clientIds.has(show.clientId)) return false;
       const previousShow = existingShowsById.get(show.id);
       const isLegacyBlankClientShow = previousShow && !show.clientId && !String(show.client || "").trim();
-      return !isLegacyBlankClientShow;
+      const isUnchangedLegacyClientShow = previousShow
+        && !show.clientId
+        && !previousShow.clientId
+        && String(show.client || "").trim()
+        && String(show.client || "").trim().toLowerCase() === String(previousShow.client || "").trim().toLowerCase();
+      return !(isLegacyBlankClientShow || isUnchangedLegacyClientShow);
     });
     if (invalidShow) {
       sendJson(res, 400, { error: `Show "${invalidShow.showName || "Untitled Show"}" must use a client from the client master.` });
