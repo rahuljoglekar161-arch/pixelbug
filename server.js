@@ -43,6 +43,7 @@ const GOOGLE_TOKEN_SETTING_KEY = "google_oauth_tokens";
 const GOOGLE_LAST_SYNC_SETTING_KEY = "google_last_sync_at";
 const GOOGLE_LAST_ERROR_SETTING_KEY = "google_last_sync_error";
 const GOOGLE_SHEET_EXPORT_MAP_SETTING_KEY = "google_sheet_export_map";
+const GOOGLE_SYNC_START_DATE_KEY = "2026-04-01";
 const GOOGLE_SYNC_DEBOUNCE_MS = 1000 * 30;
 const GOOGLE_CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar";
 const GOOGLE_SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
@@ -2151,10 +2152,7 @@ function shiftDateKey(dateStr, days) {
 }
 
 function getGoogleSyncStartDateKey() {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
-    .toISOString()
-    .slice(0, 10);
+  return GOOGLE_SYNC_START_DATE_KEY;
 }
 
 function shouldSyncShowWithGoogle(show) {
