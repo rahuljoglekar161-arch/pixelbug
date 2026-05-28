@@ -1294,6 +1294,10 @@ button.danger {
   box-shadow: var(--shadow-soft);
 }
 
+.floating-create-options[hidden] {
+  display: none;
+}
+
 .floating-create-options button {
   justify-content: center;
   width: 100%;
@@ -2576,6 +2580,12 @@ button.danger {
   flex: 0 0 auto;
 }
 
+.filter-menu[open] {
+  flex: 1 1 100%;
+  width: 100%;
+  align-self: stretch;
+}
+
 .filter-menu > summary {
   list-style: none;
 }
@@ -2611,12 +2621,16 @@ button.danger {
   background: var(--surface-strong);
 }
 
+.filter-menu[open] .filter-toggle-button {
+  width: auto;
+}
+
 .filter-menu-panel {
-  position: absolute;
-  right: 0;
-  top: calc(100% + 8px);
-  z-index: 22;
-  width: min(560px, calc(100vw - 36px));
+  position: static;
+  width: 100%;
+  max-width: none;
+  margin-top: 8px;
+  box-sizing: border-box;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -2636,24 +2650,6 @@ button.danger {
 }
 
 @media (max-width: 720px) {
-  .filter-menu[open] {
-    flex: 1 1 100%;
-    width: 100%;
-    align-self: stretch;
-  }
-
-  .filter-menu[open] .filter-toggle-button {
-    width: auto;
-  }
-
-  .filter-menu-panel {
-    position: static;
-    width: 100%;
-    max-width: none;
-    margin-top: 8px;
-    box-sizing: border-box;
-  }
-
   .filter-menu-panel .shows-toolbar-top {
     align-items: stretch;
     gap: 8px;
