@@ -3171,7 +3171,14 @@ function getPaginationRange(currentPage, totalPages) {
   if (totalPages <= 3) {
     return Array.from({ length: totalPages }, (_, index) => index + 1);
   }
-  return [1, 2, "ellipsis", totalPages];
+  const startPage = Math.min(Math.max(1, currentPage), totalPages - 1);
+  const pages = [startPage, startPage + 1];
+  if (startPage + 1 < totalPages - 1) {
+    pages.push("ellipsis", totalPages);
+  } else if (startPage + 1 < totalPages) {
+    pages.push(totalPages);
+  }
+  return pages;
 }
 
 function getStateFromGstin(gstin) {
