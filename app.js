@@ -3823,6 +3823,9 @@ function getTabIcon(icon) {
     payments: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2z" ${common}/><path d="M2 10h20M7 15h.01M11 15h3" ${common}/></svg>`,
     filter: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M7 12h10M10 19h4" ${common}/></svg>`,
     archive: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v5H3zM5 9v11h14V9" ${common}/><path d="M10 13h4" ${common}/></svg>`,
+    profile: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4" ${common}/><path d="M4 21a8 8 0 0 1 16 0" ${common}/></svg>`,
+    theme: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" ${common}/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" ${common}/></svg>`,
+    password: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 2l-2 2M11.4 11.4 19 3.8" ${common}/><circle cx="8" cy="16" r="5" ${common}/><path d="M8 14v4" ${common}/></svg>`,
     clients: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" ${common}/><circle cx="9.5" cy="7" r="4" ${common}/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" ${common}/></svg>`,
     crew: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" ${common}/><circle cx="9" cy="7" r="4" ${common}/><path d="M23 21v-2a4 4 0 0 0-3-3.87" ${common}/></svg>`,
     settings: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5z" ${common}/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.08a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.08a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.08a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.16.6.69 1 1.55 1H21a2 2 0 1 1 0 4h-.08a1.7 1.7 0 0 0-1.52 1z" ${common}/></svg>`,
@@ -4251,9 +4254,9 @@ function renderPasswordSettingsPanel(user) {
 
 function getSettingsTabs(user) {
   return [
-    { id: "profile", label: "Profile", icon: "settings" },
-    { id: "theme", label: "Theme", icon: "settings" },
-    { id: "password", label: "Password Reset", icon: "settings" },
+    { id: "profile", label: "Profile", icon: "profile" },
+    { id: "theme", label: "Theme", icon: "theme" },
+    { id: "password", label: "Password Reset", icon: "password" },
     ...(canAccessInvoices(user) ? [{ id: "documents", label: "Documents", icon: "invoice" }] : []),
     ...(isAdmin(user) ? [
       { id: "google", label: "Google Calendar", icon: "calendar" },
@@ -7748,6 +7751,7 @@ function renderActivityPanel() {
         <div>
           <h3>Activity</h3>
         </div>
+        <span class="pill">${filteredActivities.length} ${filteredActivities.length === 1 ? "event" : "events"}</span>
       </div>
       <div class="shows-toolbar">
         <div class="shows-toolbar-top">
@@ -8660,6 +8664,7 @@ function renderClientsPanel() {
         <div>
           <h3>Clients</h3>
         </div>
+        <span class="pill">${filteredClients.length} ${filteredClients.length === 1 ? "client" : "clients"}</span>
       </div>
       ${activeClientsSubtab === "list" ? `
         <div class="shows-toolbar-top clients-search-toolbar">

@@ -807,11 +807,12 @@ textarea {
   gap: 8px;
   margin-bottom: 0;
   padding-bottom: 0;
+  align-items: center;
 }
 
 .app-shell.logged-in .form-header h3,
 .app-shell.logged-in .form-header h4 {
-  margin-bottom: 2px;
+  margin-bottom: 0;
 }
 
 .app-shell.logged-in .form-header .muted-note {
@@ -2776,6 +2777,20 @@ button.danger {
   min-width: min(100%, 280px);
 }
 
+.app-shell.logged-in .form-header > div:first-child {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.app-shell.logged-in .form-header > .toolbar,
+.app-shell.logged-in .form-header > .pill {
+  flex: 0 0 auto;
+}
+
+.app-shell.logged-in .form-header .pill {
+  white-space: nowrap;
+}
+
 .form-header .muted-note {
   margin-top: 6px;
 }
@@ -3714,7 +3729,23 @@ button.danger {
   }
 
   .form-header {
-    flex-direction: column;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .app-shell.logged-in .stack {
+    gap: 7px;
+  }
+
+  .app-shell.logged-in .panel > .stack {
+    padding: 4px 6px;
+  }
+
+  .app-shell.logged-in .show-card,
+  .app-shell.logged-in .detail-card,
+  .app-shell.logged-in .assignment-card {
+    padding: 12px;
   }
 
   .google-calendar-topbar,
