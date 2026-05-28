@@ -1909,6 +1909,8 @@ function seedState() {
       paymentReconClient: "all",
       paymentReconPage: 1,
       paymentReconPageSize: 10,
+      quoteRegisterPage: 1,
+      quoteRegisterPageSize: 10,
       payoutSearchQuery: "",
       payoutYear: "all",
       payoutMonth: "all",
@@ -1936,6 +1938,7 @@ function seedState() {
       invoiceDraftShowIds: [],
       invoiceDraftTemplate: null,
       invoiceSubtab: "register",
+      invoiceDocumentType: "invoice",
       markPaymentInvoiceId: null,
       clientsPage: 1,
       clientsPageSize: 10,
@@ -2551,6 +2554,15 @@ function ensureUiState() {
   if (!state.ui.invoiceSubtab) {
     state.ui.invoiceSubtab = "register";
   }
+  if (!["invoice", "quote"].includes(state.ui.invoiceDocumentType)) {
+    state.ui.invoiceDocumentType = "invoice";
+  }
+  if (!Number.isFinite(Number(state.ui.quoteRegisterPage)) || Number(state.ui.quoteRegisterPage) < 1) {
+    state.ui.quoteRegisterPage = 1;
+  }
+  if (!Number.isFinite(Number(state.ui.quoteRegisterPageSize)) || Number(state.ui.quoteRegisterPageSize) < 1) {
+    state.ui.quoteRegisterPageSize = 10;
+  }
 
   if (!Object.prototype.hasOwnProperty.call(state.ui, "markPaymentInvoiceId")) {
     state.ui.markPaymentInvoiceId = null;
@@ -2923,8 +2935,9 @@ function getInvoiceLightDesignerIdFromShows(shows = []) {
 
 function buildInvoiceDraftTemplateFromInvoice(invoice) {
   if (!invoice) return null;
+  const documentType = getInvoiceDocumentType(invoice);
   return {
-    invoiceNumber: makeDefaultInvoiceNumber(),
+    invoiceNumber: documentType === "quote" ? makeDefaultQuoteNumber() : makeDefaultInvoiceNumber(),
     clientId: invoice.clientId || "",
     clientName: invoice.clientName || "",
     issueDate: dateKey(new Date()),
@@ -2934,6 +2947,7 @@ function buildInvoiceDraftTemplateFromInvoice(invoice) {
     notes: invoice.notes || "",
     details: {
       ...normalizeInvoiceDetails(invoice.details),
+      documentType,
       paymentTerms: normalizeInvoiceDetails(invoice.details).paymentTerms || "Net 15"
     },
     lineItems: (invoice.lineItems || []).map((item) => ({
@@ -2974,8 +2988,13 @@ function normalizeInvoiceDetails(details = {}) {
     bankName: String(source.bankName || "").trim(),
     bankAccountNumber: String(source.bankAccountNumber || "").trim(),
     bankIfsc: String(source.bankIfsc || "").trim(),
-    footerNote: String(source.footerNote || "Please include the invoice number with your payment reference.").trim()
+    footerNote: String(source.footerNote || "Please include the invoice number with your payment reference.").trim(),
+    documentType: source.documentType === "quote" ? "quote" : "invoice"
   };
+}
+
+function getInvoiceDocumentType(invoice) {
+  return normalizeInvoiceDetails(invoice?.details).documentType === "quote" ? "quote" : "invoice";
 }
 
 function getDueDateFromTerms(issueDate, paymentTerms) {
@@ -3458,7 +3477,9 @@ function filterInvoices(invoices = state.invoices) {
 }
 
 function getShowsLinkedToInvoices() {
-  return new Set((state.invoices || []).flatMap((invoice) => (invoice.lineItems || []).flatMap((item) => parseInvoiceShowIds(item.showId))));
+  return new Set((state.invoices || [])
+    .filter((invoice) => getInvoiceDocumentType(invoice) !== "quote")
+    .flatMap((invoice) => (invoice.lineItems || []).flatMap((item) => parseInvoiceShowIds(item.showId))));
 }
 
 function getInvoicePaymentHistoryMarkup(invoice) {
@@ -3545,6 +3566,19 @@ function makeDefaultInvoiceNumber() {
   const fiscalYearEndShort = String((fiscalYearStart + 1) % 100).padStart(2, "0");
   const prefix = `INV-${fiscalYearStart}/${fiscalYearEndShort}`;
   const existingCount = (state.invoices || [])
+    .filter((invoice) => getInvoiceDocumentType(invoice) !== "quote")
+    .filter((invoice) => String(invoice.invoiceNumber || "").startsWith(`${prefix}-`))
+    .length + 1;
+  return `${prefix}-${String(existingCount).padStart(3, "0")}`;
+}
+
+function makeDefaultQuoteNumber() {
+  const today = new Date();
+  const fiscalYearStart = today.getMonth() >= 3 ? today.getFullYear() : today.getFullYear() - 1;
+  const fiscalYearEndShort = String((fiscalYearStart + 1) % 100).padStart(2, "0");
+  const prefix = `QTN-${fiscalYearStart}/${fiscalYearEndShort}`;
+  const existingCount = (state.invoices || [])
+    .filter((invoice) => getInvoiceDocumentType(invoice) === "quote")
     .filter((invoice) => String(invoice.invoiceNumber || "").startsWith(`${prefix}-`))
     .length + 1;
   return `${prefix}-${String(existingCount).padStart(3, "0")}`;
@@ -4072,14 +4106,12 @@ function renderProfileSettingsPanel(user) {
     <div class="detail-card profile-settings-card">
       <div>
         <h4>${escapeHtml(user.name)}</h4>
-        <p class="muted-note">Role: ${getRoleLabel(user.role)}</p>
       </div>
         <form id="profilePreferencesForm" class="stack tight profile-menu-form">
           <label>
             <span>Email</span>
             <input type="email" name="email" value="${escapeHtml(user.email || "")}" required autocomplete="email">
           </label>
-          <p class="muted-note">Changing email will sign this account out and send it back for admin approval.</p>
           <label>
             <span>Phone</span>
             <input type="text" name="phone" value="${escapeHtml(user.phone || "")}" autocomplete="tel">
@@ -4096,7 +4128,6 @@ function renderProfileSettingsPanel(user) {
               ${TRAVEL_SEAT_OPTIONS.map((option) => `<option value="${escapeHtml(option)}" ${String(user.seatPreference || "") === option ? "selected" : ""}>${option || "Select seat"}</option>`).join("")}
             </select>
           </label>
-          <p class="muted-note">These are used as defaults in the Travel Master export.</p>
           <button type="submit" class="secondary">Save</button>
           <div id="profilePreferencesMessage" class="message"></div>
         </form>
@@ -4140,7 +4171,6 @@ function renderThemeSettingsPanel() {
     <div class="detail-card profile-settings-card">
       <div>
         <h4>Theme</h4>
-        <p class="muted-note">Choose how the dashboard should look on this device.</p>
       </div>
       <div class="invoice-subtabs theme-choice-row" role="tablist" aria-label="Theme">
         ${["light", "system", "dark"].map((theme) => renderIconTab({
@@ -4170,7 +4200,6 @@ function renderPasswordSettingsPanel(user) {
     <div class="detail-card profile-settings-card">
       <div>
         <h4>Password Reset</h4>
-        <p class="muted-note">Update your password for this account.</p>
       </div>
       <form id="changePasswordForm" class="stack tight profile-menu-form">
         <label>
@@ -4185,7 +4214,6 @@ function renderPasswordSettingsPanel(user) {
           <span>Confirm New Password</span>
           <input type="password" name="confirmPassword" minlength="8" required>
         </label>
-        <p class="muted-note">Use 8+ characters with uppercase, lowercase, and a number.</p>
         <button type="submit" class="secondary">Update Password</button>
         <div id="changePasswordMessage" class="message"></div>
       </form>
@@ -4249,7 +4277,6 @@ function renderSettingsPanel(user) {
       <div class="toolbar spread">
         <div>
           <h3>Settings</h3>
-          <p class="muted-note">Profile and admin tools are grouped here to keep the main workspace clean.</p>
         </div>
       </div>
       <div class="settings-nav">
@@ -4493,7 +4520,6 @@ function renderCalendar(user, shows) {
     <div class="calendar-toolbar">
       <div>
         <h3>${monthLabel(state.view.year, state.view.month)}</h3>
-        <p class="muted-note">Shows are tinted by assigned crew color. Switch to week or day for time lanes.</p>
       </div>
       ${renderCalendarToolbarControls(user)}
     </div>
@@ -4695,7 +4721,6 @@ function renderWeekCalendar(user, shows) {
     <div class="calendar-toolbar">
       <div>
         <h3>${getVisibleRangeLabel()}</h3>
-        <p class="muted-note">Week view shows one shared weekly board with broader strips for assigned entries.</p>
       </div>
       ${renderCalendarToolbarControls(user)}
     </div>
@@ -4799,7 +4824,6 @@ function renderDayCalendar(user, shows) {
     <div class="calendar-toolbar">
       <div>
         <h3>${getVisibleRangeLabel()}</h3>
-        <p class="muted-note">Day view shows all entries for the selected date in a list.</p>
       </div>
       ${renderCalendarToolbarControls(user)}
     </div>
@@ -4963,7 +4987,6 @@ function renderLegend(user) {
     <div class="stack">
       <div>
         <h3>Crew Colors</h3>
-        ${user.role === "crew" ? "" : '<p class="muted-note">Viewer accounts do not appear in crew assignment lists.</p>'}
       </div>
       <div class="legend">
         ${legendUsers.map((crewUser) => `
@@ -5278,6 +5301,7 @@ function renderShowsList(user, shows, sourceShows = shows) {
       state.ui.editingInvoiceId = null;
       state.ui.activeSidebarTab = "invoicesPanel";
       state.ui.invoiceSubtab = "create";
+      state.ui.invoiceDocumentType = "invoice";
       saveState(state);
       renderSidebarTabs();
       renderDashboard();
@@ -5326,7 +5350,6 @@ function renderShowsPanel(user, shows, sourceShows = shows) {
       <div class="form-header">
         <div>
           <h3>Shows</h3>
-          <p class="muted-note">Create new show entries and manage the complete show register from one place.</p>
         </div>
       </div>
       <div class="invoice-subtabs" role="tablist" aria-label="Show sections">
@@ -5757,6 +5780,10 @@ function getInvoiceHsnSacSummaryRows(lineItems = [], placeOfSupply = "") {
 function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
   const lightDesigner = getInvoiceLightDesignerLabel(invoice) || "-";
   const details = normalizeInvoiceDetails(invoice.details);
+  const isQuoteDocument = details.documentType === "quote";
+  const printDocumentTitle = isQuoteDocument ? "Quotation" : "Tax Invoice";
+  const printDetailsTitle = isQuoteDocument ? "Quotation Details" : "Invoice Details";
+  const printNumberLabel = isQuoteDocument ? "Quotation No" : "Invoice No";
   const invoiceClient = getClientById(invoice.clientId) || getClientByName(invoice.clientName);
   const effectiveDueDate = invoice.dueDate || getDueDateFromTerms(invoice.issueDate, details.paymentTerms);
   const effectivePlaceOfSupply = details.placeOfSupply || invoiceClient?.state || "";
@@ -5810,7 +5837,7 @@ function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
               ${companyProfile.website ? `<div class="invoice-print-company-line">${escapeHtml(companyProfile.website)}</div>` : ""}
             </div>
             <div class="invoice-print-copy-block">
-              <div class="invoice-print-document-title">Tax Invoice</div>
+              <div class="invoice-print-document-title">${printDocumentTitle}</div>
               <div class="invoice-print-copy-label">${escapeHtml(copyLabel)}</div>
             </div>
           </div>
@@ -5818,9 +5845,9 @@ function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
       </header>
       <section class="invoice-print-section invoice-print-grid invoice-print-summary-grid">
         <div class="invoice-print-card">
-          <h2>Invoice Details</h2>
+          <h2>${printDetailsTitle}</h2>
           <div class="invoice-print-detail-list">
-            <div><span>Invoice No</span><strong>${escapeHtml(invoice.invoiceNumber)}</strong></div>
+            <div><span>${printNumberLabel}</span><strong>${escapeHtml(invoice.invoiceNumber)}</strong></div>
             <div><span>Issue Date</span><strong>${escapeHtml(formatInvoiceDate(invoice.issueDate))}</strong></div>
             <div><span>Payment Terms</span><strong>${escapeHtml(details.paymentTerms || "Net 15")}</strong></div>
             <div><span>Due Date</span><strong>${escapeHtml(formatInvoiceDate(effectiveDueDate))}</strong></div>
@@ -5941,9 +5968,10 @@ function getInvoiceDocumentMarkup(invoice, options = {}) {
 }
 
 function getInvoicePdfTitle(invoice) {
-  const invoiceNumber = String(invoice?.invoiceNumber || "Invoice").trim();
+  const fallbackLabel = getInvoiceDocumentType(invoice) === "quote" ? "Quotation" : "Invoice";
+  const invoiceNumber = String(invoice?.invoiceNumber || fallbackLabel).trim();
   const clientName = String(invoice?.clientName || "").trim();
-  const title = [invoiceNumber, clientName].filter(Boolean).join(" - ") || "Invoice";
+  const title = [invoiceNumber, clientName].filter(Boolean).join(" - ") || fallbackLabel;
   return title
     .replace(/[\\/:*?"<>|]+/g, "-")
     .replace(/\s+/g, " ")
@@ -6159,20 +6187,24 @@ async function printInvoiceById(invoiceId, copyCount = state.ui.invoicePrintCopi
 
 function findInvoiceUsingShow(showId, excludeInvoiceId = "") {
   if (!showId) return null;
-  return (state.invoices || []).find((invoice) => invoice.id !== excludeInvoiceId && (invoice.lineItems || []).some((item) => parseInvoiceShowIds(item.showId).includes(showId))) || null;
+  return (state.invoices || [])
+    .filter((invoice) => getInvoiceDocumentType(invoice) !== "quote")
+    .find((invoice) => invoice.id !== excludeInvoiceId && (invoice.lineItems || []).some((item) => parseInvoiceShowIds(item.showId).includes(showId))) || null;
 }
 
 function renderInvoicesPanel() {
   const panel = document.getElementById("invoicesPanel");
-  const invoices = sortInvoices(state.invoices || []);
+  const documents = sortInvoices(state.invoices || []);
+  const invoices = documents.filter((invoice) => getInvoiceDocumentType(invoice) !== "quote");
+  const quotes = documents.filter((invoice) => getInvoiceDocumentType(invoice) === "quote");
   const adminOptions = state.users.filter((candidate) => candidate.role === "admin" && candidate.approved);
   const clientMasterOptions = getSortedClients();
-  const clientOptions = getInvoiceClientOptions(invoices);
-  const invoiceYearOptions = ["all", ...getInvoiceYearOptions(invoices)];
+  const clientOptions = getInvoiceClientOptions(documents);
+  const invoiceYearOptions = ["all", ...getInvoiceYearOptions(documents)];
   if (!invoiceYearOptions.includes(state.ui.invoiceExportYear)) {
     state.ui.invoiceExportYear = "all";
   }
-  const invoiceMonthKeys = getInvoiceMonthOptions(invoices, state.ui.invoiceExportYear || "all");
+  const invoiceMonthKeys = getInvoiceMonthOptions(documents, state.ui.invoiceExportYear || "all");
   const invoiceMonthOptions = [
     { value: "all", label: "All Months" },
     ...invoiceMonthKeys.map((monthKey) => ({
@@ -6183,16 +6215,18 @@ function renderInvoicesPanel() {
   if (state.ui.invoiceExportMonth !== "all" && !invoiceMonthKeys.includes(state.ui.invoiceExportMonth)) {
     state.ui.invoiceExportMonth = "all";
   }
-  const lightDesignerOptions = ["all", ...getInvoiceLightDesignerOptions(invoices)];
+  const lightDesignerOptions = ["all", ...getInvoiceLightDesignerOptions(documents)];
   if (!lightDesignerOptions.includes(state.ui.invoiceLightDesignerFilter)) {
     state.ui.invoiceLightDesignerFilter = "all";
   }
   const filteredInvoices = filterInvoices(invoices);
   const invoicePagination = getPaginationSlice(filteredInvoices, "invoiceRegisterPage", "invoiceRegisterPageSize");
+  const filteredQuotes = filterInvoices(quotes);
+  const quotePagination = getPaginationSlice(filteredQuotes, "quoteRegisterPage", "quoteRegisterPageSize");
   const registerInvoices = filteredInvoices;
   const availableShows = [...state.shows].sort((a, b) => getShowStartDate(b).localeCompare(getShowStartDate(a)));
   const editingInvoice = state.ui.editingInvoiceId
-    ? invoices.find((invoice) => invoice.id === state.ui.editingInvoiceId)
+    ? documents.find((invoice) => invoice.id === state.ui.editingInvoiceId)
     : null;
   const activeInvoiceSubtab = editingInvoice ? "create" : state.ui.invoiceSubtab || "create";
   const paymentRows = getInvoiceReconciliationRows(invoices);
@@ -6223,6 +6257,13 @@ function renderInvoicesPanel() {
   const draftShows = (state.ui.invoiceDraftShowIds || [])
     .map((showId) => state.shows.find((show) => show.id === showId))
     .filter(Boolean);
+  const activeDocumentType = editingInvoice
+    ? getInvoiceDocumentType(editingInvoice)
+    : state.ui.invoiceDocumentType === "quote" ? "quote" : "invoice";
+  const isQuoteDocument = activeDocumentType === "quote";
+  const documentLabel = isQuoteDocument ? "Quotation" : "Invoice";
+  const documentNumberLabel = isQuoteDocument ? "Quotation Number" : "Invoice Number";
+  const documentActionLabel = isQuoteDocument ? "Quote" : "Invoice";
   const summary = invoices.reduce((acc, invoice) => {
     const label = getInvoiceStatusLabel(invoice);
     acc.total += 1;
@@ -6232,59 +6273,104 @@ function renderInvoicesPanel() {
     if (label === "Draft") acc.draft += 1;
     return acc;
   }, { total: 0, paid: 0, overdue: 0, draft: 0, balanceDue: 0 });
+  const renderDocumentCard = (invoice, { quote = false } = {}) => `
+    <article class="show-card">
+      <header>
+        <div>
+          <h4>${invoice.invoiceNumber}</h4>
+          <div class="meta">${escapeHtml(getClientDisplayValue(invoice.clientId, invoice.clientName))} · Issued ${formatInvoiceDate(invoice.issueDate)}${invoice.dueDate ? ` · Due ${formatInvoiceDate(invoice.dueDate)}` : ""}</div>
+          ${getInvoiceLinkedShowNames(invoice).length ? `<div class="meta">Show: ${escapeHtml(getInvoiceLinkedShowNames(invoice).join(", "))}</div>` : ""}
+          <div class="meta">${getInvoiceLightDesignerLabel(invoice) ? `Light Designer: ${getInvoiceLightDesignerLabel(invoice)}` : "Light Designer: -"}</div>
+        </div>
+        <div class="toolbar">
+          <button type="button" class="secondary small" data-edit-invoice="${invoice.id}">Edit</button>
+        </div>
+      </header>
+      <div class="toolbar">
+        <label class="sort-control invoice-card-status-control">
+          <span>Status</span>
+          <select data-inline-invoice-status="${invoice.id}">
+            <option value="draft" ${invoice.status === "draft" ? "selected" : ""}>Draft</option>
+            <option value="sent" ${invoice.status === "sent" ? "selected" : ""}>Sent</option>
+            <option value="partially_paid" ${invoice.status === "partially_paid" ? "selected" : ""}>Partially Paid</option>
+            <option value="paid" ${invoice.status === "paid" ? "selected" : ""}>Paid</option>
+            <option value="cancelled" ${invoice.status === "cancelled" ? "selected" : ""}>Cancelled</option>
+          </select>
+        </label>
+        ${quote ? "" : `<button type="button" class="secondary small" data-mark-payment="${invoice.id}">Mark Payment</button>`}
+        <button type="button" class="ghost small" data-duplicate-invoice="${invoice.id}">Duplicate</button>
+        <button type="button" class="ghost small" data-preview-invoice="${invoice.id}">Preview</button>
+        <button type="button" class="ghost small" data-print-invoice="${invoice.id}">Print</button>
+      </div>
+      <div class="show-banner">
+        <span class="show-banner-item">${formatCurrency(invoice.totalAmount)}</span>
+        ${quote ? "" : `<span class="show-banner-item">Paid ${formatCurrency(invoice.amountPaid)}</span><span class="show-banner-item">Balance ${formatCurrency(invoice.balanceDue)}</span>`}
+        <span class="show-banner-item">${invoice.lineItems.length} ${invoice.lineItems.length === 1 ? "line" : "lines"}</span>
+      </div>
+      ${!quote && state.ui.markPaymentInvoiceId === invoice.id ? `
+        <form class="invoice-payment-form" data-payment-form="${invoice.id}">
+          <label class="field"><span>Payment Date</span><input type="date" name="paymentDate" value="${dateKey(new Date())}" required></label>
+          <label class="field"><span>Amount</span><input type="number" name="amount" min="0.01" step="0.01" max="${Number(invoice.balanceDue || 0)}" required></label>
+          <label class="field invoice-payment-note"><span>Note</span><input type="text" name="note" placeholder="Reference, UTR, cash, etc." autocomplete="off"></label>
+          <div class="toolbar">
+            <button type="submit" class="secondary small">Save Payment</button>
+            <button type="button" class="ghost small" data-cancel-payment="${invoice.id}">Cancel</button>
+          </div>
+          <div class="message" data-payment-message></div>
+        </form>
+      ` : ""}
+      ${quote ? "" : getInvoicePaymentHistoryMarkup(invoice)}
+    </article>
+  `;
 
   panel.innerHTML = `
     <div class="stack">
       <div class="form-header">
         <div>
           <h3>Invoices</h3>
-          <p class="muted-note">Create invoice records, bundle multiple shows, and track payment status in one place.</p>
         </div>
         <div class="toolbar">
           <span class="pill">${summary.total} ${summary.total === 1 ? "invoice" : "invoices"}</span>
+          <span class="pill">${quotes.length} ${quotes.length === 1 ? "quote" : "quotes"}</span>
         </div>
       </div>
       <div class="summary-grid">
         <div class="summary-card">
           <span class="summary-kicker">Outstanding</span>
           <strong>${formatCurrency(summary.balanceDue)}</strong>
-          <span class="summary-foot">Current unpaid balance across all invoices.</span>
         </div>
         <div class="summary-card">
           <span class="summary-kicker">Paid</span>
           <strong>${summary.paid}</strong>
-          <span class="summary-foot">Invoices fully settled.</span>
         </div>
         <div class="summary-card">
           <span class="summary-kicker">Overdue</span>
           <strong>${summary.overdue}</strong>
-          <span class="summary-foot">Invoices past due with balance still open.</span>
         </div>
         <div class="summary-card">
           <span class="summary-kicker">Drafts</span>
           <strong>${summary.draft}</strong>
-          <span class="summary-foot">Invoices not yet sent.</span>
         </div>
       </div>
       <div class="invoice-subtabs" role="tablist" aria-label="Invoice sections">
         ${renderIconTab({ active: activeInvoiceSubtab === "register", dataset: "data-invoice-subtab", value: "register", icon: "invoice", label: "Invoice Register" })}
+        ${renderIconTab({ active: activeInvoiceSubtab === "quotes", dataset: "data-invoice-subtab", value: "quotes", icon: "invoice", label: "Quotes" })}
         ${renderIconTab({ active: activeInvoiceSubtab === "payments", dataset: "data-invoice-subtab", value: "payments", icon: "payments", label: "Payments" })}
       </div>
       <div class="stack ${activeInvoiceSubtab === "create" ? "" : "hidden"}" data-invoice-section="create">
         <div class="form-header">
           <div>
-            <h4>${editingInvoice ? `Editing ${editingInvoice.invoiceNumber}` : "Create Invoice"}</h4>
-            <p class="muted-note">Link shows where useful, or add manual billing lines for travel, rental, or other work.</p>
+            <h4>${editingInvoice ? `Editing ${editingInvoice.invoiceNumber}` : `Create ${documentLabel}`}</h4>
           </div>
           <div class="toolbar">
             ${editingInvoice ? '<span class="pill edit-pill">Edit Mode</span>' : ""}
-            <button type="button" class="secondary small" id="newInvoiceButton">New Invoice</button>
+            <button type="button" class="secondary small" id="newInvoiceButton">New ${documentActionLabel}</button>
           </div>
         </div>
         <form id="invoiceForm" class="stack tight editor-form" autocomplete="off">
           <input type="hidden" name="invoiceId">
           <div class="form-grid editor-section">
-            <label class="field"><span>Invoice Number</span><input type="text" name="invoiceNumber" required autocomplete="off" data-form-type="other"></label>
+            <label class="field"><span>${documentNumberLabel}</span><input type="text" name="invoiceNumber" required autocomplete="off" data-form-type="other"></label>
             <label class="field">
               <span>Client</span>
               <select name="clientId" required data-searchable="true" data-search-placeholder="Search clients">
@@ -6341,10 +6427,10 @@ function renderInvoicesPanel() {
             <div class="meta">Balance Due: <strong id="invoiceBalancePreview">${formatCurrency(0)}</strong></div>
           </div>
           <div class="toolbar editor-actions">
-            <button type="submit">${editingInvoice ? "Update Invoice" : "Save Invoice"}</button>
+            <button type="submit">${editingInvoice ? `Update ${documentLabel}` : `Save ${documentLabel}`}</button>
             <button type="button" class="ghost" id="cancelInvoiceEdit">${editingInvoice ? "Cancel Edit" : "Clear"}</button>
             <button type="button" class="ghost" id="cancelInvoiceCreate">Cancel</button>
-            ${editingInvoice ? '<button type="button" class="danger" id="deleteInvoiceButton">Delete Invoice</button>' : ""}
+            ${editingInvoice ? `<button type="button" class="danger" id="deleteInvoiceButton">Delete ${documentLabel}</button>` : ""}
           </div>
           <div id="invoiceFormMessage" class="message"></div>
         </form>
@@ -6423,64 +6509,26 @@ function renderInvoicesPanel() {
           </div>
         </div>
         <div class="approval-list">
-          ${invoicePagination.items.length ? invoicePagination.items.map((invoice) => `
-            <article class="show-card">
-              <header>
-                <div>
-                  <h4>${invoice.invoiceNumber}</h4>
-                  <div class="meta">${escapeHtml(getClientDisplayValue(invoice.clientId, invoice.clientName))} · Issued ${formatInvoiceDate(invoice.issueDate)}${invoice.dueDate ? ` · Due ${formatInvoiceDate(invoice.dueDate)}` : ""}</div>
-                  ${getInvoiceLinkedShowNames(invoice).length ? `<div class="meta">Show: ${escapeHtml(getInvoiceLinkedShowNames(invoice).join(", "))}</div>` : ""}
-                  <div class="meta">${getInvoiceLightDesignerLabel(invoice) ? `Light Designer: ${getInvoiceLightDesignerLabel(invoice)}` : "Light Designer: -"}</div>
-                </div>
-                <div class="toolbar">
-                  <button type="button" class="secondary small" data-edit-invoice="${invoice.id}">Edit</button>
-                </div>
-              </header>
-              <div class="toolbar">
-                <label class="sort-control invoice-card-status-control">
-                  <span>Status</span>
-                  <select data-inline-invoice-status="${invoice.id}">
-                    <option value="draft" ${invoice.status === "draft" ? "selected" : ""}>Draft</option>
-                    <option value="sent" ${invoice.status === "sent" ? "selected" : ""}>Sent</option>
-                    <option value="partially_paid" ${invoice.status === "partially_paid" ? "selected" : ""}>Partially Paid</option>
-                    <option value="paid" ${invoice.status === "paid" ? "selected" : ""}>Paid</option>
-                    <option value="cancelled" ${invoice.status === "cancelled" ? "selected" : ""}>Cancelled</option>
-                  </select>
-                </label>
-                <button type="button" class="secondary small" data-mark-payment="${invoice.id}">Mark Payment</button>
-                <button type="button" class="ghost small" data-duplicate-invoice="${invoice.id}">Duplicate</button>
-                <button type="button" class="ghost small" data-preview-invoice="${invoice.id}">Preview</button>
-                <button type="button" class="ghost small" data-print-invoice="${invoice.id}">Print</button>
-              </div>
-              <div class="show-banner">
-                <span class="show-banner-item">${formatCurrency(invoice.totalAmount)}</span>
-                <span class="show-banner-item">Paid ${formatCurrency(invoice.amountPaid)}</span>
-                <span class="show-banner-item">Balance ${formatCurrency(invoice.balanceDue)}</span>
-                <span class="show-banner-item">${invoice.lineItems.length} ${invoice.lineItems.length === 1 ? "line" : "lines"}</span>
-              </div>
-              ${state.ui.markPaymentInvoiceId === invoice.id ? `
-                <form class="invoice-payment-form" data-payment-form="${invoice.id}">
-                  <label class="field"><span>Payment Date</span><input type="date" name="paymentDate" value="${dateKey(new Date())}" required></label>
-                  <label class="field"><span>Amount</span><input type="number" name="amount" min="0.01" step="0.01" max="${Number(invoice.balanceDue || 0)}" required></label>
-                  <label class="field invoice-payment-note"><span>Note</span><input type="text" name="note" placeholder="Reference, UTR, cash, etc." autocomplete="off"></label>
-                  <div class="toolbar">
-                    <button type="submit" class="secondary small">Save Payment</button>
-                    <button type="button" class="ghost small" data-cancel-payment="${invoice.id}">Cancel</button>
-                  </div>
-                  <div class="message" data-payment-message></div>
-                </form>
-              ` : ""}
-              ${getInvoicePaymentHistoryMarkup(invoice)}
-            </article>
-          `).join("") : invoices.length ? "<p>No invoices match the current filters.</p>" : "<p>No invoices yet. Create the first invoice above.</p>"}
+          ${invoicePagination.items.length ? invoicePagination.items.map((invoice) => renderDocumentCard(invoice)).join("") : invoices.length ? "<p>No invoices match the current filters.</p>" : "<p>No invoices yet.</p>"}
         </div>
         ${renderPaginationControls("invoice-register", invoicePagination, "invoices")}
+      </div>
+      <div class="stack ${activeInvoiceSubtab === "quotes" ? "" : "hidden"}" data-invoice-section="quotes">
+        <div class="form-header">
+          <div>
+            <h4>Quotations</h4>
+          </div>
+          <span class="pill">${filteredQuotes.length} ${filteredQuotes.length === 1 ? "result" : "results"}</span>
+        </div>
+        <div class="approval-list">
+          ${quotePagination.items.length ? quotePagination.items.map((quote) => renderDocumentCard(quote, { quote: true })).join("") : quotes.length ? "<p>No quotations match the current filters.</p>" : "<p>No quotations yet.</p>"}
+        </div>
+        ${renderPaginationControls("invoice-quotes", quotePagination, "quotes")}
       </div>
       <div class="stack ${activeInvoiceSubtab === "payments" ? "" : "hidden"}" data-invoice-section="payments">
         <div class="form-header">
           <div>
             <h4>Payment Reconciliation</h4>
-            <p class="muted-note">Track all received payments across invoices in one place.</p>
           </div>
           <span class="pill">${filteredPaymentRows.length} ${filteredPaymentRows.length === 1 ? "payment" : "payments"}</span>
         </div>
@@ -6488,22 +6536,18 @@ function renderInvoicesPanel() {
           <div class="summary-card">
             <span class="summary-kicker">Collected</span>
             <strong>${formatCurrency(paymentReconSummary.totalCollected)}</strong>
-            <span class="summary-foot">Total receipts in this view.</span>
           </div>
           <div class="summary-card">
             <span class="summary-kicker">Payments</span>
             <strong>${paymentReconSummary.totalPayments}</strong>
-            <span class="summary-foot">Recorded payment entries.</span>
           </div>
           <div class="summary-card">
             <span class="summary-kicker">Clients</span>
             <strong>${paymentReconSummary.clientsCovered}</strong>
-            <span class="summary-foot">Clients covered by these receipts.</span>
           </div>
           <div class="summary-card">
             <span class="summary-kicker">Invoices</span>
             <strong>${paymentReconSummary.invoicesCovered}</strong>
-            <span class="summary-foot">Invoices touched by these receipts.</span>
           </div>
         </div>
         <div class="shows-toolbar invoice-toolbar">
@@ -6576,7 +6620,13 @@ function renderInvoicesPanel() {
         </div>
         ${renderPaginationControls("invoice-payments", paymentReconPagination, "payments")}
       </div>
-      ${renderCreateFab(editingInvoice ? "New Invoice" : "Create Invoice")}
+      <div class="floating-create-menu">
+        <button type="button" class="floating-create-button" data-invoice-create-menu title="Create" aria-label="Create">+</button>
+        <div class="floating-create-options" hidden>
+          <button type="button" data-create-document-type="invoice">Invoice</button>
+          <button type="button" data-create-document-type="quote">Quote</button>
+        </div>
+      </div>
     </div>
   `;
 
@@ -6911,7 +6961,7 @@ function renderInvoicesPanel() {
     if (!confirmDiscardDirtyForm("leave this invoice form")) return;
     clearDirtyForm("invoice");
     resetInvoiceEditingState();
-    state.ui.invoiceSubtab = "register";
+    state.ui.invoiceSubtab = activeDocumentType === "quote" ? "quotes" : "register";
     saveState(state);
     renderDashboard();
   });
@@ -7019,6 +7069,7 @@ function renderInvoicesPanel() {
   });
 
   wirePaginationControls(panel, "invoice-register", "invoiceRegisterPage", "invoiceRegisterPageSize", () => renderInvoicesPanel());
+  wirePaginationControls(panel, "invoice-quotes", "quoteRegisterPage", "quoteRegisterPageSize", () => renderInvoicesPanel());
   wirePaginationControls(panel, "invoice-payments", "paymentReconPage", "paymentReconPageSize", () => renderInvoicesPanel());
 
   panel.querySelectorAll("[data-invoice-subtab]").forEach((button) => {
@@ -7047,7 +7098,7 @@ function renderInvoicesPanel() {
   const draftClientIds = [...new Set(draftShows.map((show) => String(show.clientId || getClientByName(show.client)?.id || "").trim()).filter(Boolean))];
   const templateInvoice = !editingInvoice && state.ui.invoiceDraftTemplate ? state.ui.invoiceDraftTemplate : null;
   const draftInvoice = !editingInvoice && !templateInvoice && draftShows.length ? {
-    invoiceNumber: makeDefaultInvoiceNumber(),
+    invoiceNumber: isQuoteDocument ? makeDefaultQuoteNumber() : makeDefaultInvoiceNumber(),
     clientId: draftClientIds.length === 1 ? draftClientIds[0] : "",
     clientName: draftClientNames.length === 1 ? draftClientNames[0] : "",
     issueDate: dateKey(new Date()),
@@ -7056,12 +7107,13 @@ function renderInvoicesPanel() {
     amountPaid: 0,
     notes: "",
     details: normalizeInvoiceDetails({
+      documentType: activeDocumentType,
       lightDesignerId: getInvoiceLightDesignerIdFromShows(draftShows)
     }),
     lineItems: buildInvoiceLineItemsFromShows(draftShows)
   } : null;
   const initialInvoice = editingInvoice || templateInvoice || draftInvoice || {
-    invoiceNumber: makeDefaultInvoiceNumber(),
+    invoiceNumber: isQuoteDocument ? makeDefaultQuoteNumber() : makeDefaultInvoiceNumber(),
     clientId: "",
     clientName: "",
     issueDate: dateKey(new Date()),
@@ -7069,10 +7121,11 @@ function renderInvoicesPanel() {
     status: "draft",
     amountPaid: 0,
     notes: "",
-    details: normalizeInvoiceDetails(),
+    details: normalizeInvoiceDetails({ documentType: activeDocumentType }),
     lineItems: []
   };
   initialInvoice.details = normalizeInvoiceDetails(initialInvoice.details);
+  initialInvoice.details.documentType = activeDocumentType;
   initialInvoice.clientId = initialInvoice.clientId || getClientByName(initialInvoice.clientName)?.id || "";
   initialInvoice.dueDate = getDueDateFromTerms(initialInvoice.issueDate, initialInvoice.details.paymentTerms);
   const initialClient = getClientById(initialInvoice.clientId);
@@ -7168,7 +7221,8 @@ function renderInvoicesPanel() {
             placeOfSupply: selectedClient.state || "",
             paymentTerms,
             lightDesignerId: form.elements.namedItem("lightDesignerId").value.trim(),
-            clientBillingAddress: selectedClient.billingAddress || ""
+            clientBillingAddress: selectedClient.billingAddress || "",
+            documentType: activeDocumentType
           },
           lineItems
         })
@@ -7176,10 +7230,10 @@ function renderInvoicesPanel() {
       applyServerState(payload);
       clearDirtyForm("invoice");
       resetInvoiceEditingState();
-      state.ui.invoiceSubtab = "register";
+      state.ui.invoiceSubtab = activeDocumentType === "quote" ? "quotes" : "register";
       saveState(state);
       renderDashboard();
-      showToast(editingInvoice ? "Invoice updated." : "Invoice saved.");
+      showToast(`${documentLabel} ${editingInvoice ? "updated" : "saved"}.`);
     } catch (error) {
       message.textContent = error.message;
     }
@@ -7187,7 +7241,8 @@ function renderInvoicesPanel() {
 
   document.getElementById("deleteInvoiceButton")?.addEventListener("click", async () => {
     if (!editingInvoice) return;
-    const confirmed = window.confirm(`Delete invoice "${editingInvoice.invoiceNumber}"?`);
+    const deletingQuote = getInvoiceDocumentType(editingInvoice) === "quote";
+    const confirmed = window.confirm(`Delete ${deletingQuote ? "quotation" : "invoice"} "${editingInvoice.invoiceNumber}"?`);
     if (!confirmed) return;
     try {
       const payload = await apiRequest(`/api/admin/invoices/${encodeURIComponent(editingInvoice.id)}`, {
@@ -7195,10 +7250,10 @@ function renderInvoicesPanel() {
       });
       applyServerState(payload);
       resetInvoiceEditingState();
-      state.ui.invoiceSubtab = "register";
+      state.ui.invoiceSubtab = deletingQuote ? "quotes" : "register";
       saveState(state);
       renderDashboard();
-      showToast("Invoice deleted.");
+      showToast(`${deletingQuote ? "Quotation" : "Invoice"} deleted.`);
     } catch (error) {
       showToast(error.message);
     }
@@ -7209,6 +7264,8 @@ function renderInvoicesPanel() {
       if (!confirmDiscardDirtyForm("open another invoice")) return;
       clearDirtyForm();
       state.ui.editingInvoiceId = button.dataset.editInvoice;
+      const invoice = documents.find((item) => item.id === button.dataset.editInvoice);
+      state.ui.invoiceDocumentType = getInvoiceDocumentType(invoice);
       state.ui.invoiceDraftTemplate = null;
       state.ui.invoiceSubtab = "create";
       state.ui.markPaymentInvoiceId = null;
@@ -7220,16 +7277,17 @@ function renderInvoicesPanel() {
   panel.querySelectorAll("[data-duplicate-invoice]").forEach((button) => {
     button.addEventListener("click", () => {
       if (!confirmDiscardDirtyForm("duplicate this invoice")) return;
-      const invoice = invoices.find((item) => item.id === button.dataset.duplicateInvoice);
+      const invoice = documents.find((item) => item.id === button.dataset.duplicateInvoice);
       if (!invoice) return;
       clearDirtyForm();
       resetInvoiceEditingState();
+      state.ui.invoiceDocumentType = getInvoiceDocumentType(invoice);
       state.ui.invoiceDraftTemplate = buildInvoiceDraftTemplateFromInvoice(invoice);
       state.ui.invoiceSubtab = "create";
       state.ui.markPaymentInvoiceId = null;
       saveState(state);
       renderDashboard();
-      showToast("Invoice duplicated into a new draft.");
+      showToast(`${getInvoiceDocumentType(invoice) === "quote" ? "Quotation" : "Invoice"} duplicated into a new draft.`);
     });
   });
 
@@ -7298,7 +7356,7 @@ function renderInvoicesPanel() {
     select.addEventListener("change", async (event) => {
       const invoiceId = event.currentTarget.dataset.inlineInvoiceStatus;
       const nextStatus = event.currentTarget.value;
-      const invoice = invoices.find((item) => item.id === invoiceId);
+      const invoice = documents.find((item) => item.id === invoiceId);
       if (!invoice) return;
       try {
         const payload = await apiRequest("/api/admin/invoices", {
@@ -7352,18 +7410,29 @@ function renderInvoicesPanel() {
     });
   });
 
-  panel.querySelector("[data-floating-create]")?.addEventListener("click", () => {
-    if (!confirmDiscardDirtyForm(activeInvoiceSubtab === "create" ? "start a new invoice" : "create an invoice")) {
-      return;
-    }
-    clearDirtyForm();
-    state.ui.editingInvoiceId = null;
-    state.ui.invoiceDraftTemplate = null;
-    state.ui.invoiceDraftShowIds = [];
-    state.ui.invoiceSubtab = "create";
-    state.ui.markPaymentInvoiceId = null;
-    saveState(state);
-    renderDashboard();
+  const createMenuButton = panel.querySelector("[data-invoice-create-menu]");
+  const createMenuOptions = panel.querySelector(".floating-create-options");
+  createMenuButton?.addEventListener("click", () => {
+    if (!createMenuOptions) return;
+    createMenuOptions.hidden = !createMenuOptions.hidden;
+  });
+  panel.querySelectorAll("[data-create-document-type]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const nextType = button.dataset.createDocumentType === "quote" ? "quote" : "invoice";
+      const nextLabel = nextType === "quote" ? "quote" : "invoice";
+      if (!confirmDiscardDirtyForm(activeInvoiceSubtab === "create" ? `start a new ${nextLabel}` : `create a ${nextLabel}`)) {
+        return;
+      }
+      clearDirtyForm();
+      state.ui.editingInvoiceId = null;
+      state.ui.invoiceDraftTemplate = null;
+      state.ui.invoiceDraftShowIds = [];
+      state.ui.invoiceDocumentType = nextType;
+      state.ui.invoiceSubtab = "create";
+      state.ui.markPaymentInvoiceId = null;
+      saveState(state);
+      renderDashboard();
+    });
   });
 
   const invoicePreviewModal = document.getElementById("invoicePreviewModal");
@@ -7449,7 +7518,6 @@ function renderGoogleEntriesPanel(user) {
       <div class="form-header google-calendar-topbar">
         <div>
           <h3>Google Calendar</h3>
-          <p class="muted-note">Use the tabs below to switch between entries that need admin completion, already synced entries, and archived Google-linked items.</p>
         </div>
         <div class="toolbar google-calendar-actions">
           <span class="pill">${activeGoogleShows.length} ${activeGoogleShows.length === 1 ? "entry" : "entries"}</span>
@@ -7472,17 +7540,14 @@ function renderGoogleEntriesPanel(user) {
         <button type="button" class="summary-card summary-tab ${googleEntriesView === "needsCompletion" ? "is-active" : ""}" data-google-view="needsCompletion">
           <span class="summary-kicker">Needs Completion</span>
           <strong>${needsCompletion.length}</strong>
-          <span class="summary-foot">Imported from Google and still missing admin-only details.</span>
         </button>
         <button type="button" class="summary-card summary-tab ${googleEntriesView === "synced" ? "is-active" : ""}" data-google-view="synced">
           <span class="summary-kicker">Synced</span>
           <strong>${synced.length}</strong>
-          <span class="summary-foot">Linked entries already completed in PixelBug.</span>
         </button>
         <button type="button" class="summary-card summary-tab ${googleEntriesView === "archived" ? "is-active" : ""}" data-google-view="archived">
           <span class="summary-kicker">Archived</span>
           <strong>${archivedGoogleShows.length}</strong>
-          <span class="summary-foot">Linked entries from older months or manually archived items.</span>
         </button>
       </div>
       ${(googleStatus.lastSyncAt || googleStatus.lastError) ? `
@@ -7510,13 +7575,6 @@ function renderGoogleEntriesPanel(user) {
       <div class="form-header google-calendar-subhead" style="margin-top: 8px;">
         <div>
           <h4>${selectedGoogleEntriesView.title}</h4>
-          <p class="muted-note">
-            ${googleEntriesView === "archived"
-              ? "Archived Google-linked entries can be filtered by month and year and restored whenever needed."
-              : googleEntriesView === "synced"
-                ? "Entries here are already linked and completed inside PixelBug."
-                : "Entries here still need admin completion before they are fully ready in PixelBug."}
-          </p>
         </div>
         <div class="toolbar google-calendar-subhead-actions">
           <span class="pill">${selectedGoogleEntriesView.shows.length} ${selectedGoogleEntriesView.shows.length === 1 ? "entry" : "entries"}</span>
@@ -7707,7 +7765,6 @@ function renderActivityPanel() {
       <div class="form-header">
         <div>
           <h3>Activity</h3>
-          <p class="muted-note">Track sign-ins and key dashboard changes made by each user.</p>
         </div>
         <span class="pill">${activities.length} events</span>
       </div>
@@ -7812,7 +7869,6 @@ function renderPayoutsPanel() {
       <div class="form-header">
         <div>
           <h3>Crew Payouts</h3>
-          <p class="muted-note">Track operator payouts from show assignments and export month-wise payout sheets.</p>
         </div>
         <div class="toolbar">
           <span class="pill">${summary.assignments} ${summary.assignments === 1 ? "assignment" : "assignments"}</span>
@@ -7822,22 +7878,18 @@ function renderPayoutsPanel() {
         <div class="summary-card">
           <span class="summary-kicker">Total Payout</span>
           <strong>${formatCurrency(summary.totalPayout)}</strong>
-          <span class="summary-foot">Operator payouts in this view.</span>
         </div>
         <div class="summary-card">
           <span class="summary-kicker">Assignments</span>
           <strong>${summary.assignments}</strong>
-          <span class="summary-foot">Payable crew rows.</span>
         </div>
         <div class="summary-card">
           <span class="summary-kicker">Shows</span>
           <strong>${summary.shows}</strong>
-          <span class="summary-foot">Shows covered by these payouts.</span>
         </div>
         <div class="summary-card">
           <span class="summary-kicker">Crew</span>
           <strong>${summary.crew}</strong>
-          <span class="summary-foot">Crew members in this view.</span>
         </div>
       </div>
       <div class="shows-toolbar">
@@ -8103,7 +8155,6 @@ function renderDocumentCenterPanel() {
       <div class="form-header">
         <div>
           <h3>Document Center</h3>
-          <p class="muted-note">Generate the main exports and ledgers from one place using the filters you already set in the app.</p>
         </div>
       </div>
       ${state.google?.lastExportUrl ? `
@@ -8627,7 +8678,6 @@ function renderClientsPanel() {
       <div class="form-header">
         <div>
           <h3>Clients</h3>
-          <p class="muted-note">Maintain each client once, then reuse it in shows and invoices.</p>
         </div>
         <span class="pill">${clients.length} ${clients.length === 1 ? "client" : "clients"}</span>
       </div>
@@ -8677,22 +8727,18 @@ function renderClientsPanel() {
               <div class="summary-card">
                 <span class="summary-kicker">Outstanding</span>
                 <strong>${formatCurrency(clientOutstanding)}</strong>
-                <span class="summary-foot">Open balance across this client’s invoices.</span>
               </div>
               <div class="summary-card">
                 <span class="summary-kicker">Collected</span>
                 <strong>${formatCurrency(clientPaid)}</strong>
-                <span class="summary-foot">Payments received from this client.</span>
               </div>
               <div class="summary-card">
                 <span class="summary-kicker">Billed</span>
                 <strong>${formatCurrency(clientBilled)}</strong>
-                <span class="summary-foot">Total value of all client invoices.</span>
               </div>
               <div class="summary-card">
                 <span class="summary-kicker">Relationship</span>
                 <strong>${selectedClientShows.length} shows</strong>
-                <span class="summary-foot">${selectedClientInvoices.length} invoices · ${selectedClientPayments.length} payments</span>
               </div>
             </div>
             <div class="client-detail-grid">
@@ -9147,7 +9193,6 @@ function renderShowForm() {
         <div class="form-header">
           <div>
             <h3>${isEditing ? `Editing: ${editingShow.showName}` : draftShow ? `Duplicate Draft: ${draftShow.showName}` : "Create New Show"}</h3>
-            <p class="muted-note">Only admins can edit show amount and operator amounts.</p>
           </div>
           ${isEditing ? '<span class="pill edit-pill">Edit Mode</span>' : ""}
         </div>
@@ -9176,7 +9221,6 @@ function renderShowForm() {
           <label class="field"><span>Location</span><input type="text" name="location" value="${escapeHtml(isEditing ? editingShow.location : (draftShow?.location || ""))}" autocomplete="off" data-form-type="other"></label>
           <label class="field"><span>Amount of the Show</span><input type="number" name="amountShow" value="${escapeHtml(isEditing ? editingShow.amountShow : (draftShow?.amountShow ?? ""))}" min="0" step="1" autocomplete="off"></label>
         </div>
-        ${clientOptions.length ? "" : '<p class="muted-note">Add clients in the Clients tab before creating shows.</p>'}
         <div class="field editor-section">
           <span>Show Status</span>
           <div class="status-toggle" role="radiogroup" aria-label="Show Status">
@@ -9968,7 +10012,6 @@ function renderApprovalsSection() {
     <div class="stack">
       <div>
         <h3>Pending Approvals</h3>
-        <p class="muted-note">Admin, crew, and view-only users must be approved before login.</p>
       </div>
       <div class="approval-list">
         ${pending.length ? pending.map((user) => `
@@ -10042,7 +10085,6 @@ function renderCrewAdminPanel() {
     <div class="stack">
       <div>
         <h3>Crew Management</h3>
-        <p class="muted-note">Admins are also assignable in shows. Use this tab to add or remove crew accounts.</p>
       </div>
       <form id="adminCrewCreateForm" class="stack tight">
         <div class="form-grid">
@@ -10055,7 +10097,6 @@ function renderCrewAdminPanel() {
           <span>Crew Color</span>
           <div id="adminCrewColorChoices" class="color-grid"></div>
         </label>
-        <p class="muted-note">Use 8+ characters with uppercase, lowercase, and a number.</p>
         <div class="toolbar">
           <button type="submit">Add Crew Member</button>
         </div>
@@ -10065,7 +10106,6 @@ function renderCrewAdminPanel() {
         <div class="form-header">
           <div>
             <h3>Add View Only Account</h3>
-            <p class="muted-note">View-only users can log in and inspect the calendar, but they never appear in crew assignments.</p>
           </div>
         </div>
         <div class="form-grid">
@@ -10074,7 +10114,6 @@ function renderCrewAdminPanel() {
           <label class="field"><span>Phone</span><input type="tel" name="phone" required></label>
           <label class="field"><span>Password</span><input type="password" name="password" minlength="8" required></label>
         </div>
-        <p class="muted-note">Use 8+ characters with uppercase, lowercase, and a number.</p>
         <div class="toolbar">
           <button type="submit">Add View Only User</button>
         </div>
@@ -10084,7 +10123,6 @@ function renderCrewAdminPanel() {
         <div class="form-header">
           <div>
             <h3>Add Accounts Login</h3>
-            <p class="muted-note">Accounts users can log in separately and access the Invoices tab without full admin controls.</p>
           </div>
         </div>
         <div class="form-grid">
@@ -10093,7 +10131,6 @@ function renderCrewAdminPanel() {
           <label class="field"><span>Phone</span><input type="tel" name="phone" required></label>
           <label class="field"><span>Password</span><input type="password" name="password" minlength="8" required></label>
         </div>
-        <p class="muted-note">Use 8+ characters with uppercase, lowercase, and a number.</p>
         <div class="toolbar">
           <button type="submit">Add Accounts User</button>
         </div>
@@ -10103,7 +10140,6 @@ function renderCrewAdminPanel() {
         <div class="form-header">
           <div>
             <h3>Assignable Team</h3>
-            <p class="muted-note">Admins and approved crew members appear in show assignments.</p>
           </div>
           <span class="pill">${assignableTeam.length} members</span>
         </div>
@@ -10123,7 +10159,6 @@ function renderCrewAdminPanel() {
         <div class="form-header">
           <div>
             <h3>Approved Admin Accounts</h3>
-            <p class="muted-note">Admin removal is locked behind confirmation and at least one approved admin must remain.</p>
           </div>
           <span class="pill">${approvedAdmins.length} admins</span>
         </div>
@@ -10150,7 +10185,6 @@ function renderCrewAdminPanel() {
         <div class="form-header">
           <div>
             <h3>Approved Crew Accounts</h3>
-            <p class="muted-note">Removing a crew member also removes them from future assignments.</p>
           </div>
           <span class="pill">${approvedCrew.length} crew</span>
         </div>
@@ -10175,7 +10209,6 @@ function renderCrewAdminPanel() {
         <div class="form-header">
           <div>
             <h3>Approved Accounts Logins</h3>
-            <p class="muted-note">Accounts users can manage invoicing and collections without crew or Google admin powers.</p>
           </div>
           <span class="pill">${approvedAccounts.length} accounts</span>
         </div>
@@ -10200,7 +10233,6 @@ function renderCrewAdminPanel() {
         <div class="form-header">
           <div>
             <h3>Approved View Only Accounts</h3>
-            <p class="muted-note">View-only users can inspect schedules but are excluded from crew assignment lists.</p>
           </div>
           <span class="pill">${approvedViewers.length} viewers</span>
         </div>

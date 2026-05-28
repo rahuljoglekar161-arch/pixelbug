@@ -702,7 +702,8 @@ function normalizeInvoice(invoice) {
     bankName: String(rawDetails.bankName || "").trim(),
     bankAccountNumber: String(rawDetails.bankAccountNumber || "").trim(),
     bankIfsc: String(rawDetails.bankIfsc || "").trim(),
-    footerNote: String(rawDetails.footerNote || "Please include the invoice number with your payment reference.").trim()
+    footerNote: String(rawDetails.footerNote || "Please include the invoice number with your payment reference.").trim(),
+    documentType: rawDetails.documentType === "quote" ? "quote" : "invoice"
   };
   const intraState = isMaharashtraSupply(details.placeOfSupply);
   const sgstAmount = intraState ? roundMoney(subtotal * 0.09) : 0;

@@ -455,6 +455,53 @@ textarea {
   overflow-x: hidden;
 }
 
+@media (min-width: 981px) {
+  .app-shell.logged-in {
+    grid-template-columns: 220px 1fr;
+  }
+
+  .app-shell.logged-in .sidebar {
+    display: flex;
+    min-height: 100vh;
+    padding: 20px 14px;
+    position: sticky;
+    top: 0;
+  }
+
+  .app-shell.logged-in #authPanel,
+  .app-shell.logged-in .sidebar-copy,
+  .app-shell.logged-in .brand-lockup::after {
+    display: none;
+  }
+
+  .app-shell.logged-in .desktop-brand {
+    display: block;
+  }
+
+  .app-shell.logged-in .brand-lockup {
+    gap: 10px;
+  }
+
+  .app-shell.logged-in .brand-logo {
+    width: 64px;
+    border-radius: 16px;
+  }
+
+  .app-shell.logged-in .sidebar h1 {
+    font-size: 1.35rem;
+    white-space: normal;
+    line-height: 1.1;
+  }
+
+  .app-shell.logged-in .desktop-tabs {
+    display: flex;
+  }
+
+  .app-shell.logged-in .app-top-tabs {
+    display: none;
+  }
+}
+
 :root[data-theme="light"] .main-content {
   background:
     linear-gradient(180deg, rgba(247, 249, 252, 0.96), rgba(238, 242, 248, 0.94)),
@@ -1219,6 +1266,39 @@ button.danger {
 .floating-create-button:hover {
   transform: translateY(-1px);
   background: linear-gradient(135deg, #111827, #2f3a49);
+}
+
+.floating-create-menu {
+  position: fixed;
+  right: clamp(18px, 3vw, 34px);
+  bottom: clamp(18px, 3vw, 34px);
+  z-index: 24;
+}
+
+.floating-create-menu .floating-create-button {
+  position: static;
+}
+
+.floating-create-options {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 12px);
+  display: grid;
+  gap: 8px;
+  min-width: 132px;
+  padding: 10px;
+  border-radius: 18px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-soft);
+}
+
+.floating-create-options button {
+  justify-content: center;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: 12px;
 }
 
 .dirty-tab-badge {
