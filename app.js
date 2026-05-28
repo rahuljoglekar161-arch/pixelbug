@@ -1946,6 +1946,7 @@ function seedState() {
       selectedClientDetailId: null,
       clientSearchQuery: "",
       clientGstFilter: "all",
+      clientInvoiceFilter: "all",
       clientExportYear: "all",
       clientExportMonth: "all",
       clientExportClientId: "all",
@@ -2586,6 +2587,9 @@ function ensureUiState() {
   }
   if (!state.ui.clientGstFilter) {
     state.ui.clientGstFilter = "all";
+  }
+  if (!state.ui.clientInvoiceFilter) {
+    state.ui.clientInvoiceFilter = "all";
   }
   if (!state.ui.clientExportYear) {
     state.ui.clientExportYear = "all";
@@ -3398,6 +3402,7 @@ function getFilteredClientsList() {
   const clients = getSortedClients();
   const clientSearchQuery = String(state.ui.clientSearchQuery || "").trim().toLowerCase();
   const clientGstFilter = state.ui.clientGstFilter || "all";
+  const clientInvoiceFilter = state.ui.clientInvoiceFilter || "all";
   return clients.filter((client) => {
     const matchesSearch = !clientSearchQuery || [
       getClientDisplayName(client),
@@ -3411,11 +3416,19 @@ function getFilteredClientsList() {
       client.notes
     ].some((value) => String(value || "").toLowerCase().includes(clientSearchQuery));
     if (!matchesSearch) return false;
+    const hasGst = Boolean(String(client.gstin || "").trim());
+    const invoiceCount = (state.invoices || []).filter((invoice) => (invoice.clientId || getClientByName(invoice.clientName)?.id || "") === client.id).length;
     if (clientGstFilter === "missing") {
-      return !String(client.gstin || "").trim();
+      return !hasGst && (clientInvoiceFilter === "all" || (clientInvoiceFilter === "with" ? invoiceCount > 0 : invoiceCount === 0));
     }
     if (clientGstFilter === "available") {
-      return Boolean(String(client.gstin || "").trim());
+      return hasGst && (clientInvoiceFilter === "all" || (clientInvoiceFilter === "with" ? invoiceCount > 0 : invoiceCount === 0));
+    }
+    if (clientInvoiceFilter === "with") {
+      return invoiceCount > 0;
+    }
+    if (clientInvoiceFilter === "without") {
+      return invoiceCount === 0;
     }
     return true;
   });
@@ -8609,6 +8622,7 @@ function renderClientsPanel() {
   const clients = getSortedClients();
   const clientSearchQuery = String(state.ui.clientSearchQuery || "").trim().toLowerCase();
   const clientGstFilter = state.ui.clientGstFilter || "all";
+  const clientInvoiceFilter = state.ui.clientInvoiceFilter || "all";
   const filteredClients = clients.filter((client) => {
     const matchesSearch = !clientSearchQuery || [
       getClientDisplayName(client),
@@ -8622,11 +8636,19 @@ function renderClientsPanel() {
       client.notes
     ].some((value) => String(value || "").toLowerCase().includes(clientSearchQuery));
     if (!matchesSearch) return false;
+    const hasGst = Boolean(String(client.gstin || "").trim());
+    const invoiceCount = (state.invoices || []).filter((invoice) => (invoice.clientId || getClientByName(invoice.clientName)?.id || "") === client.id).length;
     if (clientGstFilter === "missing") {
-      return !String(client.gstin || "").trim();
+      return !hasGst && (clientInvoiceFilter === "all" || (clientInvoiceFilter === "with" ? invoiceCount > 0 : invoiceCount === 0));
     }
     if (clientGstFilter === "available") {
-      return Boolean(String(client.gstin || "").trim());
+      return hasGst && (clientInvoiceFilter === "all" || (clientInvoiceFilter === "with" ? invoiceCount > 0 : invoiceCount === 0));
+    }
+    if (clientInvoiceFilter === "with") {
+      return invoiceCount > 0;
+    }
+    if (clientInvoiceFilter === "without") {
+      return invoiceCount === 0;
     }
     return true;
   });
@@ -8693,6 +8715,14 @@ function renderClientsPanel() {
                   <option value="all" ${clientGstFilter === "all" ? "selected" : ""}>All Clients</option>
                   <option value="missing" ${clientGstFilter === "missing" ? "selected" : ""}>Empty GST Details</option>
                   <option value="available" ${clientGstFilter === "available" ? "selected" : ""}>With GST Details</option>
+                </select>
+              </label>
+              <label class="sort-control">
+                <span>Invoices</span>
+                <select id="clientInvoiceFilter">
+                  <option value="all" ${clientInvoiceFilter === "all" ? "selected" : ""}>All Clients</option>
+                  <option value="with" ${clientInvoiceFilter === "with" ? "selected" : ""}>With Invoices</option>
+                  <option value="without" ${clientInvoiceFilter === "without" ? "selected" : ""}>No Invoices</option>
                 </select>
               </label>
             </div>
@@ -8889,6 +8919,7 @@ function renderClientsPanel() {
   const message = document.getElementById("clientFormMessage");
   const searchInput = document.getElementById("clientSearchInput");
   const gstFilterSelect = document.getElementById("clientGstFilter");
+  const invoiceFilterSelect = document.getElementById("clientInvoiceFilter");
 
   const clearClientForm = () => {
     form.reset();
@@ -8979,6 +9010,13 @@ function renderClientsPanel() {
 
   gstFilterSelect?.addEventListener("change", (event) => {
     state.ui.clientGstFilter = event.currentTarget.value;
+    state.ui.clientsPage = 1;
+    saveState(state);
+    renderClientsPanel();
+  });
+
+  invoiceFilterSelect?.addEventListener("change", (event) => {
+    state.ui.clientInvoiceFilter = event.currentTarget.value;
     state.ui.clientsPage = 1;
     saveState(state);
     renderClientsPanel();

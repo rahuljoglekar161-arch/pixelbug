@@ -1346,17 +1346,35 @@ button.danger {
 .client-detail-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 8px;
+  padding: 12px;
 }
 
 .client-detail-summary {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+}
+
+.client-detail-summary .summary-card {
+  min-width: 0;
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+
+.client-detail-summary .summary-card strong {
+  margin: 2px 0 0;
+  font-size: 1.04rem;
 }
 
 .client-detail-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.client-detail-grid .assignment-card,
+.client-ledger-section {
+  padding: 10px;
 }
 
 .invoice-collections-grid {
@@ -1372,7 +1390,7 @@ button.danger {
   justify-content: space-between;
   align-items: flex-start;
   gap: 12px;
-  padding: 10px 0;
+  padding: 7px 0;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1382,7 +1400,7 @@ button.danger {
 }
 
 .client-ledger-section {
-  gap: 12px;
+  gap: 8px;
 }
 
 .client-ledger-table-wrap {
