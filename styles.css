@@ -2124,8 +2124,29 @@ button.danger {
   flex-direction: column;
 }
 
-.calendar-add-show-button {
+.calendar-add-show-button,
+.calendar-close-day-button {
   flex: 0 0 auto;
+}
+
+.calendar-close-day-button {
+  width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.calendar-close-day-button .tab-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.inline-client-detail {
+  margin-top: 8px;
 }
 
 .lane-column-wrapper {

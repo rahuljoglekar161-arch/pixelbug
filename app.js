@@ -3846,6 +3846,7 @@ function getTabIcon(icon) {
     profile: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4" ${common}/><path d="M4 21a8 8 0 0 1 16 0" ${common}/></svg>`,
     theme: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4" ${common}/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" ${common}/></svg>`,
     password: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 2l-2 2M11.4 11.4 19 3.8" ${common}/><circle cx="8" cy="16" r="5" ${common}/><path d="M8 14v4" ${common}/></svg>`,
+    close: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" ${common}/></svg>`,
     clients: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2" ${common}/><circle cx="9.5" cy="7" r="4" ${common}/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" ${common}/></svg>`,
     crew: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" ${common}/><circle cx="9" cy="7" r="4" ${common}/><path d="M23 21v-2a4 4 0 0 0-3-3.87" ${common}/></svg>`,
     settings: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 0 12 8a3.5 3.5 0 0 0 0 7.5z" ${common}/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.08a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.08a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.08a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.16.6.69 1 1.55 1H21a2 2 0 1 1 0 4h-.08a1.7 1.7 0 0 0-1.52 1z" ${common}/></svg>`,
@@ -4622,6 +4623,7 @@ function renderCalendar(user, shows) {
         `;
       }).join("")}
     </div>
+    ${isAdmin(user) ? renderCreateFab("Add Show") : ""}
   `;
 
   if (isAdmin(user)) {
@@ -4661,6 +4663,9 @@ function renderCalendar(user, shows) {
       saveState(state);
       renderDashboard();
     });
+  });
+  panel.querySelector("[data-floating-create]")?.addEventListener("click", () => {
+    startShowDraftForDate(state.view.focusDate || dateKey(new Date(state.view.year, state.view.month, 1)));
   });
   wireCalendarToolbarControls(panel);
 }
@@ -4769,6 +4774,7 @@ function renderWeekCalendar(user, shows) {
         }).join("")}
       </div>
     </section>
+    ${isAdmin(user) ? renderCreateFab("Add Show") : ""}
   `;
 
   if (isAdmin(user)) {
@@ -4799,6 +4805,9 @@ function renderWeekCalendar(user, shows) {
       saveState(state);
       renderDashboard();
     });
+  });
+  panel.querySelector("[data-floating-create]")?.addEventListener("click", () => {
+    startShowDraftForDate(state.view.focusDate || dateKey(weekStart));
   });
   wireCalendarToolbarControls(panel);
 }
@@ -4856,7 +4865,7 @@ function renderDayCalendar(user, shows) {
           ${focusDate.toLocaleDateString("en-IN", { weekday: "long" })}
           <strong>${formatWeekdayDate(focusDate)}</strong>
         </div>
-        ${isAdmin(user) ? `<button type="button" class="secondary small calendar-add-show-button" data-create-show-date="${focusKey}">+ Add Show</button>` : ""}
+        <button type="button" class="ghost small calendar-close-day-button" data-close-calendar-day title="Close date view" aria-label="Close date view">${getTabIcon("close")}</button>
       </div>
       ${selectedCalendarShow ? `
         <div class="calendar-show-panel">
@@ -4871,8 +4880,17 @@ function renderDayCalendar(user, shows) {
         ${listShows.length ? listShows.map((show) => renderShowCard(show, user)).join("") : (selectedCalendarShow ? "<p>No other shows scheduled for this date.</p>" : "<p>No shows scheduled for this date.</p>")}
       </div>
     </section>
+    ${isAdmin(user) ? renderCreateFab("Add Show") : ""}
   `;
   enhanceCustomSelects(panel);
+  panel.querySelector("[data-close-calendar-day]")?.addEventListener("click", () => {
+    ensureUiState();
+    state.ui.selectedCalendarShowId = null;
+    state.ui.calendarReturnMode = "month";
+    state.view.mode = "month";
+    saveState(state);
+    renderDashboard();
+  });
   panel.querySelector("#closeCalendarShowPanel")?.addEventListener("click", () => {
     ensureUiState();
     state.ui.selectedCalendarShowId = null;
@@ -4884,8 +4902,8 @@ function renderDayCalendar(user, shows) {
   panel.querySelectorAll("[data-edit-show]").forEach((button) => {
     button.addEventListener("click", () => fillShowForm(button.dataset.editShow));
   });
-  panel.querySelector("[data-create-show-date]")?.addEventListener("click", (event) => {
-    startShowDraftForDate(event.currentTarget.dataset.createShowDate);
+  panel.querySelector("[data-floating-create]")?.addEventListener("click", () => {
+    startShowDraftForDate(focusKey);
   });
   wireCalendarToolbarControls(panel);
 }
@@ -8686,6 +8704,126 @@ function renderClientsPanel() {
   const clientOutstanding = selectedClientInvoices.reduce((sum, invoice) => sum + Number(invoice.balanceDue || 0), 0);
   const clientPaid = selectedClientInvoices.reduce((sum, invoice) => sum + Number(invoice.amountPaid || 0), 0);
   const clientBilled = selectedClientInvoices.reduce((sum, invoice) => sum + Number(invoice.totalAmount || 0), 0);
+  const renderClientDetailPanel = (client) => {
+    if (!client || client.id !== selectedClientDetail?.id) return "";
+    return `
+      <section class="detail-card client-detail-panel inline-client-detail">
+        <header>
+          <div>
+            <h4>${escapeHtml(getClientDisplayName(client))}</h4>
+            <div class="meta">${client.contactName || "No contact"}${client.contactEmail ? ` · ${escapeHtml(client.contactEmail)}` : ""}${client.contactPhone ? ` · ${escapeHtml(client.contactPhone)}` : ""}</div>
+            <div class="meta">${client.state || "State not added yet"}${client.gstin ? ` · GSTIN: ${escapeHtml(client.gstin)}` : ""}</div>
+          </div>
+          <div class="toolbar">
+            <button type="button" class="ghost small" data-close-client-detail="true">Close</button>
+          </div>
+        </header>
+        <div class="summary-grid client-detail-summary">
+          <div class="summary-card">
+            <span class="summary-kicker">Outstanding</span>
+            <strong>${formatCurrency(clientOutstanding)}</strong>
+          </div>
+          <div class="summary-card">
+            <span class="summary-kicker">Collected</span>
+            <strong>${formatCurrency(clientPaid)}</strong>
+          </div>
+          <div class="summary-card">
+            <span class="summary-kicker">Billed</span>
+            <strong>${formatCurrency(clientBilled)}</strong>
+          </div>
+          <div class="summary-card">
+            <span class="summary-kicker">Relationship</span>
+            <strong>${selectedClientShows.length} shows</strong>
+          </div>
+        </div>
+        <div class="client-detail-grid">
+          <section class="assignment-card">
+            <strong>Recent Invoices</strong>
+            <div class="stack tight client-detail-list">
+              ${selectedClientInvoices.length ? selectedClientInvoices.slice(0, 5).map((invoice) => `
+                <div class="client-detail-row">
+                  <div>
+                    <strong>${escapeHtml(invoice.invoiceNumber)}</strong>
+                    <div class="meta">${escapeHtml(getInvoiceStatusLabel(invoice))} · ${escapeHtml(formatInvoiceDate(invoice.issueDate))}</div>
+                  </div>
+                  <strong>${formatCurrency(invoice.totalAmount || 0)}</strong>
+                </div>
+              `).join("") : '<p class="meta">No invoices yet.</p>'}
+            </div>
+          </section>
+          <section class="assignment-card">
+            <strong>Payment History</strong>
+            <div class="stack tight client-detail-list">
+              ${selectedClientPayments.length ? selectedClientPayments.slice(0, 6).map((payment) => `
+                <div class="client-detail-row">
+                  <div>
+                    <strong>${escapeHtml(formatInvoiceDate(payment.paymentDate))}</strong>
+                    <div class="meta">${escapeHtml(payment.invoiceNumber || "")}${payment.note ? ` · ${escapeHtml(payment.note)}` : ""}</div>
+                  </div>
+                  <strong>${formatCurrency(payment.amount || 0)}</strong>
+                </div>
+              `).join("") : '<p class="meta">No payments recorded yet.</p>'}
+            </div>
+          </section>
+          <section class="assignment-card">
+            <strong>Linked Shows</strong>
+            <div class="stack tight client-detail-list">
+              ${selectedClientShows.length ? selectedClientShows.slice(0, 6).map((show) => `
+                <div class="client-detail-row">
+                  <div>
+                    <strong>${escapeHtml(show.showName)}</strong>
+                    <div class="meta">${escapeHtml(formatDateRange(getShowStartDate(show), getShowEndDate(show)))}${show.location ? ` · ${escapeHtml(show.location)}` : ""}</div>
+                  </div>
+                </div>
+              `).join("") : '<p class="meta">No linked shows yet.</p>'}
+            </div>
+          </section>
+          <section class="assignment-card">
+            <strong>Billing Info</strong>
+            <div class="stack tight client-detail-list">
+              <div class="meta">${escapeHtml(client.billingAddress || "No billing address saved yet.")}</div>
+              ${client.notes ? `<div class="meta">${escapeHtml(client.notes)}</div>` : ""}
+            </div>
+          </section>
+        </div>
+        <section class="assignment-card client-ledger-section">
+          <header>
+            <div>
+              <strong>Ledger</strong>
+            </div>
+          </header>
+          <div class="client-ledger-table-wrap">
+            <table class="client-ledger-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Type</th>
+                  <th>Reference</th>
+                  <th>Particulars</th>
+                  <th>Debit</th>
+                  <th>Credit</th>
+                  <th>Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${selectedClientLedgerEntries.length ? selectedClientLedgerEntries.map((entry) => `
+                  <tr>
+                    <td>${escapeHtml(formatInvoiceDate(entry.date))}</td>
+                    <td>${escapeHtml(entry.type)}</td>
+                    <td>${escapeHtml(entry.reference || "-")}</td>
+                    <td>${escapeHtml(entry.particulars || "-")}</td>
+                    <td>${entry.debit ? escapeHtml(formatCurrency(entry.debit)) : "-"}</td>
+                    <td>${entry.credit ? escapeHtml(formatCurrency(entry.credit)) : "-"}</td>
+                    <td>${escapeHtml(formatCurrency(entry.balance))}</td>
+                  </tr>
+                `).join("") : `<tr><td colspan="7">No ledger transactions yet.</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    `;
+  };
 
   panel.innerHTML = `
     <div class="stack">
@@ -8728,124 +8866,6 @@ function renderClientsPanel() {
             </div>
           </div></details>
         </div>
-        ${selectedClientDetail ? `
-          <section class="detail-card client-detail-panel">
-            <header>
-              <div>
-                <h4>${escapeHtml(getClientDisplayName(selectedClientDetail))}</h4>
-                <div class="meta">${selectedClientDetail.contactName || "No contact"}${selectedClientDetail.contactEmail ? ` · ${escapeHtml(selectedClientDetail.contactEmail)}` : ""}${selectedClientDetail.contactPhone ? ` · ${escapeHtml(selectedClientDetail.contactPhone)}` : ""}</div>
-                <div class="meta">${selectedClientDetail.state || "State not added yet"}${selectedClientDetail.gstin ? ` · GSTIN: ${escapeHtml(selectedClientDetail.gstin)}` : ""}</div>
-              </div>
-              <div class="toolbar">
-                <button type="button" class="ghost small" data-close-client-detail="true">Close</button>
-              </div>
-            </header>
-            <div class="summary-grid client-detail-summary">
-              <div class="summary-card">
-                <span class="summary-kicker">Outstanding</span>
-                <strong>${formatCurrency(clientOutstanding)}</strong>
-              </div>
-              <div class="summary-card">
-                <span class="summary-kicker">Collected</span>
-                <strong>${formatCurrency(clientPaid)}</strong>
-              </div>
-              <div class="summary-card">
-                <span class="summary-kicker">Billed</span>
-                <strong>${formatCurrency(clientBilled)}</strong>
-              </div>
-              <div class="summary-card">
-                <span class="summary-kicker">Relationship</span>
-                <strong>${selectedClientShows.length} shows</strong>
-              </div>
-            </div>
-            <div class="client-detail-grid">
-              <section class="assignment-card">
-                <strong>Recent Invoices</strong>
-                <div class="stack tight client-detail-list">
-                  ${selectedClientInvoices.length ? selectedClientInvoices.slice(0, 5).map((invoice) => `
-                    <div class="client-detail-row">
-                      <div>
-                        <strong>${escapeHtml(invoice.invoiceNumber)}</strong>
-                        <div class="meta">${escapeHtml(getInvoiceStatusLabel(invoice))} · ${escapeHtml(formatInvoiceDate(invoice.issueDate))}</div>
-                      </div>
-                      <strong>${formatCurrency(invoice.totalAmount || 0)}</strong>
-                    </div>
-                  `).join("") : '<p class="meta">No invoices yet.</p>'}
-                </div>
-              </section>
-              <section class="assignment-card">
-                <strong>Payment History</strong>
-                <div class="stack tight client-detail-list">
-                  ${selectedClientPayments.length ? selectedClientPayments.slice(0, 6).map((payment) => `
-                    <div class="client-detail-row">
-                      <div>
-                        <strong>${escapeHtml(formatInvoiceDate(payment.paymentDate))}</strong>
-                        <div class="meta">${escapeHtml(payment.invoiceNumber || "")}${payment.note ? ` · ${escapeHtml(payment.note)}` : ""}</div>
-                      </div>
-                      <strong>${formatCurrency(payment.amount || 0)}</strong>
-                    </div>
-                  `).join("") : '<p class="meta">No payments recorded yet.</p>'}
-                </div>
-              </section>
-              <section class="assignment-card">
-                <strong>Linked Shows</strong>
-                <div class="stack tight client-detail-list">
-                  ${selectedClientShows.length ? selectedClientShows.slice(0, 6).map((show) => `
-                    <div class="client-detail-row">
-                      <div>
-                        <strong>${escapeHtml(show.showName)}</strong>
-                        <div class="meta">${escapeHtml(formatDateRange(getShowStartDate(show), getShowEndDate(show)))}${show.location ? ` · ${escapeHtml(show.location)}` : ""}</div>
-                      </div>
-                    </div>
-                  `).join("") : '<p class="meta">No linked shows yet.</p>'}
-                </div>
-              </section>
-              <section class="assignment-card">
-                <strong>Billing Info</strong>
-                <div class="stack tight client-detail-list">
-                  <div class="meta">${escapeHtml(selectedClientDetail.billingAddress || "No billing address saved yet.")}</div>
-                  ${selectedClientDetail.notes ? `<div class="meta">${escapeHtml(selectedClientDetail.notes)}</div>` : ""}
-                </div>
-              </section>
-            </div>
-            <section class="assignment-card client-ledger-section">
-              <header>
-                <div>
-                  <strong>Ledger</strong>
-                  <div class="meta">Invoices and payments in running balance order.</div>
-                </div>
-              </header>
-              <div class="client-ledger-table-wrap">
-                <table class="client-ledger-table">
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Type</th>
-                      <th>Reference</th>
-                      <th>Particulars</th>
-                      <th>Debit</th>
-                      <th>Credit</th>
-                      <th>Balance</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    ${selectedClientLedgerEntries.length ? selectedClientLedgerEntries.map((entry) => `
-                      <tr>
-                        <td>${escapeHtml(formatInvoiceDate(entry.date))}</td>
-                        <td>${escapeHtml(entry.type)}</td>
-                        <td>${escapeHtml(entry.reference || "-")}</td>
-                        <td>${escapeHtml(entry.particulars || "-")}</td>
-                        <td>${entry.debit ? escapeHtml(formatCurrency(entry.debit)) : "-"}</td>
-                        <td>${entry.credit ? escapeHtml(formatCurrency(entry.credit)) : "-"}</td>
-                        <td>${escapeHtml(formatCurrency(entry.balance))}</td>
-                      </tr>
-                    `).join("") : `<tr><td colspan="7">No ledger transactions yet.</td></tr>`}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </section>
-        ` : ""}
       ` : ""}
       <form id="clientForm" class="stack tight editor-form ${activeClientsSubtab === "create" ? "" : "hidden"}" autocomplete="off">
         <input type="hidden" name="clientId">
@@ -8903,6 +8923,7 @@ function renderClientsPanel() {
                 <div class="meta">${client.billingAddress || "No billing address saved yet."}</div>
                 ${client.notes ? `<div class="meta">${client.notes}</div>` : ""}
               </div>
+              ${renderClientDetailPanel(client)}
             </article>
           `).join("") : `<p>${clients.length ? "No clients match the current search or GST filter." : "No clients yet. Use Add Client to create the first one."}</p>`}
         </div>
