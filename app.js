@@ -4196,11 +4196,11 @@ function renderThemeSettingsPanel() {
         <h4>Theme</h4>
       </div>
       <div class="invoice-subtabs theme-choice-row" role="tablist" aria-label="Theme">
-        ${["light", "system", "dark"].map((theme) => renderIconTab({
+        ${["light", "dark", "system"].map((theme) => renderIconTab({
           active: themePreference === theme,
           dataset: "data-theme-choice",
           value: theme,
-          icon: theme === "dark" ? "settings" : "calendar",
+          icon: "theme",
           label: theme === "light" ? "Light Mode" : theme === "dark" ? "Dark Mode" : "Auto Theme"
         })).join("")}
       </div>
