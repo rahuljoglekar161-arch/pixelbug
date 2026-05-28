@@ -5096,9 +5096,6 @@ function renderShowsList(user, shows, sourceShows = shows) {
 
   panel.innerHTML = `
     <div class="stack">
-      <div>
-        <h3>${isAdmin(user) ? "All Show Entries" : "Show Register"}</h3>
-      </div>
       ${sourceShows.length ? `
         <div class="shows-toolbar">
           <div class="shows-toolbar-top">
@@ -5351,9 +5348,6 @@ function renderShowsPanel(user, shows, sourceShows = shows) {
         <div>
           <h3>Shows</h3>
         </div>
-      </div>
-      <div class="invoice-subtabs" role="tablist" aria-label="Show sections">
-        ${renderIconTab({ active: activeShowSubtab === "list", dataset: "data-show-subtab", value: "list", icon: "list", label: "All Shows" })}
       </div>
       <section id="showFormPanel" class="${activeShowSubtab === "create" ? "" : "hidden"}"></section>
       <section id="showsListPanel" class="${activeShowSubtab === "list" ? "" : "hidden"}"></section>
@@ -6436,12 +6430,6 @@ function renderInvoicesPanel() {
         </form>
       </div>
       <div class="stack ${activeInvoiceSubtab === "register" ? "" : "hidden"}" data-invoice-section="register">
-        <div class="form-header">
-          <div>
-            <h4>Invoice Register</h4>
-          </div>
-          <span class="pill">${filteredInvoices.length} ${filteredInvoices.length === 1 ? "result" : "results"}</span>
-        </div>
         <div class="shows-toolbar invoice-toolbar">
           <div class="shows-toolbar-top">
             <label class="sort-control invoice-search-control">
@@ -6514,12 +6502,6 @@ function renderInvoicesPanel() {
         ${renderPaginationControls("invoice-register", invoicePagination, "invoices")}
       </div>
       <div class="stack ${activeInvoiceSubtab === "quotes" ? "" : "hidden"}" data-invoice-section="quotes">
-        <div class="form-header">
-          <div>
-            <h4>Quotations</h4>
-          </div>
-          <span class="pill">${filteredQuotes.length} ${filteredQuotes.length === 1 ? "result" : "results"}</span>
-        </div>
         <div class="approval-list">
           ${quotePagination.items.length ? quotePagination.items.map((quote) => renderDocumentCard(quote, { quote: true })).join("") : quotes.length ? "<p>No quotations match the current filters.</p>" : "<p>No quotations yet.</p>"}
         </div>
@@ -7766,7 +7748,6 @@ function renderActivityPanel() {
         <div>
           <h3>Activity</h3>
         </div>
-        <span class="pill">${activities.length} events</span>
       </div>
       <div class="shows-toolbar">
         <div class="shows-toolbar-top">
@@ -8678,12 +8659,6 @@ function renderClientsPanel() {
       <div class="form-header">
         <div>
           <h3>Clients</h3>
-        </div>
-        <span class="pill">${clients.length} ${clients.length === 1 ? "client" : "clients"}</span>
-      </div>
-      <div class="clients-subtab-row">
-        <div class="invoice-subtabs" role="tablist" aria-label="Client sections">
-          ${renderIconTab({ active: activeClientsSubtab === "list", dataset: "data-clients-subtab", value: "list", icon: "clients", label: "Client List" })}
         </div>
       </div>
       ${activeClientsSubtab === "list" ? `

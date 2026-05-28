@@ -800,12 +800,13 @@ textarea {
 }
 
 .app-shell.logged-in .stack {
-  gap: 12px;
+  gap: 9px;
 }
 
 .app-shell.logged-in .form-header {
   gap: 8px;
-  margin-bottom: 2px;
+  margin-bottom: 0;
+  padding-bottom: 0;
 }
 
 .app-shell.logged-in .form-header h3,
@@ -827,7 +828,7 @@ textarea {
 }
 
 .panel > .stack {
-  gap: 18px;
+  gap: 12px;
 }
 
 :root[data-theme="light"] .panel {
@@ -2525,7 +2526,7 @@ button.danger {
 .shows-toolbar {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .invoice-toolbar .shows-toolbar-top {
@@ -2552,6 +2553,16 @@ button.danger {
 .shows-toolbar .invoice-search-control {
   flex: 1 1 240px;
   min-width: 180px;
+}
+
+.shows-toolbar .invoice-search-control > span,
+.clients-search-toolbar .invoice-search-control > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .search-submit-button {
@@ -2724,7 +2735,7 @@ button.danger {
 .month-group {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
 }
 
 .month-group-header {
@@ -2732,7 +2743,7 @@ button.danger {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding-bottom: 10px;
+  padding-bottom: 6px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
