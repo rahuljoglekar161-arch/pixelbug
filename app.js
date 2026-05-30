@@ -4871,7 +4871,7 @@ function renderDayCalendar(user, shows) {
         <div class="calendar-show-panel">
           <div class="calendar-show-panel-header">
             <h4>Show Details</h4>
-            <button type="button" class="ghost small" id="closeCalendarShowPanel">Close</button>
+            <button type="button" class="ghost small calendar-close-day-button" id="closeCalendarShowPanel" title="Close show details" aria-label="Close show details">${getTabIcon("close")}</button>
           </div>
           ${renderShowCard(selectedCalendarShow, user)}
         </div>

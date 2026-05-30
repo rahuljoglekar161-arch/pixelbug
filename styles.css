@@ -2138,11 +2138,22 @@ button.danger {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  color: var(--ink);
 }
 
-.calendar-close-day-button .tab-icon {
+.calendar-close-day-button .tab-icon,
+.calendar-close-day-button svg {
   width: 18px;
   height: 18px;
+}
+
+.calendar-close-day-button svg {
+  display: block;
+  stroke: currentColor;
+  stroke-width: 2.25;
+  fill: none;
 }
 
 .inline-client-detail {
