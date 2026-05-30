@@ -5836,6 +5836,13 @@ function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
     { label: "Branch Name", value: companyProfile.bankBranchName },
     { label: "IFSC", value: companyProfile.bankIfsc }
   ].filter((item) => item.value);
+  const footerNotesMarkup = `
+    <div class="invoice-print-footer invoice-print-footer-inline">
+      <div class="invoice-print-thank-you">Thank you for your business.</div>
+      <div class="invoice-print-payment-note">Please clear the dues within 15 working days.</div>
+      ${companyProfile.footerNote ? `<div class="invoice-print-payment-note">${escapeHtml(companyProfile.footerNote)}</div>` : ""}
+    </div>
+  `;
   const notesMarkup = String(invoice.notes || "").trim()
     ? `<p>${escapeHtml(invoice.notes)}</p>`
     : `<div class="invoice-print-empty-space"></div>`;
@@ -5939,6 +5946,7 @@ function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
               <p class="invoice-print-subtle">Bank details not configured yet.</p>
             </div>
           `}
+          ${footerNotesMarkup}
         </div>
         <div><span>Subtotal</span><strong>${escapeHtml(formatCurrency(gstBreakup.grossSubtotal))}</strong></div>
         <div><span>Discount</span><strong>${gstBreakup.discountAmount ? escapeHtml(formatCurrency(gstBreakup.discountAmount)) : "-"}</strong></div>
@@ -5985,11 +5993,6 @@ function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
           </table>
         </section>
       ` : ""}
-      <footer class="invoice-print-footer">
-        <div class="invoice-print-thank-you">Thank you for your business.</div>
-        <div class="invoice-print-payment-note">Please clear the dues within 15 working days.</div>
-        ${companyProfile.footerNote ? `<div class="invoice-print-payment-note">${escapeHtml(companyProfile.footerNote)}</div>` : ""}
-      </footer>
       <div class="invoice-print-page-number"></div>
     </div>
   `;
@@ -6067,7 +6070,7 @@ function getInvoicePrintStyles() {
     .invoice-print-table th:nth-child(4), .invoice-print-table td:nth-child(4) { width: 38px; text-align: right; }
     .invoice-print-table th:nth-child(5), .invoice-print-table td:nth-child(5) { width: 76px; text-align: right; }
     .invoice-print-table th:nth-child(6), .invoice-print-table td:nth-child(6) { width: 82px; text-align: right; }
-    .invoice-print-hsn-summary { margin-top: 3px; padding-top: 0; }
+    .invoice-print-hsn-summary { margin-top: 8px; padding-top: 6px; border-top: 1px solid #dfe6ef; }
     .invoice-print-hsn-summary h2 { margin: 0 0 3px; color: #5c6b7a; font-size: 13.5px; letter-spacing: .08em; text-transform: uppercase; }
     .invoice-print-hsn-summary-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     .invoice-print-hsn-summary-table th, .invoice-print-hsn-summary-table td { padding: 3px 5px; border-bottom: 1px solid #dfe6ef; text-align: left; vertical-align: top; }
@@ -6097,6 +6100,7 @@ function getInvoicePrintStyles() {
     .invoice-print-signature strong { display: block; margin-bottom: 2px; color: #17212b; font-size: 15px; white-space: nowrap; }
     .invoice-print-signature span { color: #17212b; font-size: 15px; font-weight: 700; }
     .invoice-print-footer { margin-top: 6px; border-top: 1px solid #dfe6ef; padding-top: 4px; color: #667789; font-size: 13px; line-height: 1.3; }
+    .invoice-print-footer-inline { margin-top: 8px; }
     .invoice-print-thank-you { margin-bottom: 2px; color: #17212b; font-weight: 700; }
     .invoice-print-payment-note { font-size: 13px; line-height: 1.3; }
     .invoice-print-page-number { display: none; }
