@@ -6090,8 +6090,8 @@ function getInvoicePrintStyles() {
     .invoice-print-balance { border-top: 2px solid #dfe6ef; border-bottom: 1px solid #dfe6ef; padding-top: 4px; font-size: 14.5px; }
     .invoice-print-balance-rule { grid-column: 2; height: 0; margin-top: 2px; border-top: 2px solid #17212b; }
     .invoice-print-signature { grid-column: 2; display: block; margin-top: 4px; text-align: center; }
-    .invoice-print-signature-space { height: 36px; margin: 2px 0 3px; border-bottom: 1px solid #17212b; display: flex; align-items: end; justify-content: center; overflow: hidden; }
-    .invoice-print-signature-image { max-height: 32px; width: auto; max-width: 150px; object-fit: contain; }
+    .invoice-print-signature-space { height: 50px; margin: 3px 0 4px; border-bottom: 1px solid #17212b; display: flex; align-items: end; justify-content: center; overflow: hidden; }
+    .invoice-print-signature-image { max-height: 46px; width: auto; max-width: 190px; object-fit: contain; }
     .invoice-print-signature strong { display: block; margin-bottom: 2px; color: #17212b; font-size: 12px; white-space: nowrap; }
     .invoice-print-signature span { color: #17212b; font-size: 12px; font-weight: 700; }
     .invoice-print-footer { margin-top: 6px; border-top: 1px solid #dfe6ef; padding-top: 4px; color: #667789; font-size: 11px; line-height: 1.28; }
