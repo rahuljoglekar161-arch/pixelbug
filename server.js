@@ -75,22 +75,26 @@ const CREW_COLOR_REMAP = {
   "#8fc3a0": "#0b8043",
   "#d9b27c": "#c26401",
   "#7fd6f5": "#039be5",
-  "#f59fc1": "#d81b60"
+  "#f59fc1": "#d81b60",
+  "#d93025": "#d50000",
+  "#f29900": "#f4511e",
+  "#7cb342": "#0b8043",
+  "#4285f4": "#3f51b5",
+  "#c26401": "#f4511e",
+  "#d81b60": "#e67c73"
 };
 const GOOGLE_EVENT_COLOR_IDS = {
-  "#d93025": "11",
-  "#f29900": "6",
+  "#d50000": "11",
+  "#f4511e": "6",
   "#f6bf26": "5",
-  "#7cb342": "10",
   "#33b679": "2",
-  "#4285f4": "9",
   "#7986cb": "1",
   "#8e24aa": "3",
   "#e67c73": "4",
   "#0b8043": "10",
   "#039be5": "7",
-  "#c26401": "6",
-  "#d81b60": "4"
+  "#616161": "8",
+  "#3f51b5": "9"
 };
 const LOCATION_FALLBACKS = [
   { label: "Ahmedabad, IN", cityName: "Ahmedabad", countryCode: "IN", countryName: "India", code: "AMD", subType: "CITY" },
@@ -2176,6 +2180,7 @@ function normalizeShow(show) {
     showDateTo,
     showStatus: show.showStatus === "tentative" ? "tentative" : "confirmed",
     googleEventId: String(show.googleEventId || "").trim(),
+    googleEventColorId: String(show.googleEventColorId || "").trim(),
     googleSyncSource: String(show.googleSyncSource || "").trim(),
     googleSyncStatus: String(show.googleSyncStatus || "").trim(),
     googleNotes: String(show.googleNotes || "").trim(),
@@ -2474,6 +2479,7 @@ function mapGoogleEventToShow(event, store, existingShow = null) {
     return normalizeShow({
       ...existingShow,
       googleSyncSource: "pixelbug",
+      googleEventColorId: String(existingShow.googleEventColorId || event.colorId || "").trim(),
       googleNotes: parsedDescription.notes || existingShow.googleNotes || "",
       googleLastSyncedAt: existingShow.googleLastSyncedAt || ""
     });
@@ -2483,6 +2489,7 @@ function mapGoogleEventToShow(event, store, existingShow = null) {
     return normalizeShow({
       ...existingShow,
       googleSyncSource: "pixelbug",
+      googleEventColorId: String(existingShow.googleEventColorId || event.colorId || "").trim(),
       googleNotes: parsedDescription.notes || existingShow.googleNotes || "",
       googleLastSyncedAt: existingShow.googleLastSyncedAt || ""
     });
@@ -2497,6 +2504,7 @@ function mapGoogleEventToShow(event, store, existingShow = null) {
     showName: event.summary || existingShow?.showName || "Untitled Google Event",
     location: event.location || existingShow?.location || "",
     googleEventId: event.id || existingShow?.googleEventId || "",
+    googleEventColorId: String(event.colorId || existingShow?.googleEventColorId || "").trim(),
     googleSyncSource: "google",
     googleSyncStatus: existingShow?.googleEventId ? "updated_from_google" : "synced",
     googleNotes: parsedDescription.notes,
@@ -3028,6 +3036,7 @@ async function pushPixelbugShowsToGoogle(req, currentStore) {
         : await googleApiRequest(req, "POST", `/calendars/${encodeURIComponent(config.calendarId)}/events`, body);
 
       show.googleEventId = syncedEvent.id;
+      show.googleEventColorId = String(syncedEvent.colorId || googleColorId || show.googleEventColorId || "").trim();
       show.googleSyncSource = "pixelbug";
       show.googleSyncStatus = "synced";
       show.googleNotes = parseGoogleDescription(syncedEvent.description || "").notes || show.googleNotes || "";

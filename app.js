@@ -1,19 +1,17 @@
 const STORAGE_KEY = "pixelbug-calendar-ui-v1";
 const DEFAULT_THEME_PREFERENCE = "light";
 const COLOR_OPTIONS = [
-  "#d93025",
-  "#f29900",
+  "#d50000",
+  "#f4511e",
   "#f6bf26",
-  "#7cb342",
   "#33b679",
-  "#4285f4",
   "#7986cb",
   "#8e24aa",
   "#e67c73",
   "#0b8043",
   "#039be5",
-  "#c26401",
-  "#d81b60"
+  "#616161",
+  "#3f51b5"
 ];
 const COLOR_REMAP = {
   "#ee8f8f": "#d93025",
@@ -28,7 +26,26 @@ const COLOR_REMAP = {
   "#8fc3a0": "#0b8043",
   "#d9b27c": "#c26401",
   "#7fd6f5": "#039be5",
-  "#f59fc1": "#d81b60"
+  "#f59fc1": "#d81b60",
+  "#d93025": "#d50000",
+  "#f29900": "#f4511e",
+  "#7cb342": "#0b8043",
+  "#4285f4": "#3f51b5",
+  "#c26401": "#f4511e",
+  "#d81b60": "#e67c73"
+};
+const GOOGLE_EVENT_UI_COLORS = {
+  "1": "#7986cb",
+  "2": "#33b679",
+  "3": "#8e24aa",
+  "4": "#e67c73",
+  "5": "#f6bf26",
+  "6": "#f4511e",
+  "7": "#039be5",
+  "8": "#616161",
+  "9": "#3f51b5",
+  "10": "#0b8043",
+  "11": "#d50000"
 };
 
 const weekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -100,7 +117,12 @@ function uid(prefix) {
 
 function resolveCrewColor(color) {
   if (!color) return color;
-  return COLOR_REMAP[color] || color;
+  return COLOR_REMAP[String(color).toLowerCase()] || String(color).toLowerCase();
+}
+
+function resolveGoogleEventColor(colorId) {
+  if (!colorId) return "";
+  return GOOGLE_EVENT_UI_COLORS[String(colorId)] || "";
 }
 
 function formatCurrency(amount) {
@@ -4677,10 +4699,11 @@ function getShowDisplayMeta(show, user) {
   const manualCrewNames = show.assignments
     .filter((assignment) => !assignment.crewId && assignment.manualCrewName)
     .map((assignment) => assignment.manualCrewName);
+  const googleColor = resolveGoogleEventColor(show.googleEventColorId);
   const palette = crewUsers.map((crewUser) => resolveCrewColor(crewUser.color)).filter(Boolean);
-  const color = palette.length > 1
+  const color = googleColor || (palette.length > 1
     ? `linear-gradient(135deg, ${palette.join(", ")})`
-    : (palette[0] || "linear-gradient(135deg, #575e70, #8b93a5)");
+    : (palette[0] || "linear-gradient(135deg, #575e70, #8b93a5)"));
   const visibleAssignees = user.role === "crew"
     ? crewUsers.filter((crewUser) => crewUser.id === user.id)
     : [...crewUsers, ...manualCrewNames.map((name) => ({ name }))];
