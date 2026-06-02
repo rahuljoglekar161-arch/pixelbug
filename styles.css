@@ -19,13 +19,14 @@
 
 @media print {
   @page {
-    size: A4;
-    margin: 0;
+    size: A4 portrait;
+    margin: 10mm;
   }
 
   html,
   body {
-    width: 210mm;
+    width: auto;
+    min-width: 0;
     margin: 0;
     padding: 0;
     background: #fff;
@@ -40,6 +41,8 @@
     position: static;
     inset: auto;
     display: block !important;
+    width: auto;
+    max-width: none;
     padding: 0;
     background: transparent;
     backdrop-filter: none;
@@ -47,6 +50,7 @@
 
   body.invoice-printing .invoice-preview-dialog {
     width: auto;
+    max-width: none;
     max-height: none;
     overflow: visible;
     border: 0;
@@ -60,16 +64,20 @@
   }
 
   body.invoice-printing .invoice-preview-content {
+    display: block !important;
+    width: auto;
+    max-width: none;
     overflow: visible;
     padding: 0;
     background: transparent;
   }
 
   .invoice-print-page {
-    width: 210mm;
+    width: auto;
+    min-width: 0;
     min-height: auto;
     margin: 0;
-    padding: 4mm 4.5mm;
+    padding: 0;
     border-radius: 0;
     box-shadow: none;
     overflow: hidden;
@@ -80,6 +88,52 @@
   .invoice-print-page:last-child {
     break-after: auto;
     page-break-after: auto;
+  }
+
+  .invoice-print-sheet {
+    width: 100%;
+  }
+
+  .invoice-print-brand-title {
+    font-size: 18px;
+  }
+
+  .invoice-print-company-line,
+  .invoice-print-copy-label,
+  .invoice-print-meta-row,
+  .invoice-print-client-address,
+  .invoice-print-table td,
+  .invoice-print-totals-table td,
+  .invoice-print-bank-block,
+  .invoice-print-footer,
+  .invoice-print-payment-note,
+  .invoice-print-subtle,
+  .invoice-print-hsn-summary-table td {
+    font-size: 10.5px;
+  }
+
+  .invoice-print-document-title {
+    font-size: 20px;
+  }
+
+  .invoice-print-client-name {
+    font-size: 12.5px;
+  }
+
+  .invoice-print-table th,
+  .invoice-print-hsn-summary-table th,
+  .invoice-print-hsn-title,
+  .invoice-print-signatory-name,
+  .invoice-print-signatory-label {
+    font-size: 9.5px;
+  }
+
+  .invoice-print-amount-line span {
+    font-size: 10.5px;
+  }
+
+  .invoice-print-amount-line strong {
+    font-size: 11.5px;
   }
 }
 
