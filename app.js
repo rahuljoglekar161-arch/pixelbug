@@ -6139,6 +6139,9 @@ async function printInvoiceDocument(invoice, copyCount) {
     await document.fonts.ready.catch(() => {});
   }
   await waitForImagesToLoad(content);
+  await new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  });
   window.setTimeout(() => {
     if (document.body.classList.contains("invoice-printing")) {
       cleanup();

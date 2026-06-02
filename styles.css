@@ -21,14 +21,13 @@
   @page {
     size: A4;
     margin: 0;
-    @bottom-right {
-      content: "Page " counter(page);
-      color: #667789;
-      font-size: 9px;
-    }
   }
 
+  html,
   body {
+    width: 210mm;
+    margin: 0;
+    padding: 0;
     background: #fff;
   }
 
@@ -68,11 +67,19 @@
 
   .invoice-print-page {
     width: 210mm;
-    min-height: 297mm;
+    min-height: auto;
     margin: 0;
-    padding: 7mm 8mm;
+    padding: 4mm 4.5mm;
     border-radius: 0;
     box-shadow: none;
+    overflow: hidden;
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .invoice-print-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
   }
 }
 
