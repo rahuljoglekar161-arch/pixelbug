@@ -20,7 +20,7 @@
 @media print {
   @page {
     size: A4 portrait;
-    margin: 6mm;
+    margin: 4mm;
   }
 
   html,
@@ -75,7 +75,7 @@
   .invoice-print-page {
     width: auto;
     min-width: 0;
-    min-height: auto;
+    min-height: calc(297mm - 8mm);
     margin: 0;
     padding: 0;
     border-radius: 0;
@@ -92,10 +92,11 @@
 
   .invoice-print-sheet {
     width: 100%;
+    min-height: calc(297mm - 8mm);
   }
 
   .invoice-print-brand-title {
-    font-size: 19px;
+    font-size: 22px;
   }
 
   .invoice-print-company-line,
@@ -109,15 +110,15 @@
   .invoice-print-payment-note,
   .invoice-print-subtle,
   .invoice-print-hsn-summary-table td {
-    font-size: 10.5px;
+    font-size: 11.6px;
   }
 
   .invoice-print-document-title {
-    font-size: 22px;
+    font-size: 24px;
   }
 
   .invoice-print-client-name {
-    font-size: 13px;
+    font-size: 14.5px;
   }
 
   .invoice-print-table th,
@@ -125,15 +126,15 @@
   .invoice-print-hsn-title,
   .invoice-print-signatory-name,
   .invoice-print-signatory-label {
-    font-size: 9.5px;
+    font-size: 10.6px;
   }
 
   .invoice-print-amount-line span {
-    font-size: 10.5px;
+    font-size: 11.6px;
   }
 
   .invoice-print-amount-line strong {
-    font-size: 12px;
+    font-size: 13.8px;
   }
 }
 
@@ -3259,23 +3260,27 @@ button.danger {
   flex: 0 0 auto;
   min-height: 297mm;
   margin: 0 auto;
-  padding: 4mm 4.5mm;
+  padding: 3mm 3.5mm;
   border-radius: 0;
   background: #fff;
   color: #17212b;
-  font-size: 9px;
-  line-height: 1.24;
+  font-size: 10px;
+  line-height: 1.28;
   box-shadow: 0 18px 44px rgba(16, 24, 40, 0.14);
 }
 
 .invoice-print-sheet {
   border: 1px solid #b6bcc4;
   background: #fff;
+  min-height: calc(297mm - 6mm);
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto auto auto auto 1fr auto;
 }
 
 .invoice-print-header {
   display: block;
-  padding: 7px 8px 5px;
+  padding: 9px 10px 7px;
   border-bottom: 1px solid #b6bcc4;
 }
 
@@ -3300,7 +3305,7 @@ button.danger {
   margin: 0 0 1px;
   color: #17212b;
   font-family: Arial, Helvetica, sans-serif;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 700;
   line-height: 1.05;
 }
@@ -3308,7 +3313,7 @@ button.danger {
 .invoice-print-company-line {
   margin: 0;
   color: #111;
-  font-size: 7.6px;
+  font-size: 8.2px;
   line-height: 1.2;
 }
 
@@ -3322,7 +3327,7 @@ button.danger {
 .invoice-print-document-title {
   color: #17212b;
   font-family: Arial, Helvetica, sans-serif;
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
   line-height: 1;
   text-align: right;
@@ -3333,7 +3338,7 @@ button.danger {
 .invoice-print-copy-label {
   margin-top: 4px;
   color: #444;
-  font-size: 7px;
+  font-size: 7.5px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -3343,8 +3348,8 @@ button.danger {
 .invoice-print-subtle {
   margin: 0;
   color: #222;
-  font-size: 7.6px;
-  line-height: 1.22;
+  font-size: 8.5px;
+  line-height: 1.28;
   white-space: pre-line;
 }
 
@@ -3359,8 +3364,8 @@ button.danger {
 }
 
 .invoice-print-meta-panel {
-  min-height: 52px;
-  padding: 5px 8px;
+  min-height: 58px;
+  padding: 7px 9px;
 }
 
 .invoice-print-meta-panel + .invoice-print-meta-panel {
@@ -3370,12 +3375,12 @@ button.danger {
 .invoice-print-meta-row {
   display: flex;
   gap: 5px;
-  font-size: 8px;
-  line-height: 1.45;
+  font-size: 9px;
+  line-height: 1.5;
 }
 
 .invoice-print-meta-row span {
-  min-width: 72px;
+  min-width: 82px;
   color: #111;
 }
 
@@ -3385,21 +3390,21 @@ button.danger {
 }
 
 .invoice-print-client-block {
-  min-height: 58px;
-  padding: 7px 8px;
+  min-height: 66px;
+  padding: 9px 9px 10px;
   border-bottom: 1px solid #b6bcc4;
 }
 
 .invoice-print-client-name {
   margin: 0 0 2px;
-  font-size: 9px;
+  font-size: 10.5px;
   font-weight: 700;
   line-height: 1.2;
 }
 
 .invoice-print-client-address {
-  font-size: 7.8px;
-  line-height: 1.22;
+  font-size: 8.6px;
+  line-height: 1.3;
   color: #222;
   white-space: pre-line;
 }
@@ -3417,21 +3422,21 @@ button.danger {
 
 .invoice-print-table th,
 .invoice-print-table td {
-  padding: 3px 5px;
+  padding: 5px 6px;
   border: 1px solid #b6bcc4;
   text-align: left;
   vertical-align: top;
 }
 
 .invoice-print-table td {
-  font-size: 7.7px;
-  line-height: 1.18;
+  font-size: 8.6px;
+  line-height: 1.24;
 }
 
 .invoice-print-table th {
   background: #f7f7f7;
   color: #111;
-  font-size: 7px;
+  font-size: 8px;
   font-weight: 700;
   letter-spacing: 0;
   text-transform: none;
@@ -3468,16 +3473,21 @@ button.danger {
 .invoice-print-lower-grid {
   display: grid;
   grid-template-columns: 56% 44%;
+  min-height: 100%;
 }
 
 .invoice-print-lower-left {
   border-right: 1px solid #b6bcc4;
-  padding: 7px 8px;
+  padding: 10px 10px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
 }
 
 .invoice-print-lower-right {
   display: flex;
   flex-direction: column;
+  justify-content: space-between;
 }
 
 .invoice-print-amount-line {
@@ -3487,9 +3497,9 @@ button.danger {
 
 .invoice-print-amount-line span {
   display: block;
-  margin-bottom: 2px;
+  margin-bottom: 4px;
   color: #111;
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 700;
   letter-spacing: 0;
   text-transform: none;
@@ -3498,52 +3508,53 @@ button.danger {
 .invoice-print-amount-line strong {
   display: block;
   color: #111;
-  font-size: 8.5px;
+  font-size: 10px;
   font-style: italic;
   font-weight: 700;
-  line-height: 1.2;
+  line-height: 1.28;
 }
 
 .invoice-print-notes-copy {
-  margin-top: 6px;
-  font-size: 7.6px;
-  line-height: 1.25;
+  margin-top: 10px;
+  font-size: 8.4px;
+  line-height: 1.35;
   color: #222;
 }
 
 .invoice-print-footer {
-  margin-top: 12px;
+  margin-top: 16px;
   padding-top: 0;
   border-top: 0;
   color: #111;
-  font-size: 7.6px;
-  line-height: 1.28;
+  font-size: 8.4px;
+  line-height: 1.35;
 }
 
 .invoice-print-footer-inline {
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 .invoice-print-thank-you {
-  margin-bottom: 7px;
+  margin-bottom: 8px;
   color: #111;
   font-weight: 400;
 }
 
 .invoice-print-payment-note {
-  font-size: 7.6px;
-  line-height: 1.28;
+  font-size: 8.4px;
+  line-height: 1.35;
 }
 
 .invoice-print-bank-block {
-  margin-top: 12px;
+  margin-top: auto;
+  padding-top: 18px;
   color: #111;
-  font-size: 7.6px;
-  line-height: 1.28;
+  font-size: 8.4px;
+  line-height: 1.35;
 }
 
 .invoice-print-bank-block p {
-  margin: 0 0 8px;
+  margin: 0 0 10px;
 }
 
 .invoice-print-bank-block div {
@@ -3564,10 +3575,10 @@ button.danger {
 }
 
 .invoice-print-totals-table td {
-  padding: 3px 7px;
+  padding: 5px 8px;
   border-bottom: 1px solid #b6bcc4;
-  font-size: 7.7px;
-  line-height: 1.2;
+  font-size: 8.7px;
+  line-height: 1.24;
 }
 
 .invoice-print-totals-table td:last-child {
@@ -3582,19 +3593,22 @@ button.danger {
 .invoice-print-signature-panel {
   flex: 1 1 auto;
   border-bottom: 1px solid #b6bcc4;
-  padding: 4px 7px 0;
+  padding: 8px 9px 0;
   text-align: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
 }
 
 .invoice-print-signatory-name {
-  margin-bottom: 4px;
-  font-size: 7px;
-  line-height: 1.2;
+  margin-bottom: 6px;
+  font-size: 8px;
+  line-height: 1.24;
 }
 
 .invoice-print-signature-space {
-  height: 56px;
-  margin: 0 0 4px;
+  height: 66px;
+  margin: 0 0 6px;
   border-bottom: 1px solid #111;
   display: flex;
   align-items: end;
@@ -3603,28 +3617,29 @@ button.danger {
 }
 
 .invoice-print-signature-image {
-  max-height: 50px;
+  max-height: 58px;
   width: auto;
-  max-width: 160px;
+  max-width: 180px;
   object-fit: contain;
 }
 
 .invoice-print-signatory-label {
   color: #111;
-  font-size: 7px;
+  font-size: 8px;
   font-weight: 700;
-  padding-bottom: 2px;
+  padding-bottom: 4px;
 }
 
 .invoice-print-hsn-summary {
-  padding: 20px 0 0;
+  margin-top: auto;
+  padding: 14px 0 0;
 }
 
 .invoice-print-hsn-title {
   margin: 0 0 5px;
   padding: 0 0 0 4px;
   color: #111;
-  font-size: 6.8px;
+  font-size: 8px;
   line-height: 1.2;
 }
 
@@ -3636,20 +3651,20 @@ button.danger {
 
 .invoice-print-hsn-summary-table th,
 .invoice-print-hsn-summary-table td {
-  padding: 3px 5px;
+  padding: 5px 6px;
   border: 1px solid #b6bcc4;
   text-align: left;
   vertical-align: top;
 }
 
 .invoice-print-hsn-summary-table td {
-  font-size: 7px;
-  line-height: 1.18;
+  font-size: 8.4px;
+  line-height: 1.22;
 }
 
 .invoice-print-hsn-summary-table th {
   color: #111;
-  font-size: 6.8px;
+  font-size: 8px;
   font-weight: 700;
   letter-spacing: 0;
   background: #f7f7f7;

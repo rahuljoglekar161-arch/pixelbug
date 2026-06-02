@@ -6076,7 +6076,7 @@ function getInvoicePrintDocumentHtml(invoice, copyCount = 1) {
         <style>
           @page {
             size: A4 portrait;
-            margin: 6mm;
+            margin: 4mm;
           }
           html, body {
             margin: 0;
@@ -6092,7 +6092,7 @@ function getInvoicePrintDocumentHtml(invoice, copyCount = 1) {
           .invoice-print-page {
             width: auto !important;
             min-width: 0 !important;
-            min-height: auto !important;
+            min-height: calc(297mm - 8mm) !important;
             margin: 0 !important;
             padding: 0 !important;
             background: #fff !important;
@@ -6107,6 +6107,7 @@ function getInvoicePrintDocumentHtml(invoice, copyCount = 1) {
           }
           .invoice-print-sheet {
             width: 100% !important;
+            min-height: calc(297mm - 8mm) !important;
           }
         </style>
       </head>
