@@ -5744,27 +5744,43 @@ function normalizeInvoicePrintDetailText(value) {
     .trim();
 }
 
-function getInvoiceLinePrintDetailRows(item) {
-  const linkedShowIds = parseInvoiceShowIds(item?.showId || "");
-  const linkedShows = linkedShowIds.map((showId) => state.shows.find((show) => show.id === showId)).filter(Boolean);
-  const customRows = String(item?.customDetails || "")
+function getInvoiceLineManualDetailRows(customDetails = "", linkedShows = []) {
+  const customRows = String(customDetails || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
-  const linkedRows = getInvoiceLineShowLabels(item?.showId);
-  const autoDetailTokens = linkedShows
+  if (!customRows.length) return [];
+  const linkedShowNameTokens = linkedShows
+    .map((show) => normalizeInvoicePrintDetailText(show?.showName || ""))
+    .filter(Boolean);
+  const currentAutoTokens = linkedShows
     .flatMap((show) => [defaultInvoiceLineCustomDetails(show), getInvoiceLineShowLabel(show.id)])
     .map(normalizeInvoicePrintDetailText)
     .filter((token) => token.length > 10);
-  const manualRows = customRows.filter((line) => {
+  return customRows.filter((line) => {
     const normalized = normalizeInvoicePrintDetailText(line);
-    if (!normalized || !autoDetailTokens.length) return Boolean(normalized);
-    const exactAutoDetail = autoDetailTokens.some((token) => normalized === token);
-    const combinedAutoDetails = autoDetailTokens.filter((token) => normalized.includes(token)).length > 1;
-    return !exactAutoDetail && !combinedAutoDetails;
+    if (!normalized) return false;
+    if (currentAutoTokens.some((token) => normalized === token)) return false;
+    const startsWithLinkedShowName = linkedShowNameTokens.some((token) => normalized.startsWith(token));
+    const looksLikeShowScheduleDetail = /\b\d{4}\b/.test(line);
+    if (startsWithLinkedShowName && looksLikeShowScheduleDetail) return false;
+    return true;
   });
+}
+
+function buildInvoiceLineCustomDetails(customDetails = "", linkedShows = []) {
+  const manualRows = getInvoiceLineManualDetailRows(customDetails, linkedShows);
+  const autoRows = linkedShows.map(defaultInvoiceLineCustomDetails).filter(Boolean);
+  return [...manualRows, ...autoRows].filter(Boolean).join("\n");
+}
+
+function getInvoiceLinePrintDetailRows(item) {
+  const linkedShowIds = parseInvoiceShowIds(item?.showId || "");
+  const linkedShows = linkedShowIds.map((showId) => state.shows.find((show) => show.id === showId)).filter(Boolean);
+  const customRows = getInvoiceLineManualDetailRows(item?.customDetails || "", linkedShows);
+  const linkedRows = getInvoiceLineShowLabels(item?.showId);
   const seenRows = new Set();
-  return [...manualRows, ...linkedRows].filter((line) => {
+  return [...customRows, ...linkedRows].filter((line) => {
     const normalized = normalizeInvoicePrintDetailText(line);
     if (!normalized || seenRows.has(normalized)) return false;
     seenRows.add(normalized);
@@ -6152,6 +6168,24 @@ function openInvoicePrintPreview(invoiceId) {
   document.body.classList.add("modal-open");
 }
 
+function ensureInvoicePrintPreview(invoice, copyCount = state.ui.invoicePrintCopies || 1) {
+  const modal = document.getElementById("invoicePreviewModal");
+  const content = document.getElementById("invoicePreviewContent");
+  const copiesSelect = document.getElementById("invoicePrintCopies");
+  if (!modal || !content) {
+    throw new Error("Invoice preview is unavailable.");
+  }
+  if (copiesSelect) {
+    copiesSelect.value = String(copyCount || 1);
+  }
+  content.innerHTML = getInvoiceDocumentMarkup(invoice, { copyCount });
+  modal.dataset.invoiceId = invoice.id;
+  modal.classList.remove("hidden");
+  modal.setAttribute("aria-hidden", "false");
+  document.body.classList.add("modal-open");
+  return { modal, content };
+}
+
 function closeInvoicePrintPreview() {
   const modal = document.getElementById("invoicePreviewModal");
   const content = document.getElementById("invoicePreviewContent");
@@ -6176,60 +6210,27 @@ function waitForImagesToLoad(container) {
 }
 
 async function printInvoiceDocument(invoice, copyCount) {
-  const printFrame = document.createElement("iframe");
-  printFrame.setAttribute("aria-hidden", "true");
-  printFrame.style.position = "fixed";
-  printFrame.style.left = "-10000px";
-  printFrame.style.top = "0";
-  printFrame.style.width = "210mm";
-  printFrame.style.height = "297mm";
-  printFrame.style.border = "0";
-  printFrame.style.opacity = "0";
-  document.body.append(printFrame);
-
-  const printWindow = printFrame.contentWindow;
-  const printDocument = printWindow?.document;
-  if (!printWindow || !printDocument) {
-    printFrame.remove();
-    throw new Error("Unable to prepare invoice print document.");
-  }
-
+  const previousTitle = document.title;
   const printTitle = getInvoicePdfTitle(invoice);
-  printDocument.open();
-  printDocument.write(`<!DOCTYPE html>
-    <html>
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=794, initial-scale=1">
-        <title>${escapeHtml(printTitle)}</title>
-        <style>${getInvoicePrintStyles()}</style>
-      </head>
-      <body>${getInvoiceDocumentMarkup(invoice, { copyCount })}</body>
-    </html>`);
-  printDocument.close();
-
-  await new Promise((resolve) => {
-    if (printDocument.readyState === "complete") {
-      resolve();
-      return;
-    }
-    printFrame.addEventListener("load", resolve, { once: true });
-  });
-  if (printDocument.fonts?.ready) {
-    await printDocument.fonts.ready.catch(() => {});
-  }
-  await waitForImagesToLoad(printDocument.body);
-
-  const removeFrame = () => {
-    window.setTimeout(() => printFrame.remove(), 250);
+  const { content } = ensureInvoicePrintPreview(invoice, copyCount);
+  document.title = printTitle;
+  document.body.classList.add("invoice-printing");
+  const cleanup = () => {
+    document.body.classList.remove("invoice-printing");
+    document.title = previousTitle;
+    window.removeEventListener("afterprint", cleanup);
   };
-  printWindow.addEventListener("afterprint", removeFrame, { once: true });
+  window.addEventListener("afterprint", cleanup, { once: true });
+  if (document.fonts?.ready) {
+    await document.fonts.ready.catch(() => {});
+  }
+  await waitForImagesToLoad(content);
   window.setTimeout(() => {
-    if (printFrame.isConnected) printFrame.remove();
-  }, 120000);
-
-  printWindow.focus();
-  printWindow.print();
+    if (document.body.classList.contains("invoice-printing")) {
+      cleanup();
+    }
+  }, 10000);
+  window.print();
 }
 
 async function printInvoiceById(invoiceId, copyCount = state.ui.invoicePrintCopies || 1) {
@@ -6238,14 +6239,10 @@ async function printInvoiceById(invoiceId, copyCount = state.ui.invoicePrintCopi
     showToast("Invoice not found.");
     return;
   }
-  const previousTitle = document.title;
-  document.title = getInvoicePdfTitle(invoice);
   try {
     await printInvoiceDocument(invoice, copyCount);
   } catch (error) {
     showToast(error.message || "Unable to print invoice.");
-  } finally {
-    document.title = previousTitle;
   }
 }
 
@@ -6821,8 +6818,8 @@ function renderInvoicesPanel() {
             descriptionInput.value = DEFAULT_INVOICE_PARTICULARS;
           }
           const customDetailsInput = row?.querySelector('input[name="lineCustomDetails"]');
-          if (selectedShows.length && customDetailsInput && !customDetailsInput.value.trim()) {
-            customDetailsInput.value = selectedShows.map(defaultInvoiceLineCustomDetails).join("\n");
+          if (customDetailsInput) {
+            customDetailsInput.value = buildInvoiceLineCustomDetails(customDetailsInput.value, selectedShows);
           }
           const duplicateWarning = row?.querySelector("[data-duplicate-warning]");
           const duplicates = selectedShows
@@ -7227,7 +7224,12 @@ function renderInvoicesPanel() {
         showId: row.querySelector('input[name="lineShowId"]').value,
         description: row.querySelector('input[name="lineDescription"]').value.trim(),
         sac: row.querySelector('input[name="lineSac"]').value.trim(),
-        customDetails: row.querySelector('input[name="lineCustomDetails"]').value.trim(),
+        customDetails: buildInvoiceLineCustomDetails(
+          row.querySelector('input[name="lineCustomDetails"]').value.trim(),
+          parseInvoiceShowIds(row.querySelector('input[name="lineShowId"]').value)
+            .map((showId) => state.shows.find((show) => show.id === showId))
+            .filter(Boolean)
+        ),
         discount: row.querySelector('input[name="lineDiscount"]').value.trim(),
         quantity: quantity > 0 ? quantity : 1,
         unitRate,
