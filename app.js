@@ -5856,7 +5856,6 @@ function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
   const details = normalizeInvoiceDetails(invoice.details);
   const isQuoteDocument = details.documentType === "quote";
   const printDocumentTitle = isQuoteDocument ? "Quotation" : "Tax Invoice";
-  const printDetailsTitle = isQuoteDocument ? "Quotation Details" : "Invoice Details";
   const printNumberLabel = isQuoteDocument ? "Quotation No" : "Invoice No";
   const invoiceClient = getClientById(invoice.clientId) || getClientByName(invoice.clientName);
   const effectiveDueDate = invoice.dueDate || getDueDateFromTerms(invoice.issueDate, details.paymentTerms);
@@ -5867,6 +5866,10 @@ function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
   const hsnSacSummaryRows = getInvoiceHsnSacSummaryRows(invoice.lineItems || [], effectivePlaceOfSupply);
   const invoiceAmountPaid = Number(invoice.amountPaid || 0);
   const invoiceBalanceDue = Math.max(0, gstBreakup.totalAmount - invoiceAmountPaid);
+  const taxTypeLabel = isMaharashtraSupply(effectivePlaceOfSupply) ? "GST" : "IGST";
+  const copyLabelMarkup = copyLabel && copyLabel !== "Original Copy"
+    ? `<div class="invoice-print-copy-label">${escapeHtml(copyLabel)}</div>`
+    : "";
   const bankRows = [
     { label: "Account Name", value: companyProfile.bankAccountName },
     { label: "Bank", value: companyProfile.bankName },
@@ -5905,134 +5908,138 @@ function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
 
   return `
     <div class="invoice-print-page">
-      <header class="invoice-print-header">
-        <div class="invoice-print-brand-block">
+      <div class="invoice-print-sheet">
+        <header class="invoice-print-header">
           <div class="invoice-print-brand-row">
             <img src="PIXELBUG.JPG" alt="PixelBug logo" class="invoice-print-logo">
             <div class="invoice-print-brand-copy">
               <div class="invoice-print-brand-title">${escapeHtml(companyProfile.name)}</div>
               <div class="invoice-print-company-line">${formatMultilineHtml(companyProfile.address)}</div>
-              ${companyProfile.gstin ? `<div class="invoice-print-company-line">GSTIN: ${escapeHtml(companyProfile.gstin)}</div>` : ""}
+              ${companyProfile.gstin ? `<div class="invoice-print-company-line">GSTIN : ${escapeHtml(companyProfile.gstin)}</div>` : ""}
               ${companyProfile.phone ? `<div class="invoice-print-company-line">${escapeHtml(companyProfile.phone)}</div>` : ""}
               ${companyProfile.email ? `<div class="invoice-print-company-line">${escapeHtml(companyProfile.email)}</div>` : ""}
               ${companyProfile.website ? `<div class="invoice-print-company-line">${escapeHtml(companyProfile.website)}</div>` : ""}
             </div>
             <div class="invoice-print-copy-block">
               <div class="invoice-print-document-title">${printDocumentTitle}</div>
-              <div class="invoice-print-copy-label">${escapeHtml(copyLabel)}</div>
+              ${copyLabelMarkup}
             </div>
           </div>
-        </div>
-      </header>
-      <section class="invoice-print-section invoice-print-grid invoice-print-summary-grid">
-        <div class="invoice-print-card">
-          <h2>${printDetailsTitle}</h2>
-          <div class="invoice-print-detail-list">
-            <div><span>${printNumberLabel}</span><strong>${escapeHtml(invoice.invoiceNumber)}</strong></div>
-            <div><span>Issue Date</span><strong>${escapeHtml(formatInvoiceDate(invoice.issueDate))}</strong></div>
-            <div><span>Payment Terms</span><strong>${escapeHtml(details.paymentTerms || "Net 15")}</strong></div>
-            <div><span>Due Date</span><strong>${escapeHtml(formatInvoiceDate(effectiveDueDate))}</strong></div>
+        </header>
+        <section class="invoice-print-meta-grid">
+          <div class="invoice-print-meta-panel">
+            <div class="invoice-print-meta-row"><span>${printNumberLabel}.</span><strong>: ${escapeHtml(invoice.invoiceNumber)}</strong></div>
+            <div class="invoice-print-meta-row"><span>${isQuoteDocument ? "Quotation Date" : "Invoice Date"}</span><strong>: ${escapeHtml(formatInvoiceDate(invoice.issueDate))}</strong></div>
+            <div class="invoice-print-meta-row"><span>Payment Terms</span><strong>: ${escapeHtml(details.paymentTerms || "Net 15")}</strong></div>
+            <div class="invoice-print-meta-row"><span>Due Date</span><strong>: ${escapeHtml(formatInvoiceDate(effectiveDueDate))}</strong></div>
           </div>
-        </div>
-        <div class="invoice-print-card">
-          <h2>Additional Details</h2>
-          <div class="invoice-print-detail-list">
-            <div><span>Status</span><strong>${escapeHtml(getInvoiceStatusLabel(invoice))}</strong></div>
-            <div><span>Place of Supply</span><strong>${escapeHtml(effectivePlaceOfSupply || "-")}</strong></div>
-            <div><span>Light Designer</span><strong>${escapeHtml(lightDesigner)}</strong></div>
+          <div class="invoice-print-meta-panel">
+            <div class="invoice-print-meta-row"><span>Place Of Supply</span><strong>: ${escapeHtml(effectivePlaceOfSupply || "-")}</strong></div>
+            <div class="invoice-print-meta-row"><span>Light Designer</span><strong>: ${escapeHtml(lightDesigner)}</strong></div>
           </div>
-        </div>
-      </section>
-      <div class="invoice-print-billto-rule"></div>
-      <section class="invoice-print-section invoice-print-billto">
-        <h2>Bill To</h2>
-        <p>${escapeHtml(invoice.clientName)}</p>
-        <p>${formatMultilineHtml(details.clientBillingAddress, "Add client billing address in invoice details.")}</p>
-        ${effectiveClientGstin ? `<p>GSTIN: ${escapeHtml(effectiveClientGstin)}</p>` : ""}
-        <div class="invoice-print-billto-divider"></div>
-        <p><strong>Notes:</strong> ${String(invoice.notes || "").trim() ? escapeHtml(invoice.notes) : ""}</p>
-      </section>
-      <div class="invoice-print-notes-rule"></div>
-      <section class="invoice-print-section">
-        <table class="invoice-print-table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Particulars</th>
-              <th>SAC</th>
-              <th>Qty</th>
-              <th>Rate</th>
-              <th>Amount</th>
-            </tr>
-          </thead>
-          <tbody>${lineItemsMarkup}</tbody>
-        </table>
-      </section>
-      <section class="invoice-print-section invoice-print-totals">
-        <div class="invoice-print-amount-words">
-          <div class="invoice-print-amount-line">
-            <span>Total In Words</span>
-            <strong>${escapeHtml(numberToIndianWords(gstBreakup.totalAmount))}</strong>
-          </div>
-          ${bankRows.length ? `
-            <div class="invoice-print-bank-block">
-              <p>In case of online transfer, bank details are as follows</p>
-              ${bankRows.map((item) => `<div><span>${escapeHtml(item.label)}:</span> <strong>${escapeHtml(item.value)}</strong></div>`).join("")}
-            </div>
-          ` : `
-            <div class="invoice-print-bank-block">
-              <p>In case of online transfer, bank details are as follows</p>
-              <p class="invoice-print-subtle">Bank details not configured yet.</p>
-            </div>
-          `}
-          ${footerNotesMarkup}
-        </div>
-        <div><span>Subtotal</span><strong>${escapeHtml(formatCurrency(gstBreakup.grossSubtotal))}</strong></div>
-        <div><span>Discount</span><strong>${gstBreakup.discountAmount ? escapeHtml(formatCurrency(gstBreakup.discountAmount)) : "-"}</strong></div>
-        <div><span>Total Taxable Amount</span><strong>${escapeHtml(formatCurrency(gstBreakup.taxableAmount))}</strong></div>
-        <div><span>SGST (9%)</span><strong>${gstBreakup.sgstAmount ? escapeHtml(formatCurrency(gstBreakup.sgstAmount)) : "-"}</strong></div>
-        <div><span>CGST (9%)</span><strong>${gstBreakup.cgstAmount ? escapeHtml(formatCurrency(gstBreakup.cgstAmount)) : "-"}</strong></div>
-        <div><span>IGST (18%)</span><strong>${gstBreakup.igstAmount ? escapeHtml(formatCurrency(gstBreakup.igstAmount)) : "-"}</strong></div>
-        <div class="invoice-print-total-row"><span>Total</span><strong>${escapeHtml(formatCurrency(gstBreakup.totalAmount))}</strong></div>
-        <div><span>Amount Paid</span><strong>${escapeHtml(formatCurrency(invoiceAmountPaid))}</strong></div>
-        <div class="invoice-print-balance"><span>Balance Due</span><strong>${escapeHtml(formatCurrency(invoiceBalanceDue))}</strong></div>
-        <div class="invoice-print-balance-rule"></div>
-        <div class="invoice-print-signature">
-          <div class="invoice-print-signature-space">
-            ${companyProfile.signatureImage ? `<img src="${escapeHtml(companyProfile.signatureImage)}" alt="Authorised signature" class="invoice-print-signature-image">` : ""}
-          </div>
-          ${companyProfile.signatureHolder ? `<strong>${escapeHtml(companyProfile.signatureHolder)}</strong>` : ""}
-          <span>Authorised Signatory</span>
-        </div>
-      </section>
-      ${hsnSacSummaryRows.length ? `
-        <section class="invoice-print-section invoice-print-hsn-summary">
-          <h2>HSN/SAC Summary</h2>
-          <table class="invoice-print-hsn-summary-table">
+        </section>
+        <section class="invoice-print-client-block">
+          <div class="invoice-print-client-name">${escapeHtml(invoice.clientName)}</div>
+          <div class="invoice-print-client-address">${formatMultilineHtml(details.clientBillingAddress, "Add client billing address in invoice details.")}</div>
+          ${effectiveClientGstin ? `<div class="invoice-print-client-address">GSTIN ${escapeHtml(effectiveClientGstin)}</div>` : ""}
+        </section>
+        <section class="invoice-print-section">
+          <table class="invoice-print-table">
             <thead>
               <tr>
+                <th>#</th>
+                <th>Description</th>
                 <th>HSN/SAC</th>
-                <th>Taxable Amount</th>
-                <th>GST Rate</th>
-                <th>GST Amount</th>
-                <th>Total Amount</th>
+                <th>Qty</th>
+                <th>Rate</th>
+                <th>Amount</th>
               </tr>
             </thead>
-            <tbody>
-              ${hsnSacSummaryRows.map((row) => `
-                <tr>
-                  <td>${escapeHtml(row.sac)}</td>
-                  <td>${escapeHtml(formatCurrency(row.taxableAmount))}</td>
-                  <td>${escapeHtml(row.gstRateLabel)}</td>
-                  <td>${escapeHtml(formatCurrency(row.gstAmount))}</td>
-                  <td>${escapeHtml(formatCurrency(row.totalAmount))}</td>
-                </tr>
-              `).join("")}
-            </tbody>
+            <tbody>${lineItemsMarkup}</tbody>
           </table>
         </section>
-      ` : ""}
-      <div class="invoice-print-page-number"></div>
+        <section class="invoice-print-lower-grid">
+          <div class="invoice-print-lower-left">
+            <div class="invoice-print-amount-line">
+              <span>Total In Words</span>
+              <strong>${escapeHtml(numberToIndianWords(gstBreakup.totalAmount))}</strong>
+            </div>
+            ${String(invoice.notes || "").trim() ? `<div class="invoice-print-notes-copy">${escapeHtml(invoice.notes)}</div>` : ""}
+            ${footerNotesMarkup}
+            ${bankRows.length ? `
+              <div class="invoice-print-bank-block">
+                <p>In case of online transfer, bank details are as follows</p>
+                ${bankRows.map((item) => `<div><span>${escapeHtml(item.label)} --</span> <strong>${escapeHtml(item.value)}</strong></div>`).join("")}
+              </div>
+            ` : `
+              <div class="invoice-print-bank-block">
+                <p>In case of online transfer, bank details are as follows</p>
+                <p class="invoice-print-subtle">Bank details not configured yet.</p>
+              </div>
+            `}
+          </div>
+          <div class="invoice-print-lower-right">
+            <table class="invoice-print-totals-table">
+              <tbody>
+                <tr><td>Sub Total</td><td>${escapeHtml(formatCurrency(gstBreakup.grossSubtotal))}</td></tr>
+                ${gstBreakup.discountAmount ? `<tr><td>Discount</td><td>${escapeHtml(formatCurrency(gstBreakup.discountAmount))}</td></tr>` : ""}
+                <tr><td>Total Taxable Amount</td><td>${escapeHtml(formatCurrency(gstBreakup.taxableAmount))}</td></tr>
+                ${gstBreakup.sgstAmount ? `<tr><td>SGST9 (9%)</td><td>${escapeHtml(formatCurrency(gstBreakup.sgstAmount))}</td></tr>` : ""}
+                ${gstBreakup.cgstAmount ? `<tr><td>CGST9 (9%)</td><td>${escapeHtml(formatCurrency(gstBreakup.cgstAmount))}</td></tr>` : ""}
+                ${gstBreakup.igstAmount ? `<tr><td>IGST18 (18%)</td><td>${escapeHtml(formatCurrency(gstBreakup.igstAmount))}</td></tr>` : ""}
+                <tr class="invoice-print-total-row"><td>Total</td><td>${escapeHtml(formatCurrency(gstBreakup.totalAmount))}</td></tr>
+                ${invoiceAmountPaid ? `<tr><td>Amount Paid</td><td>${escapeHtml(formatCurrency(invoiceAmountPaid))}</td></tr>` : ""}
+                <tr class="invoice-print-balance-row"><td>Balance due</td><td>${escapeHtml(formatCurrency(invoiceBalanceDue))}</td></tr>
+              </tbody>
+            </table>
+            <div class="invoice-print-signature-panel">
+              ${companyProfile.signatureHolder ? `<div class="invoice-print-signatory-name">${escapeHtml(companyProfile.signatureHolder)}</div>` : ""}
+              <div class="invoice-print-signature-space">
+                ${companyProfile.signatureImage ? `<img src="${escapeHtml(companyProfile.signatureImage)}" alt="Authorised signature" class="invoice-print-signature-image">` : ""}
+              </div>
+              <div class="invoice-print-signatory-label">Authorised Signatory</div>
+            </div>
+          </div>
+        </section>
+        ${hsnSacSummaryRows.length ? `
+          <section class="invoice-print-section invoice-print-hsn-summary">
+            <div class="invoice-print-hsn-title">HSN/SAC Summary:</div>
+            <table class="invoice-print-hsn-summary-table">
+              <thead>
+                <tr>
+                  <th rowspan="2">HSN/SAC</th>
+                  <th rowspan="2">Taxable Amount</th>
+                  <th colspan="2">${taxTypeLabel}</th>
+                  <th rowspan="2">Total Tax Amount</th>
+                </tr>
+                <tr>
+                  <th>Rate</th>
+                  <th>Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${hsnSacSummaryRows.map((row) => `
+                  <tr>
+                    <td>${escapeHtml(row.sac)}</td>
+                    <td>${escapeHtml(formatCurrency(row.taxableAmount))}</td>
+                    <td>${escapeHtml(row.gstRateLabel.includes("18") ? "18%" : "9%")}</td>
+                    <td>${escapeHtml(formatCurrency(row.gstAmount))}</td>
+                    <td>${escapeHtml(formatCurrency(row.gstAmount))}</td>
+                  </tr>
+                `).join("")}
+                <tr class="invoice-print-hsn-total-row">
+                  <td>Total</td>
+                  <td>${escapeHtml(formatCurrency(gstBreakup.taxableAmount))}</td>
+                  <td></td>
+                  <td>${escapeHtml(formatCurrency(gstBreakup.totalTax))}</td>
+                  <td>${escapeHtml(formatCurrency(gstBreakup.totalTax))}</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+        ` : ""}
+        <div class="invoice-print-page-number"></div>
+      </div>
     </div>
   `;
 }
@@ -6053,99 +6060,6 @@ function getInvoicePdfTitle(invoice) {
     .replace(/[\\/:*?"<>|]+/g, "-")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function getInvoicePrintStyles() {
-  return `
-    @page {
-      size: A4;
-      margin: 0;
-      @bottom-right {
-        content: "Page " counter(page);
-        color: #667789;
-        font-size: 9px;
-      }
-    }
-    * { box-sizing: border-box; }
-    html, body { width: 210mm; min-width: 210mm; margin: 0; background: #fff; color: #17212b; font-family: "IBM Plex Sans", sans-serif; }
-    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .invoice-print-page { width: 210mm; min-height: 297mm; margin: 0 auto; background: #fff; padding: 5mm 5.5mm; font-size: 15.75px; line-height: 1.36; box-shadow: none; break-after: page; page-break-after: always; }
-    .invoice-print-page:last-child { break-after: auto; page-break-after: auto; }
-    .invoice-print-header { display: block; margin-bottom: 7px; border-bottom: 2px solid #d8e0ea; padding-bottom: 6px; }
-    .invoice-print-brand-block { flex: 1 1 auto; }
-    .invoice-print-brand-row { display: flex; align-items: flex-start; gap: 8px; }
-    .invoice-print-logo { width: 48px; height: 48px; object-fit: contain; border-radius: 9px; }
-    .invoice-print-brand-copy { flex: 1 1 auto; }
-    .invoice-print-brand-title { margin: 0 0 3px; font-family: "Space Grotesk", sans-serif; font-size: 28px; font-weight: 700; line-height: 1.06; }
-    .invoice-print-company-line { margin: 0 0 1px; color: #4a5b6d; font-size: 13.5px; line-height: 1.26; }
-    .invoice-print-copy-block { margin-left: auto; text-align: right; }
-    .invoice-print-document-title { font-family: "Space Grotesk", sans-serif; font-size: 28px; font-weight: 700; line-height: 1.06; text-align: right; white-space: nowrap; }
-    .invoice-print-copy-label { margin-top: 3px; color: #5c6b7a; font-size: 13.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; text-align: right; }
-    .invoice-print-subtle { color: #667789; font-size: 13.5px; line-height: 1.3; white-space: pre-line; }
-    .invoice-print-meta { min-width: 240px; display: grid; gap: 8px; padding: 10px; border: 1px solid #dfe6ef; border-radius: 12px; background: #f8fafc; font-size: 14px; }
-    .invoice-print-meta div { display: flex; justify-content: space-between; gap: 8px; }
-    .invoice-print-meta span { color: #667789; font-size: 14.5px; }
-    .invoice-print-section { margin-bottom: 6px; }
-    .invoice-print-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .invoice-print-summary-grid { align-items: start; }
-    .invoice-print-card { padding: 7px; border: 1px solid #dfe6ef; border-radius: 8px; background: #fbfcfe; min-height: 100%; font-size: 14px; }
-    .invoice-print-grid h2 { margin: 0 0 3px; font-size: 13.5px; text-transform: uppercase; letter-spacing: .08em; color: #5c6b7a; }
-    .invoice-print-grid p { margin: 0 0 2px; line-height: 1.24; }
-    .invoice-print-empty-space { min-height: 12px; }
-    .invoice-print-billto-rule, .invoice-print-notes-rule { margin: 1px 0 5px; border-top: 1px solid #17212b; }
-    .invoice-print-billto { margin-bottom: 5px; }
-    .invoice-print-billto h2 { margin: 0 0 2px; color: #5c6b7a; font-size: 13.5px; letter-spacing: .08em; text-transform: uppercase; }
-    .invoice-print-billto p { margin: 0 0 1px; line-height: 1.22; }
-    .invoice-print-billto-divider { margin: 4px 0 3px; border-top: 1px solid #dfe6ef; }
-    .invoice-print-detail-list { display: grid; gap: 3px; }
-    .invoice-print-detail-list div { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px solid #dfe6ef; padding-bottom: 2px; }
-    .invoice-print-detail-list span { color: #667789; font-size: 13.5px; }
-    .invoice-print-table { width: 100%; border-collapse: collapse; table-layout: fixed; border: 0; }
-    .invoice-print-table th, .invoice-print-table td { padding: 4px 5px; border: 0; border-bottom: 1px solid #dfe6ef; text-align: left; vertical-align: top; }
-    .invoice-print-table td { font-size: 13.75px; line-height: 1.24; }
-    .invoice-print-table th { color: #5c6b7a; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; background: #f8fafc; }
-    .invoice-print-table th:nth-child(1), .invoice-print-table td:nth-child(1) { width: 22px; }
-    .invoice-print-table th:nth-child(3), .invoice-print-table td:nth-child(3) { width: 58px; }
-    .invoice-print-table th:nth-child(4), .invoice-print-table td:nth-child(4) { width: 38px; text-align: right; }
-    .invoice-print-table th:nth-child(5), .invoice-print-table td:nth-child(5) { width: 76px; text-align: right; }
-    .invoice-print-table th:nth-child(6), .invoice-print-table td:nth-child(6) { width: 82px; text-align: right; }
-    .invoice-print-hsn-summary { margin-top: 8px; padding-top: 6px; border-top: 1px solid #dfe6ef; }
-    .invoice-print-hsn-summary h2 { margin: 0 0 3px; color: #5c6b7a; font-size: 13.5px; letter-spacing: .08em; text-transform: uppercase; }
-    .invoice-print-hsn-summary-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-    .invoice-print-hsn-summary-table th, .invoice-print-hsn-summary-table td { padding: 3px 5px; border-bottom: 1px solid #dfe6ef; text-align: left; vertical-align: top; }
-    .invoice-print-hsn-summary-table td { font-size: 13.25px; line-height: 1.22; }
-    .invoice-print-hsn-summary-table th { color: #5c6b7a; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; background: #f8fafc; }
-    .invoice-print-totals { margin-left: 0; display: grid; grid-template-columns: 1fr minmax(220px, 250px); column-gap: 8px; row-gap: 0; }
-    .invoice-print-totals > div:not(.invoice-print-amount-words) { grid-column: 2; }
-    .invoice-print-totals > div:not(.invoice-print-amount-words):not(.invoice-print-signature) { display: flex; justify-content: space-between; gap: 8px; }
-    .invoice-print-totals > div:not(.invoice-print-amount-words):not(.invoice-print-signature):not(.invoice-print-balance-rule) { padding: 3px 5px; border: 0; border-bottom: 1px solid #dfe6ef; }
-    .invoice-print-total-row { font-size: 16px; font-weight: 700; }
-    .invoice-print-total-row strong { font-size: 16.5px; }
-    .invoice-print-totals > div:not(.invoice-print-amount-words):not(.invoice-print-signature) > span { color: #667789; font-size: 14px; }
-    .invoice-print-amount-words { grid-column: 1; grid-row: 1 / span 9; padding-right: 8px; }
-    .invoice-print-amount-line { padding: 4px 0 5px; border-top: 1px solid #d8e0ea; border-bottom: 1px solid #d8e0ea; }
-    .invoice-print-amount-line span { display: block; margin-bottom: 2px; color: #5c6b7a; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; }
-    .invoice-print-amount-line strong { display: block; color: #17212b; font-size: 14.5px; font-style: italic; line-height: 1.3; }
-    .invoice-print-bank-block { margin-top: 5px; color: #4a5b6d; font-size: 13.5px; line-height: 1.3; }
-    .invoice-print-bank-block p { margin: 0 0 2px; }
-    .invoice-print-bank-block div { display: block; margin: 1px 0; }
-    .invoice-print-bank-block span { color: #667789; }
-    .invoice-print-bank-block strong { color: #17212b; font-weight: 700; }
-    .invoice-print-balance { border-top: 2px solid #dfe6ef; border-bottom: 1px solid #dfe6ef; padding-top: 4px; font-size: 16.5px; }
-    .invoice-print-balance-rule { grid-column: 2; height: 0; margin-top: 2px; border-top: 2px solid #17212b; }
-    .invoice-print-signature { grid-column: 2; display: block; margin-top: 4px; text-align: center; }
-    .invoice-print-signature-space { height: 66px; margin: 4px 0 5px; border-bottom: 1px solid #17212b; display: flex; align-items: end; justify-content: center; overflow: hidden; }
-    .invoice-print-signature-image { max-height: 62px; width: auto; max-width: 230px; object-fit: contain; }
-    .invoice-print-signature strong { display: block; margin-bottom: 2px; color: #17212b; font-size: 15px; white-space: nowrap; }
-    .invoice-print-signature span { color: #17212b; font-size: 15px; font-weight: 700; }
-    .invoice-print-footer { margin-top: 6px; border-top: 1px solid #dfe6ef; padding-top: 4px; color: #667789; font-size: 13px; line-height: 1.3; }
-    .invoice-print-footer-inline { margin-top: 8px; }
-    .invoice-print-thank-you { margin-bottom: 2px; color: #17212b; font-weight: 700; }
-    .invoice-print-payment-note { font-size: 13px; line-height: 1.3; }
-    .invoice-print-page-number { display: none; }
-    .invoice-print-page + .invoice-print-page { margin-top: 0; page-break-before: always; }
-    @media print { body { background: #fff; } .invoice-print-page { margin: 0; box-shadow: none; border-radius: 0; } }
-  `;
 }
 
 function openInvoicePrintPreview(invoiceId) {
