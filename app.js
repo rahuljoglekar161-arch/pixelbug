@@ -6062,6 +6062,58 @@ function getInvoicePdfTitle(invoice) {
     .trim();
 }
 
+function getInvoicePrintDocumentHtml(invoice, copyCount = 1) {
+  const stylesHref = document.querySelector('link[rel="stylesheet"][href*="styles.css"]')?.href || "styles.css";
+  const markup = getInvoiceDocumentMarkup(invoice, { copyCount });
+  return `<!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title></title>
+        <base href="${escapeHtml(window.location.href)}">
+        <link rel="stylesheet" href="${escapeHtml(stylesHref)}">
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 6mm;
+          }
+          html, body {
+            margin: 0;
+            padding: 0;
+            background: #fff;
+            color: #111;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          body {
+            font-family: Arial, Helvetica, sans-serif;
+          }
+          .invoice-print-page {
+            width: auto !important;
+            min-width: 0 !important;
+            min-height: auto !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #fff !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
+            break-after: page;
+            page-break-after: always;
+          }
+          .invoice-print-page:last-child {
+            break-after: auto;
+            page-break-after: auto;
+          }
+          .invoice-print-sheet {
+            width: 100% !important;
+          }
+        </style>
+      </head>
+      <body>${markup}</body>
+    </html>`;
+}
+
 function openInvoicePrintPreview(invoiceId) {
   const invoice = (state.invoices || []).find((item) => item.id === invoiceId);
   if (!invoice) {
@@ -6124,30 +6176,52 @@ function waitForImagesToLoad(container) {
 }
 
 async function printInvoiceDocument(invoice, copyCount) {
-  const previousTitle = document.title;
-  const printTitle = getInvoicePdfTitle(invoice);
-  const { content } = ensureInvoicePrintPreview(invoice, copyCount);
-  document.title = printTitle;
-  document.body.classList.add("invoice-printing");
-  const cleanup = () => {
-    document.body.classList.remove("invoice-printing");
-    document.title = previousTitle;
-    window.removeEventListener("afterprint", cleanup);
-  };
-  window.addEventListener("afterprint", cleanup, { once: true });
-  if (document.fonts?.ready) {
-    await document.fonts.ready.catch(() => {});
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.position = "fixed";
+  frame.style.right = "0";
+  frame.style.bottom = "0";
+  frame.style.width = "0";
+  frame.style.height = "0";
+  frame.style.border = "0";
+  frame.style.opacity = "0";
+  frame.style.pointerEvents = "none";
+  document.body.appendChild(frame);
+
+  const html = getInvoicePrintDocumentHtml(invoice, copyCount);
+  const printWindow = frame.contentWindow;
+  const printDocument = frame.contentDocument || printWindow?.document;
+  if (!printWindow || !printDocument) {
+    frame.remove();
+    throw new Error("Unable to prepare invoice print document.");
   }
-  await waitForImagesToLoad(content);
+
+  printDocument.open();
+  printDocument.write(html);
+  printDocument.close();
+
+  const cleanup = () => {
+    printWindow.removeEventListener("afterprint", cleanup);
+    window.setTimeout(() => {
+      if (frame.isConnected) frame.remove();
+    }, 250);
+  };
+  printWindow.addEventListener("afterprint", cleanup, { once: true });
+
+  if (printDocument.fonts?.ready) {
+    await printDocument.fonts.ready.catch(() => {});
+  }
+  await waitForImagesToLoad(printDocument);
   await new Promise((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(resolve));
   });
   window.setTimeout(() => {
-    if (document.body.classList.contains("invoice-printing")) {
+    if (frame.isConnected) {
       cleanup();
     }
   }, 10000);
-  window.print();
+  printWindow.focus();
+  printWindow.print();
 }
 
 async function printInvoiceById(invoiceId, copyCount = state.ui.invoicePrintCopies || 1) {

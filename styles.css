@@ -20,7 +20,7 @@
 @media print {
   @page {
     size: A4 portrait;
-    margin: 10mm;
+    margin: 6mm;
   }
 
   html,
@@ -95,7 +95,7 @@
   }
 
   .invoice-print-brand-title {
-    font-size: 18px;
+    font-size: 19px;
   }
 
   .invoice-print-company-line,
@@ -113,11 +113,11 @@
   }
 
   .invoice-print-document-title {
-    font-size: 20px;
+    font-size: 22px;
   }
 
   .invoice-print-client-name {
-    font-size: 12.5px;
+    font-size: 13px;
   }
 
   .invoice-print-table th,
@@ -133,7 +133,7 @@
   }
 
   .invoice-print-amount-line strong {
-    font-size: 11.5px;
+    font-size: 12px;
   }
 }
 
