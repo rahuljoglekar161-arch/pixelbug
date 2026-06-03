@@ -6065,18 +6065,19 @@ function getInvoicePdfTitle(invoice) {
 function getInvoicePrintDocumentHtml(invoice, copyCount = 1) {
   const stylesHref = document.querySelector('link[rel="stylesheet"][href*="styles.css"]')?.href || "styles.css";
   const markup = getInvoiceDocumentMarkup(invoice, { copyCount });
+  const documentTitle = getInvoicePdfTitle(invoice);
   return `<!DOCTYPE html>
     <html lang="en">
       <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title></title>
+        <title>${escapeHtml(documentTitle)}</title>
         <base href="${escapeHtml(window.location.href)}">
         <link rel="stylesheet" href="${escapeHtml(stylesHref)}">
         <style>
           @page {
             size: A4 portrait;
-            margin: 4mm;
+            margin: 3mm;
           }
           html, body {
             margin: 0;
@@ -6092,7 +6093,7 @@ function getInvoicePrintDocumentHtml(invoice, copyCount = 1) {
           .invoice-print-page {
             width: auto !important;
             min-width: 0 !important;
-            min-height: calc(297mm - 8mm) !important;
+            min-height: calc(297mm - 6mm) !important;
             margin: 0 !important;
             padding: 0 !important;
             background: #fff !important;
@@ -6107,7 +6108,7 @@ function getInvoicePrintDocumentHtml(invoice, copyCount = 1) {
           }
           .invoice-print-sheet {
             width: 100% !important;
-            min-height: calc(297mm - 8mm) !important;
+            min-height: calc(297mm - 6mm) !important;
           }
         </style>
       </head>
