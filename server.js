@@ -1120,6 +1120,20 @@ function getInvoiceHsnSacSummaryRows(lineItems = [], placeOfSupply = "") {
       sac: row.sac,
       taxableAmount,
       gstRateLabel: intraState ? "9%" : "18%",
+      sgstAmount,
+      cgstAmount,
+      igstAmount,
+      gstAmountLabel: intraState
+        ? `${formatCurrency(sgstAmount)} + ${formatCurrency(cgstAmount)}`
+        : formatCurrency(igstAmount),
+      gstBreakupLines: intraState
+        ? [
+            { rate: "SGST 9%", amount: formatCurrency(sgstAmount) },
+            { rate: "CGST 9%", amount: formatCurrency(cgstAmount) }
+          ]
+        : [
+            { rate: "IGST 18%", amount: formatCurrency(igstAmount) }
+          ],
       gstAmount,
       totalAmount: Math.round((taxableAmount + gstAmount) * 100) / 100
     };
@@ -1284,6 +1298,12 @@ async function buildInvoicePdfBuffer(invoice, copyCount, store) {
   const hsnRows = getInvoiceHsnSacSummaryRows(invoice.lineItems || [], effectivePlaceOfSupply);
   const isQuote = getInvoiceDocumentType(invoice) === "quote";
   const copyLabels = getInvoiceCopyLabels(clampCopyCount(copyCount));
+  const invoiceNoteRows = getInvoiceLineManualDetailRows(invoice.notes || "", []);
+  const useInvoiceNotesAsParticulars = invoiceNoteRows.length
+    && Array.isArray(invoice.lineItems)
+    && invoice.lineItems.length === 1
+    && !String(invoice.lineItems[0]?.customDetails || "").trim()
+    && !parseInvoiceShowIds(invoice.lineItems[0]?.showId || "").length;
 
   copyLabels.forEach((copyLabel) => {
     const page = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
@@ -1294,7 +1314,7 @@ async function buildInvoicePdfBuffer(invoice, copyCount, store) {
     const outerH = A4_HEIGHT - (margin * 2);
     const outerTop = outerY + outerH;
     const summaryHeight = 102;
-    const summaryY = outerY;
+    const summaryY = outerY + 16;
     const summaryTop = summaryY + summaryHeight;
 
     page.drawRectangle({
@@ -1315,9 +1335,9 @@ async function buildInvoicePdfBuffer(invoice, copyCount, store) {
     const headerHeight = 100;
     const headerBottom = cursorY - headerHeight;
     if (logoImage) {
-      page.drawImage(logoImage, { x: innerX, y: headerBottom + 24, width: 42, height: 42 });
+      page.drawImage(logoImage, { x: innerX, y: headerBottom + 22, width: 58, height: 58 });
     }
-    const brandX = innerX + 50;
+    const brandX = innerX + 66;
     page.drawText(company.name, {
       x: brandX,
       y: cursorY - 20,
@@ -1334,7 +1354,7 @@ async function buildInvoicePdfBuffer(invoice, copyCount, store) {
     ].filter(Boolean);
     drawPdfTextLines(page, companyLines, {
       x: brandX,
-      topY: cursorY - 38,
+      topY: cursorY - 32,
       font: fontRegular,
       fontSize: 10.2,
       lineHeight: 12.2,
@@ -1466,9 +1486,12 @@ async function buildInvoicePdfBuffer(invoice, copyCount, store) {
     let rowTop = tableTop - tableHeaderHeight;
     (invoice.lineItems || []).forEach((item, index) => {
       const detailRows = getInvoiceLinePrintDetailRows(item, store);
+      const effectiveDetailRows = detailRows.length || !(useInvoiceNotesAsParticulars && index === 0)
+        ? detailRows
+        : invoiceNoteRows;
       const rowLines = [
         { text: item.description || "-", font: fontBold, size: 10.8, color: TEXT },
-        ...detailRows.map((line) => ({ text: line, font: fontRegular, size: 9.2, color: MUTED }))
+        ...effectiveDetailRows.map((line) => ({ text: line, font: fontRegular, size: 9.2, color: MUTED }))
       ];
       const descriptionColumnWidth = colXs[2] - colXs[1] - 12;
       const wrappedRowLines = rowLines.flatMap((line) => (
@@ -1549,12 +1572,12 @@ async function buildInvoicePdfBuffer(invoice, copyCount, store) {
       lineHeight: 15.6,
       color: TEXT
     });
-    leftY -= 10;
+    leftY -= 4;
     const noteLines = [
       "Thank you for your business.",
       "Please clear the dues within 15 working days.",
       company.footerNote || ""
-    ].filter(Boolean);
+    ].filter(Boolean).flatMap((line) => wrapPdfText(line, fontRegular, 10.8, leftLowerW));
     leftY = drawPdfTextLines(page, noteLines, {
       x: leftLowerX,
       topY: leftY,
@@ -1563,7 +1586,7 @@ async function buildInvoicePdfBuffer(invoice, copyCount, store) {
       lineHeight: 14.4,
       color: MUTED
     });
-    leftY -= 12;
+    leftY -= 18;
     page.drawText("In case of online transfer, bank details are as follows", {
       x: leftLowerX,
       y: leftY,
@@ -1589,7 +1612,7 @@ async function buildInvoicePdfBuffer(invoice, copyCount, store) {
       });
       leftY -= 12;
     });
-    if (String(invoice.notes || "").trim()) {
+    if (String(invoice.notes || "").trim() && !useInvoiceNotesAsParticulars) {
       leftY -= 8;
       page.drawText(String(invoice.notes || "").trim(), {
         x: leftLowerX,
@@ -1665,60 +1688,130 @@ async function buildInvoicePdfBuffer(invoice, copyCount, store) {
     });
 
     // HSN summary pinned to bottom
+    const summaryLineY = summaryTop - 10;
     page.drawLine({
-      start: { x: outerX, y: summaryTop },
-      end: { x: outerX + outerW, y: summaryTop },
+      start: { x: outerX, y: summaryLineY },
+      end: { x: outerX + outerW, y: summaryLineY },
       thickness: 1,
       color: BORDER
     });
     page.drawText("HSN/SAC Summary:", {
       x: innerX,
-      y: summaryTop - 14,
+      y: summaryLineY + 4,
       font: fontRegular,
       size: 10.2,
       color: MUTED
     });
-    const hTableTop = summaryTop - 22;
-    const hCols = [110, 122, 122, 100, 101.28];
+    const hTableTop = summaryLineY;
+    const summaryIsIntraState = isMaharashtraSupply(effectivePlaceOfSupply);
+    const hCols = summaryIsIntraState
+      ? [100, 110, 58, 72, 58, 72, 85.28]
+      : [110, 140, 90, 110, 105.28];
     const hXs = [outerX];
     hCols.forEach((width) => hXs.push(hXs[hXs.length - 1] + width));
-    const hHeader1Height = 21;
-    const hHeader2Height = 20;
-    page.drawLine({ start: { x: outerX, y: hTableTop - hHeader1Height }, end: { x: outerX + outerW, y: hTableTop - hHeader1Height }, thickness: 1, color: BORDER });
-    page.drawLine({ start: { x: outerX, y: hTableTop - hHeader1Height - hHeader2Height }, end: { x: outerX + outerW, y: hTableTop - hHeader1Height - hHeader2Height }, thickness: 1, color: BORDER });
-    for (let index = 1; index < hXs.length - 1; index += 1) {
-      page.drawLine({ start: { x: hXs[index], y: outerY }, end: { x: hXs[index], y: hTableTop }, thickness: 1, color: BORDER });
+    const hHeader1Height = 22;
+    const hHeader2Height = 18;
+    const hHeader3Height = 18;
+    const drawVerticalLine = (x, topY, bottomY) => {
+      page.drawLine({
+        start: { x, y: bottomY },
+        end: { x, y: topY },
+        thickness: 1,
+        color: BORDER
+      });
+    };
+    const hHeader1Bottom = hTableTop - hHeader1Height;
+    const hHeader2Bottom = hHeader1Bottom - hHeader2Height;
+    const hHeader3Bottom = hHeader2Bottom - hHeader3Height;
+    const drawCenteredHeader = (text, left, right, y, size = 9.4) => {
+      const width = fontBold.widthOfTextAtSize(text, size);
+      page.drawText(text, {
+        x: left + Math.max(4, ((right - left) - width) / 2),
+        y,
+        font: fontBold,
+        size,
+        color: TEXT
+      });
+    };
+    page.drawLine({ start: { x: outerX, y: hHeader1Bottom }, end: { x: outerX + outerW, y: hHeader1Bottom }, thickness: 1, color: BORDER });
+    page.drawLine({ start: { x: outerX, y: hHeader2Bottom }, end: { x: outerX + outerW, y: hHeader2Bottom }, thickness: 1, color: BORDER });
+    page.drawLine({ start: { x: outerX, y: hHeader3Bottom }, end: { x: outerX + outerW, y: hHeader3Bottom }, thickness: 1, color: BORDER });
+    if (summaryIsIntraState) {
+      drawCenteredHeader("HSN/SAC", hXs[0], hXs[1], hTableTop - 31, 9.6);
+      drawCenteredHeader("Taxable Amount", hXs[1], hXs[2], hTableTop - 31, 9.4);
+      drawCenteredHeader("GST Breakup", hXs[2], hXs[6], hTableTop - 15, 9.4);
+      drawCenteredHeader("SGST", hXs[2], hXs[4], hHeader1Bottom - 13, 9.2);
+      drawCenteredHeader("CGST", hXs[4], hXs[6], hHeader1Bottom - 13, 9.2);
+      drawCenteredHeader("Rate", hXs[2], hXs[3], hHeader2Bottom - 13, 8.8);
+      drawCenteredHeader("Amount", hXs[3], hXs[4], hHeader2Bottom - 13, 8.8);
+      drawCenteredHeader("Rate", hXs[4], hXs[5], hHeader2Bottom - 13, 8.8);
+      drawCenteredHeader("Amount", hXs[5], hXs[6], hHeader2Bottom - 13, 8.8);
+      drawCenteredHeader("Total Tax Amount", hXs[6], hXs[7], hTableTop - 31, 9.0);
+    } else {
+      drawCenteredHeader("HSN/SAC", hXs[0], hXs[1], hTableTop - 31, 9.6);
+      drawCenteredHeader("Taxable Amount", hXs[1], hXs[2], hTableTop - 31, 9.4);
+      drawCenteredHeader("GST Breakup", hXs[2], hXs[4], hTableTop - 15, 9.4);
+      drawCenteredHeader("IGST", hXs[2], hXs[4], hHeader1Bottom - 13, 9.2);
+      drawCenteredHeader("Rate", hXs[2], hXs[3], hHeader2Bottom - 13, 8.8);
+      drawCenteredHeader("Amount", hXs[3], hXs[4], hHeader2Bottom - 13, 8.8);
+      drawCenteredHeader("Total Tax Amount", hXs[4], hXs[5], hTableTop - 31, 9.0);
     }
-    page.drawText("HSN/SAC", { x: hXs[0] + 6, y: hTableTop - 14, font: fontBold, size: 9.8, color: TEXT });
-    page.drawText("Taxable Amount", { x: hXs[1] + 6, y: hTableTop - 14, font: fontBold, size: 9.8, color: TEXT });
-    page.drawText(isMaharashtraSupply(effectivePlaceOfSupply) ? "GST" : "IGST", { x: hXs[2] + 70, y: hTableTop - 14, font: fontBold, size: 9.8, color: TEXT });
-    page.drawText("Total Tax Amount", { x: hXs[4] + 6, y: hTableTop - 14, font: fontBold, size: 9.8, color: TEXT });
-    page.drawText("Rate", { x: hXs[2] + 6, y: hTableTop - 33, font: fontBold, size: 9.4, color: TEXT });
-    page.drawText("Amount", { x: hXs[3] + 6, y: hTableTop - 33, font: fontBold, size: 9.4, color: TEXT });
-    let hRowTop = hTableTop - hHeader1Height - hHeader2Height;
+    let hRowTop = hHeader3Bottom;
     const hRows = hsnRows.length ? hsnRows : [{
       sac: "-",
       taxableAmount: gstBreakup.taxableAmount || 0,
       gstRateLabel: isMaharashtraSupply(effectivePlaceOfSupply) ? "9%" : "18%",
+      gstAmountLabel: formatCurrency(gstBreakup.taxAmount || 0),
+      gstBreakupLines: isMaharashtraSupply(effectivePlaceOfSupply)
+        ? [
+            { rate: "SGST 9%", amount: formatCurrency(gstBreakup.sgstAmount || 0) },
+            { rate: "CGST 9%", amount: formatCurrency(gstBreakup.cgstAmount || 0) }
+          ]
+        : [
+            { rate: "IGST 18%", amount: formatCurrency(gstBreakup.taxAmount || 0) }
+          ],
       gstAmount: gstBreakup.taxAmount || 0,
       totalAmount: gstBreakup.taxAmount || 0
     }];
     hRows.forEach((row) => {
-      const hRowBottom = hRowTop - 20;
+      const hRowHeight = summaryIsIntraState ? 26 : 22;
+      const hRowBottom = hRowTop - hRowHeight;
       page.drawLine({ start: { x: outerX, y: hRowBottom }, end: { x: outerX + outerW, y: hRowBottom }, thickness: 1, color: BORDER });
       page.drawText(String(row.sac || "-"), { x: hXs[0] + 6, y: hRowTop - 13, font: fontRegular, size: 9.6, color: TEXT });
       page.drawText(formatCurrency(row.taxableAmount), { x: hXs[1] + 6, y: hRowTop - 13, font: fontRegular, size: 9.6, color: TEXT });
-      page.drawText(row.gstRateLabel, { x: hXs[2] + 6, y: hRowTop - 13, font: fontRegular, size: 9.6, color: TEXT });
-      page.drawText(formatCurrency(row.gstAmount), { x: hXs[3] + 6, y: hRowTop - 13, font: fontRegular, size: 9.6, color: TEXT });
-      page.drawText(formatCurrency(row.gstAmount), { x: hXs[4] + 6, y: hRowTop - 13, font: fontRegular, size: 9.6, color: TEXT });
+      if (summaryIsIntraState) {
+        page.drawText("9%", { x: hXs[2] + 6, y: hRowTop - 13, font: fontRegular, size: 9.2, color: TEXT });
+        page.drawText(formatCurrency(row.sgstAmount || 0), { x: hXs[3] + 6, y: hRowTop - 13, font: fontRegular, size: 9.2, color: TEXT });
+        page.drawText("9%", { x: hXs[4] + 6, y: hRowTop - 13, font: fontRegular, size: 9.2, color: TEXT });
+        page.drawText(formatCurrency(row.cgstAmount || 0), { x: hXs[5] + 6, y: hRowTop - 13, font: fontRegular, size: 9.2, color: TEXT });
+        page.drawText(formatCurrency(row.gstAmount), { x: hXs[6] + 6, y: hRowTop - 13, font: fontRegular, size: 9.6, color: TEXT });
+      } else {
+        page.drawText("18%", { x: hXs[2] + 6, y: hRowTop - 13, font: fontRegular, size: 9.2, color: TEXT });
+        page.drawText(formatCurrency(row.igstAmount || row.gstAmount || 0), { x: hXs[3] + 6, y: hRowTop - 13, font: fontRegular, size: 9.2, color: TEXT });
+        page.drawText(formatCurrency(row.gstAmount), { x: hXs[4] + 6, y: hRowTop - 13, font: fontRegular, size: 9.6, color: TEXT });
+      }
       hRowTop = hRowBottom;
     });
     const totalBottom = hRowTop - 20;
     page.drawLine({ start: { x: outerX, y: totalBottom }, end: { x: outerX + outerW, y: totalBottom }, thickness: 1, color: BORDER });
+    if (summaryIsIntraState) {
+      [hXs[1], hXs[2], hXs[6]].forEach((x) => drawVerticalLine(x, hTableTop, totalBottom));
+      drawVerticalLine(hXs[4], hHeader1Bottom, totalBottom);
+      [hXs[3], hXs[5]].forEach((x) => drawVerticalLine(x, hHeader2Bottom, totalBottom));
+    } else {
+      [hXs[1], hXs[2], hXs[4]].forEach((x) => drawVerticalLine(x, hTableTop, totalBottom));
+      drawVerticalLine(hXs[3], hHeader2Bottom, totalBottom);
+    }
     page.drawText("Total", { x: hXs[0] + 6, y: hRowTop - 13, font: fontBold, size: 9.6, color: TEXT });
     page.drawText(formatCurrency(gstBreakup.taxableAmount || 0), { x: hXs[1] + 6, y: hRowTop - 13, font: fontBold, size: 9.6, color: TEXT });
-    page.drawText(formatCurrency(gstBreakup.taxAmount || 0), { x: hXs[3] + 6, y: hRowTop - 13, font: fontBold, size: 9.6, color: TEXT });
-    page.drawText(formatCurrency(gstBreakup.taxAmount || 0), { x: hXs[4] + 6, y: hRowTop - 13, font: fontBold, size: 9.6, color: TEXT });
+    if (summaryIsIntraState) {
+      page.drawText(formatCurrency(gstBreakup.sgstAmount || 0), { x: hXs[3] + 6, y: hRowTop - 13, font: fontBold, size: 9.2, color: TEXT });
+      page.drawText(formatCurrency(gstBreakup.cgstAmount || 0), { x: hXs[5] + 6, y: hRowTop - 13, font: fontBold, size: 9.2, color: TEXT });
+      page.drawText(formatCurrency(gstBreakup.taxAmount || 0), { x: hXs[6] + 6, y: hRowTop - 13, font: fontBold, size: 9.6, color: TEXT });
+    } else {
+      page.drawText(formatCurrency(gstBreakup.taxAmount || 0), { x: hXs[3] + 6, y: hRowTop - 13, font: fontBold, size: 9.2, color: TEXT });
+      page.drawText(formatCurrency(gstBreakup.taxAmount || 0), { x: hXs[4] + 6, y: hRowTop - 13, font: fontBold, size: 9.6, color: TEXT });
+    }
   });
 
   return Buffer.from(await pdfDoc.save());
