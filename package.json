@@ -8,5 +8,8 @@
     "dev": "node server.js",
     "start": "node server.js",
     "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "pdf-lib": "^1.17.1"
   }
 }

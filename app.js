@@ -6062,6 +6062,23 @@ function getInvoicePdfTitle(invoice) {
     .trim();
 }
 
+function getInvoicePdfUrl(invoiceId, copyCount = state.ui.invoicePrintCopies || 1) {
+  const copies = Math.max(1, Math.min(5, Number(copyCount || 1)));
+  return `/api/admin/invoices/${encodeURIComponent(invoiceId)}/pdf?copies=${copies}&ts=${Date.now()}`;
+}
+
+function renderInvoicePreviewContent(invoiceId, copyCount = state.ui.invoicePrintCopies || 1) {
+  const content = document.getElementById("invoicePreviewContent");
+  if (!content) return;
+  content.innerHTML = `
+    <iframe
+      class="invoice-preview-frame"
+      src="${escapeHtml(getInvoicePdfUrl(invoiceId, copyCount))}#view=FitH"
+      title="Invoice PDF preview"
+    ></iframe>
+  `;
+}
+
 function getInvoicePrintDocumentHtml(invoice, copyCount = 1) {
   const stylesHref = document.querySelector('link[rel="stylesheet"][href*="styles.css"]')?.href || "styles.css";
   const markup = getInvoiceDocumentMarkup(invoice, { copyCount });
@@ -6129,7 +6146,7 @@ function openInvoicePrintPreview(invoiceId) {
   if (copiesSelect) {
     copiesSelect.value = String(state.ui.invoicePrintCopies || 1);
   }
-  content.innerHTML = getInvoiceDocumentMarkup(invoice, { copyCount: state.ui.invoicePrintCopies || 1 });
+  renderInvoicePreviewContent(invoice.id, state.ui.invoicePrintCopies || 1);
   modal.dataset.invoiceId = invoice.id;
   modal.classList.remove("hidden");
   modal.setAttribute("aria-hidden", "false");
@@ -6146,7 +6163,7 @@ function ensureInvoicePrintPreview(invoice, copyCount = state.ui.invoicePrintCop
   if (copiesSelect) {
     copiesSelect.value = String(copyCount || 1);
   }
-  content.innerHTML = getInvoiceDocumentMarkup(invoice, { copyCount });
+  renderInvoicePreviewContent(invoice.id, copyCount);
   modal.dataset.invoiceId = invoice.id;
   modal.classList.remove("hidden");
   modal.setAttribute("aria-hidden", "false");
@@ -6178,52 +6195,11 @@ function waitForImagesToLoad(container) {
 }
 
 async function printInvoiceDocument(invoice, copyCount) {
-  const frame = document.createElement("iframe");
-  frame.setAttribute("aria-hidden", "true");
-  frame.style.position = "fixed";
-  frame.style.right = "0";
-  frame.style.bottom = "0";
-  frame.style.width = "0";
-  frame.style.height = "0";
-  frame.style.border = "0";
-  frame.style.opacity = "0";
-  frame.style.pointerEvents = "none";
-  document.body.appendChild(frame);
-
-  const html = getInvoicePrintDocumentHtml(invoice, copyCount);
-  const printWindow = frame.contentWindow;
-  const printDocument = frame.contentDocument || printWindow?.document;
-  if (!printWindow || !printDocument) {
-    frame.remove();
-    throw new Error("Unable to prepare invoice print document.");
+  const url = getInvoicePdfUrl(invoice.id, copyCount);
+  const pdfWindow = window.open(url, "_blank", "noopener");
+  if (!pdfWindow) {
+    window.location.href = url;
   }
-
-  printDocument.open();
-  printDocument.write(html);
-  printDocument.close();
-
-  const cleanup = () => {
-    printWindow.removeEventListener("afterprint", cleanup);
-    window.setTimeout(() => {
-      if (frame.isConnected) frame.remove();
-    }, 250);
-  };
-  printWindow.addEventListener("afterprint", cleanup, { once: true });
-
-  if (printDocument.fonts?.ready) {
-    await printDocument.fonts.ready.catch(() => {});
-  }
-  await waitForImagesToLoad(printDocument);
-  await new Promise((resolve) => {
-    requestAnimationFrame(() => requestAnimationFrame(resolve));
-  });
-  window.setTimeout(() => {
-    if (frame.isConnected) {
-      cleanup();
-    }
-  }, 10000);
-  printWindow.focus();
-  printWindow.print();
 }
 
 async function printInvoiceById(invoiceId, copyCount = state.ui.invoicePrintCopies || 1) {
@@ -7504,10 +7480,9 @@ function renderInvoicesPanel() {
       state.ui.invoicePrintCopies = Number(invoicePrintCopiesSelect.value || 1);
       saveState(state);
       const invoiceId = invoicePreviewModal?.dataset.invoiceId || "";
-      const previewContent = document.getElementById("invoicePreviewContent");
       const invoice = (state.invoices || []).find((item) => item.id === invoiceId);
-      if (invoice && previewContent) {
-        previewContent.innerHTML = getInvoiceDocumentMarkup(invoice, { copyCount: state.ui.invoicePrintCopies || 1 });
+      if (invoice) {
+        renderInvoicePreviewContent(invoice.id, state.ui.invoicePrintCopies || 1);
       }
     };
   }

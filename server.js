@@ -2,6 +2,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { createRequire } = require("module");
 const { DatabaseSync } = require("node:sqlite");
 
 function loadLocalEnvFile(filePath) {
@@ -26,6 +27,7 @@ loadLocalEnvFile(path.join(__dirname, ".env"));
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Number(process.env.PORT || 4173);
 const ROOT = __dirname;
+const BUNDLED_NODE_MODULES_DIR = "/Users/Rahul/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules";
 const DATA_DIR = process.env.PIXELBUG_DATA_DIR
   ? path.resolve(process.env.PIXELBUG_DATA_DIR)
   : path.join(ROOT, "data");
@@ -126,6 +128,24 @@ const MIME_TYPES = {
   ".svg": "image/svg+xml",
   ".ico": "image/x-icon"
 };
+
+function loadOptionalPackage(packageName) {
+  try {
+    return require(packageName);
+  } catch (error) {
+    try {
+      const bundledRequire = createRequire(path.join(BUNDLED_NODE_MODULES_DIR, packageName, "package.json"));
+      return bundledRequire(packageName);
+    } catch (bundledError) {
+      return null;
+    }
+  }
+}
+
+const pdfLib = loadOptionalPackage("pdf-lib");
+const PDFDocument = pdfLib?.PDFDocument || null;
+const StandardFonts = pdfLib?.StandardFonts || null;
+const rgb = pdfLib?.rgb || null;
 
 const GST_STATE_OPTIONS = [
   "Jammu and Kashmir (01)",
@@ -908,6 +928,800 @@ function readInvoices() {
   });
 
   return invoices;
+}
+
+function getShowStartDate(show) {
+  return String(show?.showDateFrom || show?.showDate || "").trim();
+}
+
+function getShowEndDate(show) {
+  return String(show?.showDateTo || show?.showDateFrom || show?.showDate || "").trim();
+}
+
+function formatInvoiceDateDisplay(dateStr) {
+  if (!dateStr) return "-";
+  const date = new Date(`${dateStr}T00:00:00`);
+  return date.toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "numeric"
+  });
+}
+
+function formatInvoiceDateRange(fromDate, toDate) {
+  if (!fromDate && !toDate) return "-";
+  if (!toDate || fromDate === toDate) return formatInvoiceDateDisplay(fromDate);
+  return `${formatInvoiceDateDisplay(fromDate)} - ${formatInvoiceDateDisplay(toDate)}`;
+}
+
+function formatCurrency(amount) {
+  if (amount === "" || amount === null || amount === undefined) return "-";
+  const value = Number(amount);
+  if (Number.isNaN(value)) return "-";
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0
+  }).format(value).replace(/^₹/, "Rs. ");
+}
+
+function numberToIndianWords(value) {
+  const amount = Math.round(Number(value || 0));
+  if (!amount) return "Zero rupees only";
+  const ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
+  const tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+  const underHundred = (number) => number < 20 ? ones[number] : `${tens[Math.floor(number / 10)]}${number % 10 ? ` ${ones[number % 10]}` : ""}`;
+  const underThousand = (number) => {
+    const hundred = Math.floor(number / 100);
+    const rest = number % 100;
+    return `${hundred ? `${ones[hundred]} Hundred${rest ? " " : ""}` : ""}${rest ? underHundred(rest) : ""}`;
+  };
+  const parts = [];
+  const crore = Math.floor(amount / 10000000);
+  const lakh = Math.floor((amount % 10000000) / 100000);
+  const thousand = Math.floor((amount % 100000) / 1000);
+  const rest = amount % 1000;
+  if (crore) parts.push(`${underThousand(crore)} Crore`);
+  if (lakh) parts.push(`${underThousand(lakh)} Lakh`);
+  if (thousand) parts.push(`${underThousand(thousand)} Thousand`);
+  if (rest) parts.push(underThousand(rest));
+  return `${parts.join(" ")} rupees only`;
+}
+
+function parseInvoiceShowIds(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || "").trim()).filter(Boolean);
+  }
+  const normalized = String(value || "").trim();
+  if (!normalized) return [];
+  if (normalized.startsWith("[") && normalized.endsWith("]")) {
+    try {
+      return JSON.parse(normalized).map((item) => String(item || "").trim()).filter(Boolean);
+    } catch (error) {
+      return [];
+    }
+  }
+  return normalized.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function normalizeInvoicePrintDetailText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[·•|/\\,;:()[\]{}"'`]+/g, " ")
+    .replace(/[-_]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function defaultInvoiceLineCustomDetails(show) {
+  if (!show) return "";
+  const dateLabel = formatInvoiceDateRange(getShowStartDate(show), getShowEndDate(show));
+  const location = String(show.location || show.venue || "").trim();
+  return [show.showName, dateLabel !== "-" ? dateLabel : "", location].filter(Boolean).join(" - ");
+}
+
+function getInvoiceLineShowLabels(showId, store) {
+  return parseInvoiceShowIds(showId).map((id) => {
+    const show = (store.shows || []).find((item) => item.id === id);
+    if (!show) return "";
+    const location = String(show.location || show.venue || "").trim();
+    return `${show.showName} · ${formatInvoiceDateRange(getShowStartDate(show), getShowEndDate(show))}${location ? ` · ${location}` : ""}`;
+  }).filter(Boolean);
+}
+
+function getInvoiceLineShowLabel(showId, store) {
+  return getInvoiceLineShowLabels(showId, store).join(", ");
+}
+
+function getInvoiceLineManualDetailRows(customDetails = "", linkedShows = []) {
+  const customRows = String(customDetails || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (!customRows.length) return [];
+  const linkedShowNameTokens = linkedShows
+    .map((show) => normalizeInvoicePrintDetailText(show?.showName || ""))
+    .filter(Boolean);
+  const currentAutoTokens = linkedShows
+    .flatMap((show) => [defaultInvoiceLineCustomDetails(show), getInvoiceLineShowLabel(show.id, { shows: linkedShows })])
+    .map(normalizeInvoicePrintDetailText)
+    .filter((token) => token.length > 10);
+  return customRows.filter((line) => {
+    const normalized = normalizeInvoicePrintDetailText(line);
+    if (!normalized) return false;
+    if (currentAutoTokens.some((token) => normalized === token)) return false;
+    const startsWithLinkedShowName = linkedShowNameTokens.some((token) => normalized.startsWith(token));
+    const looksLikeShowScheduleDetail = /\b\d{4}\b/.test(line);
+    if (startsWithLinkedShowName && looksLikeShowScheduleDetail) return false;
+    return true;
+  });
+}
+
+function getInvoiceLinePrintDetailRows(item, store) {
+  const linkedShowIds = parseInvoiceShowIds(item?.showId || "");
+  const linkedShows = linkedShowIds.map((showId) => (store.shows || []).find((show) => show.id === showId)).filter(Boolean);
+  const customRows = getInvoiceLineManualDetailRows(item?.customDetails || "", linkedShows);
+  const linkedRows = getInvoiceLineShowLabels(item?.showId, store);
+  const seenRows = new Set();
+  return [...customRows, ...linkedRows].filter((line) => {
+    const normalized = normalizeInvoicePrintDetailText(line);
+    if (!normalized || seenRows.has(normalized)) return false;
+    seenRows.add(normalized);
+    return true;
+  });
+}
+
+function getInvoiceCopyLabels(copyCount = 1) {
+  const count = Math.max(1, Math.min(5, Number(copyCount || 1)));
+  const labels = {
+    1: ["Original Copy"],
+    2: ["Supplier Copy", "Recipient Copy"],
+    3: ["Supplier Copy", "Transporter Copy", "Recipient Copy"],
+    4: ["Original Copy", "Duplicate Copy", "Triplicate Copy", "Additional Copy"],
+    5: ["Original Copy", "Duplicate Copy", "Triplicate Copy", "Additional Copy 1", "Additional Copy 2"]
+  };
+  return labels[count] || labels[1];
+}
+
+function getInvoiceDocumentType(invoice) {
+  return invoice?.details?.documentType === "quote" ? "quote" : "invoice";
+}
+
+function getInvoicePdfTitle(invoice) {
+  const fallbackLabel = getInvoiceDocumentType(invoice) === "quote" ? "Quotation" : "Invoice";
+  const invoiceNumber = String(invoice?.invoiceNumber || fallbackLabel).trim();
+  const clientName = String(invoice?.clientName || "").trim();
+  const title = [invoiceNumber, clientName].filter(Boolean).join(" - ") || fallbackLabel;
+  return title
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function getInvoiceHsnSacSummaryRows(lineItems = [], placeOfSupply = "") {
+  const summaryMap = new Map();
+  const intraState = isMaharashtraSupply(placeOfSupply);
+  lineItems.forEach((item) => {
+    const baseAmount = Number(item.quantity || 1) * Number(item.unitRate || 0);
+    const discountAmount = getDiscountAmount(item.discount || "", baseAmount);
+    const taxableAmount = Math.max(0, baseAmount - discountAmount);
+    const key = String(item.sac || "").trim() || "-";
+    const current = summaryMap.get(key) || { sac: key, taxableAmount: 0 };
+    current.taxableAmount += taxableAmount;
+    summaryMap.set(key, current);
+  });
+  return [...summaryMap.values()].map((row) => {
+    const taxableAmount = Math.round(row.taxableAmount * 100) / 100;
+    const sgstAmount = intraState ? Math.round(taxableAmount * 0.09 * 100) / 100 : 0;
+    const cgstAmount = intraState ? Math.round(taxableAmount * 0.09 * 100) / 100 : 0;
+    const igstAmount = intraState ? 0 : Math.round(taxableAmount * 0.18 * 100) / 100;
+    const gstAmount = Math.round((sgstAmount + cgstAmount + igstAmount) * 100) / 100;
+    return {
+      sac: row.sac,
+      taxableAmount,
+      gstRateLabel: intraState ? "9%" : "18%",
+      gstAmount,
+      totalAmount: Math.round((taxableAmount + gstAmount) * 100) / 100
+    };
+  });
+}
+
+function getFixedInvoiceCompanyProfile() {
+  return {
+    name: "PixelBug",
+    gstin: "27AAZFP6374P1ZW",
+    email: "pixelbugsolutions@gmail.com",
+    phone: "+91 7666426289",
+    address: "Pune, Maharashtra, India - 411009",
+    website: "www.pixelbug.in",
+    bankAccountName: "PixelBug",
+    bankName: "HDFC Bank",
+    bankAccountNumber: "50200055939716",
+    bankAccountType: "Current Account",
+    bankBranchName: "Karvenagar, Pune",
+    bankIfsc: "HDFC0001115",
+    signatureImage: "signature-sachin.jpg",
+    signatureHolder: "Sachin Dunakhe, Director, PixelBug",
+    footerNote: "Please include the invoice number with your payment reference."
+  };
+}
+
+function getInvoiceCompanyProfile(invoice) {
+  const defaults = getFixedInvoiceCompanyProfile();
+  const details = invoice?.details || {};
+  return {
+    ...defaults,
+    name: String(details.companyName || defaults.name).trim(),
+    address: String(details.companyAddress || defaults.address).trim(),
+    email: String(details.companyEmail || defaults.email).trim(),
+    phone: String(details.companyPhone || defaults.phone).trim(),
+    gstin: String(details.companyGstin || defaults.gstin).trim(),
+    bankAccountName: String(details.bankAccountName || defaults.bankAccountName).trim(),
+    bankName: String(details.bankName || defaults.bankName).trim(),
+    bankAccountNumber: String(details.bankAccountNumber || defaults.bankAccountNumber).trim(),
+    bankAccountType: defaults.bankAccountType,
+    bankBranchName: defaults.bankBranchName,
+    bankIfsc: String(details.bankIfsc || defaults.bankIfsc).trim(),
+    footerNote: String(details.footerNote || defaults.footerNote).trim()
+  };
+}
+
+function getInvoiceLightDesignerLabel(invoice, store) {
+  const lightDesignerId = String(invoice?.details?.lightDesignerId || "").trim();
+  if (!lightDesignerId) return "-";
+  return (store.users || []).find((user) => user.id === lightDesignerId)?.name || "-";
+}
+
+function getPdfImageBytes(fileName) {
+  const cleanName = String(fileName || "").split("?")[0];
+  if (!cleanName) return null;
+  const filePath = path.join(ROOT, cleanName);
+  if (!fs.existsSync(filePath)) return null;
+  return fs.readFileSync(filePath);
+}
+
+function wrapPdfText(text, font, fontSize, maxWidth) {
+  const normalizedText = String(text || "");
+  if (!normalizedText.trim()) return [];
+  const paragraphs = normalizedText.split(/\r?\n/);
+  const lines = [];
+  paragraphs.forEach((paragraph) => {
+    const trimmed = paragraph.trim();
+    if (!trimmed) {
+      lines.push("");
+      return;
+    }
+    const words = trimmed.split(/\s+/);
+    let currentLine = words.shift() || "";
+    words.forEach((word) => {
+      const nextLine = `${currentLine} ${word}`.trim();
+      if (font.widthOfTextAtSize(nextLine, fontSize) <= maxWidth) {
+        currentLine = nextLine;
+      } else {
+        lines.push(currentLine);
+        currentLine = word;
+      }
+    });
+    if (currentLine) lines.push(currentLine);
+  });
+  return lines;
+}
+
+function drawPdfTextLines(page, lines, options) {
+  const {
+    x,
+    topY,
+    font,
+    fontSize,
+    lineHeight,
+    color = rgb(0.1, 0.12, 0.16)
+  } = options;
+  let currentY = topY;
+  lines.forEach((line) => {
+    if (line) {
+      page.drawText(line, {
+        x,
+        y: currentY - fontSize,
+        font,
+        size: fontSize,
+        color
+      });
+    }
+    currentY -= lineHeight;
+  });
+  return currentY;
+}
+
+function drawPdfWrappedText(page, text, options) {
+  const lines = wrapPdfText(text, options.font, options.fontSize, options.maxWidth);
+  return {
+    lines,
+    bottomY: drawPdfTextLines(page, lines, options)
+  };
+}
+
+function clampCopyCount(copyCount) {
+  return Math.max(1, Math.min(5, Number(copyCount || 1)));
+}
+
+async function buildInvoicePdfBuffer(invoice, copyCount, store) {
+  if (!PDFDocument || !StandardFonts || !rgb) {
+    throw new Error("PDF generation is unavailable on this server right now.");
+  }
+
+  const pdfDoc = await PDFDocument.create();
+  const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const fontItalic = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+  const logoBytes = getPdfImageBytes("PIXELBUG.JPG");
+  const signatureBytes = getPdfImageBytes(getFixedInvoiceCompanyProfile().signatureImage);
+  const logoImage = logoBytes ? await pdfDoc.embedJpg(logoBytes) : null;
+  const signatureImage = signatureBytes ? await pdfDoc.embedJpg(signatureBytes) : null;
+
+  const A4_WIDTH = 595.28;
+  const A4_HEIGHT = 841.89;
+  const BORDER = rgb(0.79, 0.82, 0.86);
+  const TEXT = rgb(0.12, 0.13, 0.15);
+  const MUTED = rgb(0.32, 0.35, 0.39);
+
+  const details = invoice.details || {};
+  const client = (store.clients || []).find((entry) => entry.id === invoice.clientId) || null;
+  const company = getInvoiceCompanyProfile(invoice);
+  const lightDesigner = getInvoiceLightDesignerLabel(invoice, store);
+  const effectivePlaceOfSupply = String(details.placeOfSupply || client?.state || "").trim() || "-";
+  const effectiveClientGstin = String(details.clientGstin || client?.gstin || "").trim();
+  const effectiveClientBillingAddress = String(details.clientBillingAddress || client?.billingAddress || "").trim();
+  const dueDate = String(invoice.dueDate || getDueDateFromTerms(invoice.issueDate, details.paymentTerms || "Due on receipt") || "").trim();
+  const gstBreakup = details.gstBreakup || {
+    grossSubtotal: invoice.subtotal || 0,
+    discountAmount: 0,
+    taxableAmount: invoice.subtotal || 0,
+    sgstAmount: 0,
+    cgstAmount: 0,
+    igstAmount: invoice.taxAmount || 0,
+    taxAmount: invoice.taxAmount || 0
+  };
+  const hsnRows = getInvoiceHsnSacSummaryRows(invoice.lineItems || [], effectivePlaceOfSupply);
+  const isQuote = getInvoiceDocumentType(invoice) === "quote";
+  const copyLabels = getInvoiceCopyLabels(clampCopyCount(copyCount));
+
+  copyLabels.forEach((copyLabel) => {
+    const page = pdfDoc.addPage([A4_WIDTH, A4_HEIGHT]);
+    const margin = 20;
+    const outerX = margin;
+    const outerY = margin;
+    const outerW = A4_WIDTH - (margin * 2);
+    const outerH = A4_HEIGHT - (margin * 2);
+    const outerTop = outerY + outerH;
+    const summaryHeight = 102;
+    const summaryY = outerY;
+    const summaryTop = summaryY + summaryHeight;
+
+    page.drawRectangle({
+      x: outerX,
+      y: outerY,
+      width: outerW,
+      height: outerH,
+      borderColor: BORDER,
+      borderWidth: 1,
+      color: rgb(1, 1, 1)
+    });
+
+    let cursorY = outerTop - 10;
+    const innerX = outerX + 10;
+    const innerW = outerW - 20;
+
+    // Header
+    const headerHeight = 100;
+    const headerBottom = cursorY - headerHeight;
+    if (logoImage) {
+      page.drawImage(logoImage, { x: innerX, y: headerBottom + 24, width: 42, height: 42 });
+    }
+    const brandX = innerX + 50;
+    page.drawText(company.name, {
+      x: brandX,
+      y: cursorY - 20,
+      font: fontBold,
+      size: 24,
+      color: TEXT
+    });
+    const companyLines = [
+      company.address,
+      company.gstin ? `GSTIN : ${company.gstin}` : "",
+      company.phone,
+      company.email,
+      company.website
+    ].filter(Boolean);
+    drawPdfTextLines(page, companyLines, {
+      x: brandX,
+      topY: cursorY - 38,
+      font: fontRegular,
+      fontSize: 10.2,
+      lineHeight: 12.2,
+      color: MUTED
+    });
+    page.drawText(isQuote ? "QUOTATION" : "TAX INVOICE", {
+      x: outerX + outerW - 140,
+      y: cursorY - 24,
+      font: fontBold,
+      size: 22,
+      color: TEXT
+    });
+    if (copyLabel && copyLabel !== "Original Copy") {
+      page.drawText(copyLabel, {
+        x: outerX + outerW - 130,
+        y: cursorY - 46,
+        font: fontRegular,
+        size: 10.5,
+        color: MUTED
+      });
+    }
+    page.drawLine({
+      start: { x: outerX, y: headerBottom },
+      end: { x: outerX + outerW, y: headerBottom },
+      thickness: 1,
+      color: BORDER
+    });
+    cursorY = headerBottom;
+
+    // Meta
+    const metaHeight = 76;
+    const metaBottom = cursorY - metaHeight;
+    const splitX = outerX + (outerW * 0.53);
+    page.drawLine({
+      start: { x: outerX, y: metaBottom },
+      end: { x: outerX + outerW, y: metaBottom },
+      thickness: 1,
+      color: BORDER
+    });
+    page.drawLine({
+      start: { x: splitX, y: metaBottom },
+      end: { x: splitX, y: cursorY },
+      thickness: 1,
+      color: BORDER
+    });
+    const leftMetaX = innerX;
+    const rightMetaX = splitX + 12;
+    const leftMetaRows = [
+      [`${isQuote ? "Quotation No." : "Invoice No."}`, invoice.invoiceNumber || "-"],
+      [`${isQuote ? "Quotation Date" : "Invoice Date"}`, formatInvoiceDateDisplay(invoice.issueDate)],
+      ["Payment Terms", details.paymentTerms || "Due on receipt"],
+      ["Due Date", formatInvoiceDateDisplay(dueDate)]
+    ];
+    const rightMetaRows = [
+      ["Place Of Supply", effectivePlaceOfSupply],
+      ["Light Designer", lightDesigner]
+    ];
+    leftMetaRows.forEach(([label, value], index) => {
+      const rowY = cursorY - 14 - (index * 13);
+      page.drawText(`${label}`, { x: leftMetaX, y: rowY, font: fontRegular, size: 10.7, color: MUTED });
+      page.drawText(`: ${String(value || "-")}`, { x: leftMetaX + 82, y: rowY, font: fontBold, size: 10.7, color: TEXT });
+    });
+    rightMetaRows.forEach(([label, value], index) => {
+      const rowY = cursorY - 14 - (index * 13);
+      page.drawText(`${label}`, { x: rightMetaX, y: rowY, font: fontRegular, size: 10.7, color: MUTED });
+      page.drawText(`: ${String(value || "-")}`, { x: rightMetaX + 78, y: rowY, font: fontBold, size: 10.7, color: TEXT });
+    });
+    cursorY = metaBottom;
+
+    // Client block
+    const clientHeight = 64;
+    const clientBottom = cursorY - clientHeight;
+    page.drawLine({
+      start: { x: outerX, y: clientBottom },
+      end: { x: outerX + outerW, y: clientBottom },
+      thickness: 1,
+      color: BORDER
+    });
+    page.drawText(invoice.clientName || "-", {
+      x: innerX,
+      y: cursorY - 16,
+      font: fontBold,
+      size: 13.5,
+      color: TEXT
+    });
+    const clientAddressLines = wrapPdfText(effectiveClientBillingAddress || "Add client billing address in invoice details.", fontRegular, 10.2, innerW);
+    drawPdfTextLines(page, clientAddressLines.slice(0, 2), {
+      x: innerX,
+      topY: cursorY - 24,
+      font: fontRegular,
+      fontSize: 10.2,
+      lineHeight: 12.2,
+      color: MUTED
+    });
+    if (effectiveClientGstin) {
+      page.drawText(`GSTIN ${effectiveClientGstin}`, {
+        x: innerX,
+        y: clientBottom + 8,
+        font: fontRegular,
+        size: 10,
+        color: MUTED
+      });
+    }
+    cursorY = clientBottom;
+
+    // Items table
+    const tableTop = cursorY;
+    const tableHeaderHeight = 24;
+    const tableCols = [26, 305, 60, 38, 63, 63];
+    const colXs = [outerX];
+    tableCols.forEach((width) => colXs.push(colXs[colXs.length - 1] + width));
+    const minimumLowerHeight = 210;
+    page.drawLine({
+      start: { x: outerX, y: tableTop - tableHeaderHeight },
+      end: { x: outerX + outerW, y: tableTop - tableHeaderHeight },
+      thickness: 1,
+      color: BORDER
+    });
+    ["#", "Description", "HSN/SAC", "Qty", "Rate", "Amount"].forEach((label, index) => {
+      const x = colXs[index] + 6;
+      page.drawText(label, {
+        x,
+        y: tableTop - 16,
+        font: fontBold,
+        size: 10.4,
+        color: TEXT
+      });
+    });
+    let rowTop = tableTop - tableHeaderHeight;
+    (invoice.lineItems || []).forEach((item, index) => {
+      const detailRows = getInvoiceLinePrintDetailRows(item, store);
+      const rowLines = [
+        { text: item.description || "-", font: fontBold, size: 10.8, color: TEXT },
+        ...detailRows.map((line) => ({ text: line, font: fontRegular, size: 9.2, color: MUTED }))
+      ];
+      const descriptionColumnWidth = colXs[2] - colXs[1] - 12;
+      const wrappedRowLines = rowLines.flatMap((line) => (
+        wrapPdfText(
+          line.text,
+          line.font,
+          line.font === fontBold ? 12.4 : 10.4,
+          descriptionColumnWidth
+        ).map((segment) => ({
+          ...line,
+          text: segment
+        }))
+      ));
+      const rowHeight = Math.max(30, 16 + (wrappedRowLines.length * 14));
+      const rowBottom = rowTop - rowHeight;
+      page.drawLine({
+        start: { x: outerX, y: rowBottom },
+        end: { x: outerX + outerW, y: rowBottom },
+        thickness: 1,
+        color: BORDER
+      });
+      page.drawText(String(index + 1), { x: colXs[0] + 8, y: rowTop - 18, font: fontRegular, size: 11, color: TEXT });
+      let detailY = rowTop - 18;
+      wrappedRowLines.forEach((line) => {
+        page.drawText(line.text, {
+          x: colXs[1] + 6,
+          y: detailY,
+          font: line.font,
+          size: line.font === fontBold ? 12.4 : 10.4,
+          color: line.color
+        });
+        detailY -= 13.6;
+      });
+      page.drawText(String(item.sac || ""), { x: colXs[2] + 6, y: rowTop - 18, font: fontRegular, size: 10.8, color: TEXT });
+      page.drawText(String(Number(item.quantity || 0) || 1), { x: colXs[3] + 10, y: rowTop - 18, font: fontRegular, size: 10.8, color: TEXT });
+      page.drawText(formatCurrency(item.unitRate || 0), { x: colXs[4] + 6, y: rowTop - 18, font: fontRegular, size: 10.8, color: TEXT });
+      const grossLineAmount = Number(item.quantity || 1) * Number(item.unitRate || 0);
+      page.drawText(formatCurrency(grossLineAmount), { x: colXs[5] + 6, y: rowTop - 18, font: fontRegular, size: 10.8, color: TEXT });
+      rowTop = rowBottom;
+    });
+    for (let index = 1; index < colXs.length - 1; index += 1) {
+      page.drawLine({
+        start: { x: colXs[index], y: rowTop },
+        end: { x: colXs[index], y: tableTop },
+        thickness: 1,
+        color: BORDER
+      });
+    }
+
+    // Lower body uses all remaining space
+    const lowerTop = rowTop;
+    const lowerBottom = summaryTop;
+    const lowerHeight = Math.max(minimumLowerHeight, lowerTop - lowerBottom);
+    page.drawLine({
+      start: { x: outerX, y: lowerTop },
+      end: { x: outerX + outerW, y: lowerTop },
+      thickness: 1,
+      color: BORDER
+    });
+    const lowerSplitX = outerX + (outerW * 0.56);
+    page.drawLine({
+      start: { x: lowerSplitX, y: lowerBottom },
+      end: { x: lowerSplitX, y: lowerTop },
+      thickness: 1,
+      color: BORDER
+    });
+
+    const leftLowerX = innerX;
+    const leftLowerW = lowerSplitX - innerX - 42;
+    let leftY = lowerTop - 14;
+    page.drawText("Total In Words", { x: leftLowerX, y: leftY, font: fontBold, size: 12.2, color: TEXT });
+    leftY -= 16;
+    leftY = drawPdfTextLines(page, wrapPdfText(numberToIndianWords(invoice.totalAmount || gstBreakup.totalAmount || 0), fontBold, 12.8, leftLowerW), {
+      x: leftLowerX,
+      topY: leftY,
+      font: fontBold,
+      fontSize: 12.8,
+      lineHeight: 15.6,
+      color: TEXT
+    });
+    leftY -= 10;
+    const noteLines = [
+      "Thank you for your business.",
+      "Please clear the dues within 15 working days.",
+      company.footerNote || ""
+    ].filter(Boolean);
+    leftY = drawPdfTextLines(page, noteLines, {
+      x: leftLowerX,
+      topY: leftY,
+      font: fontRegular,
+      fontSize: 10.8,
+      lineHeight: 14.4,
+      color: MUTED
+    });
+    leftY -= 12;
+    page.drawText("In case of online transfer, bank details are as follows", {
+      x: leftLowerX,
+      y: leftY,
+      font: fontRegular,
+      size: 10.4,
+      color: MUTED
+    });
+    leftY -= 16;
+    [
+      ["Account Name", company.bankAccountName],
+      ["Bank", company.bankName],
+      ["Account Number", company.bankAccountNumber],
+      ["Account Type", company.bankAccountType],
+      ["Branch Name", company.bankBranchName],
+      ["IFSC", company.bankIfsc]
+    ].filter(([, value]) => value).forEach(([label, value]) => {
+      page.drawText(`${label} -- ${value}`, {
+        x: leftLowerX,
+        y: leftY,
+        font: fontRegular,
+        size: 10.4,
+        color: TEXT
+      });
+      leftY -= 12;
+    });
+    if (String(invoice.notes || "").trim()) {
+      leftY -= 8;
+      page.drawText(String(invoice.notes || "").trim(), {
+        x: leftLowerX,
+        y: Math.max(lowerBottom + 12, leftY),
+        font: fontItalic,
+        size: 10.2,
+        color: MUTED
+      });
+    }
+
+    const rightX = lowerSplitX + 10;
+    const rightW = outerX + outerW - rightX - 10;
+    const totals = [
+      ["Sub Total", formatCurrency(gstBreakup.grossSubtotal)],
+      ...(gstBreakup.discountAmount ? [["Discount", formatCurrency(gstBreakup.discountAmount)]] : []),
+      ["Total Taxable Amount", formatCurrency(gstBreakup.taxableAmount)],
+      ...(gstBreakup.sgstAmount ? [["SGST9 (9%)", formatCurrency(gstBreakup.sgstAmount)]] : []),
+      ...(gstBreakup.cgstAmount ? [["CGST9 (9%)", formatCurrency(gstBreakup.cgstAmount)]] : []),
+      ...(gstBreakup.igstAmount ? [["IGST18 (18%)", formatCurrency(gstBreakup.igstAmount)]] : []),
+      [isQuote ? "Quotation Total" : "Total", formatCurrency(invoice.totalAmount || gstBreakup.totalAmount)],
+      ...(Number(invoice.amountPaid || 0) ? [["Amount Paid", formatCurrency(invoice.amountPaid || 0)]] : []),
+      ["Balance due", formatCurrency(invoice.balanceDue || Math.max(0, (invoice.totalAmount || 0) - (invoice.amountPaid || 0)))]
+    ];
+    const totalsTop = lowerTop - 12;
+    const totalsRowHeight = 20;
+    totals.forEach(([label, value], index) => {
+      const y = totalsTop - (index * totalsRowHeight);
+      page.drawText(label, { x: rightX, y, font: fontBold, size: 10.8, color: TEXT });
+      const textWidth = fontBold.widthOfTextAtSize(String(value), 10.8);
+      page.drawText(String(value), { x: rightX + rightW - textWidth, y, font: fontBold, size: 10.8, color: TEXT });
+      page.drawLine({
+        start: { x: rightX, y: y - 5 },
+        end: { x: rightX + rightW, y: y - 5 },
+        thickness: 0.75,
+        color: BORDER
+      });
+    });
+    const signatureLabelY = lowerBottom + 12;
+    const signatureBlockRight = rightX + rightW - 14;
+    if (company.signatureHolder) {
+      const holderLines = wrapPdfText(company.signatureHolder, fontRegular, 8.6, 104);
+      holderLines.forEach((line, index) => {
+        const holderWidth = fontRegular.widthOfTextAtSize(line, 8.6);
+        page.drawText(line, {
+          x: signatureBlockRight - holderWidth,
+          y: signatureLabelY + 68 - (index * 10),
+          font: fontRegular,
+          size: 8.6,
+          color: MUTED
+        });
+      });
+    }
+    if (signatureImage) {
+      page.drawImage(signatureImage, {
+        x: signatureBlockRight - 74,
+        y: signatureLabelY + 8,
+        width: 84,
+        height: 44
+      });
+    }
+    page.drawLine({
+      start: { x: signatureBlockRight - 108, y: signatureLabelY + 6 },
+      end: { x: signatureBlockRight + 14, y: signatureLabelY + 6 },
+      thickness: 1,
+      color: TEXT
+    });
+    page.drawText("Authorised Signatory", {
+      x: signatureBlockRight - 74,
+      y: signatureLabelY - 7,
+      font: fontBold,
+      size: 9.4,
+      color: TEXT
+    });
+
+    // HSN summary pinned to bottom
+    page.drawLine({
+      start: { x: outerX, y: summaryTop },
+      end: { x: outerX + outerW, y: summaryTop },
+      thickness: 1,
+      color: BORDER
+    });
+    page.drawText("HSN/SAC Summary:", {
+      x: innerX,
+      y: summaryTop - 14,
+      font: fontRegular,
+      size: 10.2,
+      color: MUTED
+    });
+    const hTableTop = summaryTop - 22;
+    const hCols = [110, 122, 122, 100, 101.28];
+    const hXs = [outerX];
+    hCols.forEach((width) => hXs.push(hXs[hXs.length - 1] + width));
+    const hHeader1Height = 21;
+    const hHeader2Height = 20;
+    page.drawLine({ start: { x: outerX, y: hTableTop - hHeader1Height }, end: { x: outerX + outerW, y: hTableTop - hHeader1Height }, thickness: 1, color: BORDER });
+    page.drawLine({ start: { x: outerX, y: hTableTop - hHeader1Height - hHeader2Height }, end: { x: outerX + outerW, y: hTableTop - hHeader1Height - hHeader2Height }, thickness: 1, color: BORDER });
+    for (let index = 1; index < hXs.length - 1; index += 1) {
+      page.drawLine({ start: { x: hXs[index], y: outerY }, end: { x: hXs[index], y: hTableTop }, thickness: 1, color: BORDER });
+    }
+    page.drawText("HSN/SAC", { x: hXs[0] + 6, y: hTableTop - 14, font: fontBold, size: 9.8, color: TEXT });
+    page.drawText("Taxable Amount", { x: hXs[1] + 6, y: hTableTop - 14, font: fontBold, size: 9.8, color: TEXT });
+    page.drawText(isMaharashtraSupply(effectivePlaceOfSupply) ? "GST" : "IGST", { x: hXs[2] + 70, y: hTableTop - 14, font: fontBold, size: 9.8, color: TEXT });
+    page.drawText("Total Tax Amount", { x: hXs[4] + 6, y: hTableTop - 14, font: fontBold, size: 9.8, color: TEXT });
+    page.drawText("Rate", { x: hXs[2] + 6, y: hTableTop - 33, font: fontBold, size: 9.4, color: TEXT });
+    page.drawText("Amount", { x: hXs[3] + 6, y: hTableTop - 33, font: fontBold, size: 9.4, color: TEXT });
+    let hRowTop = hTableTop - hHeader1Height - hHeader2Height;
+    const hRows = hsnRows.length ? hsnRows : [{
+      sac: "-",
+      taxableAmount: gstBreakup.taxableAmount || 0,
+      gstRateLabel: isMaharashtraSupply(effectivePlaceOfSupply) ? "9%" : "18%",
+      gstAmount: gstBreakup.taxAmount || 0,
+      totalAmount: gstBreakup.taxAmount || 0
+    }];
+    hRows.forEach((row) => {
+      const hRowBottom = hRowTop - 20;
+      page.drawLine({ start: { x: outerX, y: hRowBottom }, end: { x: outerX + outerW, y: hRowBottom }, thickness: 1, color: BORDER });
+      page.drawText(String(row.sac || "-"), { x: hXs[0] + 6, y: hRowTop - 13, font: fontRegular, size: 9.6, color: TEXT });
+      page.drawText(formatCurrency(row.taxableAmount), { x: hXs[1] + 6, y: hRowTop - 13, font: fontRegular, size: 9.6, color: TEXT });
+      page.drawText(row.gstRateLabel, { x: hXs[2] + 6, y: hRowTop - 13, font: fontRegular, size: 9.6, color: TEXT });
+      page.drawText(formatCurrency(row.gstAmount), { x: hXs[3] + 6, y: hRowTop - 13, font: fontRegular, size: 9.6, color: TEXT });
+      page.drawText(formatCurrency(row.gstAmount), { x: hXs[4] + 6, y: hRowTop - 13, font: fontRegular, size: 9.6, color: TEXT });
+      hRowTop = hRowBottom;
+    });
+    const totalBottom = hRowTop - 20;
+    page.drawLine({ start: { x: outerX, y: totalBottom }, end: { x: outerX + outerW, y: totalBottom }, thickness: 1, color: BORDER });
+    page.drawText("Total", { x: hXs[0] + 6, y: hRowTop - 13, font: fontBold, size: 9.6, color: TEXT });
+    page.drawText(formatCurrency(gstBreakup.taxableAmount || 0), { x: hXs[1] + 6, y: hRowTop - 13, font: fontBold, size: 9.6, color: TEXT });
+    page.drawText(formatCurrency(gstBreakup.taxAmount || 0), { x: hXs[3] + 6, y: hRowTop - 13, font: fontBold, size: 9.6, color: TEXT });
+    page.drawText(formatCurrency(gstBreakup.taxAmount || 0), { x: hXs[4] + 6, y: hRowTop - 13, font: fontBold, size: 9.6, color: TEXT });
+  });
+
+  return Buffer.from(await pdfDoc.save());
 }
 
 function saveInvoice(invoiceInput) {
@@ -3598,6 +4412,30 @@ async function handleApi(req, res) {
     return true;
   }
 
+  if (req.method === "GET" && pathname.startsWith("/api/admin/invoices/") && pathname.endsWith("/pdf")) {
+    const invoiceId = decodeURIComponent(pathname.slice("/api/admin/invoices/".length, -"/pdf".length));
+    if (!invoiceId) {
+      sendJson(res, 400, { error: "Invoice id is required." });
+      return true;
+    }
+    const invoice = readInvoices().find((entry) => entry.id === invoiceId);
+    if (!invoice) {
+      sendJson(res, 404, { error: "Invoice not found." });
+      return true;
+    }
+    const copyCount = clampCopyCount(requestUrl.searchParams.get("copies") || 1);
+    const pdfBuffer = await buildInvoicePdfBuffer(invoice, copyCount, readStore());
+    const fileName = `${getInvoicePdfTitle(invoice)}.pdf`;
+    res.writeHead(200, {
+      "Content-Type": "application/pdf",
+      "Content-Length": pdfBuffer.length,
+      "Cache-Control": "no-store",
+      "Content-Disposition": `inline; filename="${fileName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`
+    });
+    res.end(pdfBuffer);
+    return true;
+  }
+
   if (req.method === "POST" && pathname.startsWith("/api/admin/invoices/") && pathname.endsWith("/payments")) {
     const invoiceId = decodeURIComponent(pathname.slice("/api/admin/invoices/".length, -"/payments".length));
     if (!invoiceId) {
@@ -3893,7 +4731,18 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
-  ensureDataStore();
-  console.log(`PixelBug preview server running at http://${HOST}:${PORT}`);
-});
+if (require.main === module) {
+  server.listen(PORT, HOST, () => {
+    ensureDataStore();
+    console.log(`PixelBug preview server running at http://${HOST}:${PORT}`);
+  });
+}
+
+module.exports = {
+  buildInvoicePdfBuffer,
+  clampCopyCount,
+  getInvoicePdfTitle,
+  readInvoices,
+  readStore,
+  server
+};
