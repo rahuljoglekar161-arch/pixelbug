@@ -1335,10 +1335,10 @@ async function buildInvoicePdfBuffer(invoice, copyCount, store) {
     const innerW = outerW - 20;
 
     // Header
-    const headerHeight = 100;
+    const headerHeight = 118;
     const headerBottom = cursorY - headerHeight;
     if (logoImage) {
-      page.drawImage(logoImage, { x: innerX, y: headerBottom + 22, width: 58, height: 58 });
+      page.drawImage(logoImage, { x: innerX, y: headerBottom + 36, width: 58, height: 58 });
     }
     const brandX = innerX + 66;
     page.drawText(company.name, {
@@ -1361,7 +1361,7 @@ async function buildInvoicePdfBuffer(invoice, copyCount, store) {
       topY: cursorY - 32,
       font: fontRegular,
       fontSize: 10.2,
-      lineHeight: 12.2,
+      lineHeight: 12.8,
       color: MUTED
     });
     page.drawText(isQuote ? "QUOTATION" : "TAX INVOICE", {
