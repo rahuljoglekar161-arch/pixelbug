@@ -717,6 +717,7 @@ function normalizeInvoice(invoice) {
     companyEmail: String(rawDetails.companyEmail || "").trim(),
     companyPhone: String(rawDetails.companyPhone || "").trim(),
     companyGstin: String(rawDetails.companyGstin || "").trim(),
+    companyMsme: String(rawDetails.companyMsme || "").trim(),
     clientBillingAddress: String(rawDetails.clientBillingAddress || "").trim(),
     clientGstin: String(rawDetails.clientGstin || "").trim(),
     placeOfSupply: String(rawDetails.placeOfSupply || "").trim(),
@@ -1144,6 +1145,7 @@ function getFixedInvoiceCompanyProfile() {
   return {
     name: "PixelBug",
     gstin: "27AAZFP6374P1ZW",
+    msme: "MH260082490",
     email: "pixelbugsolutions@gmail.com",
     phone: "+91 7666426289",
     address: "Pune, Maharashtra, India - 411009",
@@ -1170,6 +1172,7 @@ function getInvoiceCompanyProfile(invoice) {
     email: String(details.companyEmail || defaults.email).trim(),
     phone: String(details.companyPhone || defaults.phone).trim(),
     gstin: String(details.companyGstin || defaults.gstin).trim(),
+    msme: String(details.companyMsme || defaults.msme).trim(),
     bankAccountName: String(details.bankAccountName || defaults.bankAccountName).trim(),
     bankName: String(details.bankName || defaults.bankName).trim(),
     bankAccountNumber: String(details.bankAccountNumber || defaults.bankAccountNumber).trim(),
@@ -1348,6 +1351,7 @@ async function buildInvoicePdfBuffer(invoice, copyCount, store) {
     const companyLines = [
       company.address,
       company.gstin ? `GSTIN : ${company.gstin}` : "",
+      `MSME No. : ${company.msme || "-"}`,
       company.phone,
       company.email,
       company.website

@@ -3005,6 +3005,7 @@ function normalizeInvoiceDetails(details = {}) {
     companyEmail: String(source.companyEmail || "").trim(),
     companyPhone: String(source.companyPhone || "").trim(),
     companyGstin: String(source.companyGstin || "").trim(),
+    companyMsme: String(source.companyMsme || "").trim(),
     clientBillingAddress: String(source.clientBillingAddress || "").trim(),
     clientGstin: String(source.clientGstin || "").trim(),
     placeOfSupply: String(source.placeOfSupply || "").trim(),
@@ -3080,6 +3081,7 @@ function getFixedInvoiceCompanyProfile() {
   return {
     name: "PixelBug",
     gstin: "27AAZFP6374P1ZW",
+    msme: "MH260082490",
     email: "pixelbugsolutions@gmail.com",
     phone: "+91 7666426289",
     address: "Pune, Maharashtra, India - 411009",
@@ -5916,6 +5918,7 @@ function getSingleInvoiceDocumentMarkup(invoice, copyLabel = "Original Copy") {
               <div class="invoice-print-brand-title">${escapeHtml(companyProfile.name)}</div>
               <div class="invoice-print-company-line">${formatMultilineHtml(companyProfile.address)}</div>
               ${companyProfile.gstin ? `<div class="invoice-print-company-line">GSTIN : ${escapeHtml(companyProfile.gstin)}</div>` : ""}
+              <div class="invoice-print-company-line">MSME No. : ${escapeHtml(companyProfile.msme || "-")}</div>
               ${companyProfile.phone ? `<div class="invoice-print-company-line">${escapeHtml(companyProfile.phone)}</div>` : ""}
               ${companyProfile.email ? `<div class="invoice-print-company-line">${escapeHtml(companyProfile.email)}</div>` : ""}
               ${companyProfile.website ? `<div class="invoice-print-company-line">${escapeHtml(companyProfile.website)}</div>` : ""}
